@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "package.json"
+      - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "packages/contracts/**"
       - ".github/workflows/contracts.yml"
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - "package.json"
+      - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "packages/contracts/**"
       - ".github/workflows/contracts.yml"
@@ -30,7 +32,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+      # Temporary bootstrap mode until pnpm-lock.yaml is generated and committed.
+      # Issue #9 tracks conversion to --frozen-lockfile with pnpm caching enabled.
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
