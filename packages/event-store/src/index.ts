@@ -318,6 +318,7 @@ export class DurableSnapshotEventStore extends IndexedEventStore {
   }
 
   public override getStreamVersion(streamId: string): number {
+    this.reload();
     return super.getStreamVersion(streamId);
   }
 }
