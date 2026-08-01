@@ -128,7 +128,22 @@ function assertJsonValue(
   ancestors.add(value);
 
   if (Array.isArray(value)) {
-    value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, ancestors));
+    const ownKeys = Reflect.ownKeys(value);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index)) {
+        throw new InvalidEventError(`${path} must not contain sparse array holes.`);
+      }
+      assertJsonValue(value[index], `${path}[${index}]`, ancestors);
+    }
+
+    const allowedKeys = new Set<PropertyKey>([
+      "length",
+      ...Array.from({ length: value.length }, (_item, index) => String(index)),
+    ]);
+    if (ownKeys.some((key) => !allowedKeys.has(key))) {
+      throw new InvalidEventError(`${path} arrays must not contain non-index properties.`);
+    }
+
     ancestors.delete(value);
     return;
   }
@@ -138,8 +153,20 @@ function assertJsonValue(
     throw new InvalidEventError(`${path} must contain only JSON objects and arrays.`);
   }
 
-  for (const [key, item] of Object.entries(value)) {
-    assertJsonValue(item, `${path}.${key}`, ancestors);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key === "symbol") {
+      throw new InvalidEventError(`${path} must not contain symbol-keyed properties.`);
+    }
+
+    const descriptor = descriptors[key];
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new InvalidEventError(
+        `${path}.${key} must be an enumerable data property.`,
+      );
+    }
+
+    assertJsonValue(descriptor.value, `${path}.${key}`, ancestors);
   }
   ancestors.delete(value);
 }
