@@ -59,16 +59,29 @@ export class SequentialWorkflowRunner {
       return id;
     };
 
-    assertWithinBudget(context);
     await append("execution.started", {
       workflowId: workflow.id,
       workflowVersion: workflow.version,
       stepCount: workflow.steps.length,
     });
 
-    let value: unknown = workflow.mapInput?.(input) ?? input;
-
     try {
+      try {
+        assertWithinBudget(context);
+      } catch (error) {
+        if (error instanceof BudgetExceededError) {
+          await append("budget.exceeded", {
+            dimension: error.dimension,
+            limit: error.limit,
+            observed: error.observed,
+            phase: "preflight",
+          });
+        }
+        throw error;
+      }
+
+      let value: unknown = workflow.mapInput?.(input) ?? input;
+
       for (const step of workflow.steps) {
         assertWithinBudget(context);
         await append("workflow.step.started", { stepId: step.id });
