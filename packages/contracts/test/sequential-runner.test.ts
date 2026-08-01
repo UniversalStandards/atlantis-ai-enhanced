@@ -101,6 +101,72 @@ describe("SequentialWorkflowRunner", () => {
     ]);
   });
 
+  it("records a terminal trace when the budget is already exceeded at preflight", async () => {
+    const events: ExecutionEvent[] = [];
+    const runner = deterministicRunner(events);
+    const preflightContext = context(0);
+    preflightContext.usage.iterations = 1;
+
+    await expect(
+      runner.run(
+        {
+          id: "workflow-1",
+          version: "1.0.0",
+          steps: [],
+        },
+        "input",
+        preflightContext,
+      ),
+    ).rejects.toBeInstanceOf(BudgetExceededError);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "execution.started",
+      "budget.exceeded",
+      "execution.failed",
+    ]);
+    expect(events.map((event) => event.sequence)).toEqual([1, 2, 3]);
+    expect(events[1]?.payload).toMatchObject({
+      dimension: "maxIterations",
+      phase: "preflight",
+    });
+    expect(events.at(-1)?.parentEventId).toBe("event-2");
+    expect(events.at(-1)?.payload).toMatchObject({
+      workflowId: "workflow-1",
+      reason: "budget_exceeded",
+    });
+  });
+
+  it("records a terminal trace when input mapping fails", async () => {
+    const events: ExecutionEvent[] = [];
+    const runner = deterministicRunner(events);
+
+    await expect(
+      runner.run(
+        {
+          id: "workflow-1",
+          version: "1.0.0",
+          steps: [],
+          mapInput: () => {
+            throw new Error("invalid input");
+          },
+        },
+        "input",
+        context(),
+      ),
+    ).rejects.toThrow("invalid input");
+
+    expect(events.map((event) => event.type)).toEqual([
+      "execution.started",
+      "execution.failed",
+    ]);
+    expect(events.at(-1)?.parentEventId).toBe("event-1");
+    expect(events.at(-1)?.payload).toMatchObject({
+      workflowId: "workflow-1",
+      reason: "error",
+      error: "invalid input",
+    });
+  });
+
   it("fails closed and terminates the trace when a step crosses its iteration budget", async () => {
     const events: ExecutionEvent[] = [];
     const runner = deterministicRunner(events);
