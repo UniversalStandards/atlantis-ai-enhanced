@@ -103,12 +103,11 @@ export class SequentialWorkflowRunner {
       });
       return workflow.mapOutput ? workflow.mapOutput(value) : (value as O);
     } catch (error) {
-      if (!(error instanceof BudgetExceededError)) {
-        await append("execution.failed", {
-          workflowId: workflow.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      await append("execution.failed", {
+        workflowId: workflow.id,
+        reason: error instanceof BudgetExceededError ? "budget_exceeded" : "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
