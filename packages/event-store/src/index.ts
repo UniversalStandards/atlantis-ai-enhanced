@@ -104,6 +104,46 @@ function validateEvent(event: AppendEventInput): void {
   }
 }
 
+function assertJsonValue(
+  value: unknown,
+  path = "payload",
+  ancestors = new WeakSet<object>(),
+): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new InvalidEventError(`${path} must contain only finite JSON numbers.`);
+    }
+    return;
+  }
+  if (typeof value !== "object") {
+    throw new InvalidEventError(`${path} must contain only JSON-native values.`);
+  }
+
+  if (ancestors.has(value)) {
+    throw new InvalidEventError(`${path} must not contain circular references.`);
+  }
+  ancestors.add(value);
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, ancestors));
+    ancestors.delete(value);
+    return;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new InvalidEventError(`${path} must contain only JSON objects and arrays.`);
+  }
+
+  for (const [key, item] of Object.entries(value)) {
+    assertJsonValue(item, `${path}.${key}`, ancestors);
+  }
+  ancestors.delete(value);
+}
+
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (value === null || typeof value !== "object") {
     return value;
@@ -143,6 +183,7 @@ function buildIndexes(events: readonly StoredEvent[]): {
 
   events.forEach((event, index) => {
     validateEvent(event);
+    assertJsonValue(event.payload);
     assertCursor(event.sequence, "sequence");
     assertCursor(event.streamVersion, "streamVersion");
 
@@ -263,9 +304,9 @@ export class InMemoryEventStore extends IndexedEventStore {
 }
 
 /**
- * Durable adapter backed by an atomic snapshot primitive. It preserves the
- * synchronous EventStore boundary while providing restart recovery and
- * optimistic multi-writer safety.
+ * Durable adapter backed by an atomic snapshot primitive. Payloads are limited
+ * to JSON-native values so snapshot persistence and restart recovery preserve
+ * exact meaning across providers.
  */
 export class DurableSnapshotEventStore extends IndexedEventStore {
   public constructor(
@@ -290,6 +331,8 @@ export class DurableSnapshotEventStore extends IndexedEventStore {
     event: AppendEventInput<TPayload>,
     expectedVersion: number,
   ): StoredEvent<TPayload> {
+    assertJsonValue(event.payload);
+
     for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
       const snapshot = this.reload();
       const stored = this.createStoredEvent(event, expectedVersion);
