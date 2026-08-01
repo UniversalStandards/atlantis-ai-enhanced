@@ -178,6 +178,38 @@ describe("DurableSnapshotEventStore", () => {
     expect(reader.getStreamVersion("workflow-1")).toBe(1);
   });
 
+  it.each([
+    ["undefined", { value: undefined }],
+    ["non-finite number", { value: Number.NaN }],
+    ["bigint", { value: 1n }],
+    ["date", { value: new Date("2026-08-01T00:00:00.000Z") }],
+    ["map", { value: new Map([["key", "value"]]) }],
+  ])("rejects non-JSON-native durable payloads: %s", (_name, payload) => {
+    const storage = new InMemoryAtomicSnapshotStorage();
+    const store = new DurableSnapshotEventStore(storage);
+
+    expect(() => store.append(event("event-1", "workflow-1", payload), 0)).toThrow(
+      InvalidEventError,
+    );
+    expect(storage.load()).toEqual({ revision: 0, value: null });
+  });
+
+  it("preserves nested JSON payloads exactly after restart", () => {
+    const storage = new InMemoryAtomicSnapshotStorage();
+    const payload = {
+      enabled: true,
+      count: 2,
+      labels: ["alpha", null, { nested: "value" }],
+    };
+
+    new DurableSnapshotEventStore(storage).append(
+      event("event-1", "workflow-1", payload),
+      0,
+    );
+
+    expect(new DurableSnapshotEventStore(storage).readAll()[0]?.payload).toEqual(payload);
+  });
+
   it("fails closed when atomic persistence repeatedly conflicts", () => {
     const conflictingStorage: AtomicSnapshotStorage = {
       load: () => ({ revision: 0, value: null }),
