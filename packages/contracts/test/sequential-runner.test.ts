@@ -101,7 +101,7 @@ describe("SequentialWorkflowRunner", () => {
     ]);
   });
 
-  it("fails closed when a completed step crosses its iteration budget", async () => {
+  it("fails closed and terminates the trace when a step crosses its iteration budget", async () => {
     const events: ExecutionEvent[] = [];
     const runner = deterministicRunner(events);
 
@@ -127,7 +127,14 @@ describe("SequentialWorkflowRunner", () => {
       "execution.started",
       "workflow.step.started",
       "budget.exceeded",
+      "execution.failed",
     ]);
+    expect(events.map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
+    expect(events.at(-1)?.parentEventId).toBe("event-3");
+    expect(events.at(-1)?.payload).toMatchObject({
+      workflowId: "workflow-1",
+      reason: "budget_exceeded",
+    });
   });
 
   it("records step and execution failure without executing later steps", async () => {
@@ -170,5 +177,10 @@ describe("SequentialWorkflowRunner", () => {
       "workflow.step.failed",
       "execution.failed",
     ]);
+    expect(events.at(-1)?.payload).toMatchObject({
+      workflowId: "workflow-1",
+      reason: "error",
+      error: "expected failure",
+    });
   });
 });
