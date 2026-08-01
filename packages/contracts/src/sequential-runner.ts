@@ -17,20 +17,18 @@ export interface SequentialWorkflow<I, O> {
 
 export interface SequentialRunnerOptions {
   readonly eventSink: EventSink;
+  readonly nextEventId: () => string;
   readonly actor?: string;
   readonly now?: () => string;
-  readonly nextEventId?: () => string;
 }
 
 export class SequentialWorkflowRunner {
   private readonly actor: string;
   private readonly now: () => string;
-  private readonly nextEventId: () => string;
 
   public constructor(private readonly options: SequentialRunnerOptions) {
     this.actor = options.actor ?? "sequential-workflow-runner";
     this.now = options.now ?? (() => new Date().toISOString());
-    this.nextEventId = options.nextEventId ?? (() => crypto.randomUUID());
   }
 
   public async run<I, O>(
@@ -45,7 +43,7 @@ export class SequentialWorkflowRunner {
       type: ExecutionEvent<T>["type"],
       payload: T,
     ): Promise<string> => {
-      const id = this.nextEventId();
+      const id = this.options.nextEventId();
       const event: ExecutionEvent<T> = {
         id,
         executionId: context.executionId,
