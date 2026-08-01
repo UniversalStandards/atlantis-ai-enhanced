@@ -167,6 +167,38 @@ describe("SequentialWorkflowRunner", () => {
     });
   });
 
+  it("does not emit completion when output mapping fails", async () => {
+    const events: ExecutionEvent[] = [];
+    const runner = deterministicRunner(events);
+
+    await expect(
+      runner.run(
+        {
+          id: "workflow-1",
+          version: "1.0.0",
+          steps: [],
+          mapOutput: () => {
+            throw new Error("invalid output");
+          },
+        },
+        "input",
+        context(),
+      ),
+    ).rejects.toThrow("invalid output");
+
+    expect(events.map((event) => event.type)).toEqual([
+      "execution.started",
+      "execution.failed",
+    ]);
+    expect(events.map((event) => event.sequence)).toEqual([1, 2]);
+    expect(events.at(-1)?.parentEventId).toBe("event-1");
+    expect(events.at(-1)?.payload).toMatchObject({
+      workflowId: "workflow-1",
+      reason: "error",
+      error: "invalid output",
+    });
+  });
+
   it("fails closed and terminates the trace when a step crosses its iteration budget", async () => {
     const events: ExecutionEvent[] = [];
     const runner = deterministicRunner(events);
