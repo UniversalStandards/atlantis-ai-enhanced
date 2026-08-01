@@ -110,11 +110,12 @@ export class SequentialWorkflowRunner {
       }
 
       assertWithinBudget(context);
+      const output = workflow.mapOutput ? workflow.mapOutput(value) : (value as O);
       await append("execution.completed", {
         workflowId: workflow.id,
         completedSteps: workflow.steps.length,
       });
-      return workflow.mapOutput ? workflow.mapOutput(value) : (value as O);
+      return output;
     } catch (error) {
       await append("execution.failed", {
         workflowId: workflow.id,
