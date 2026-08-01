@@ -77,13 +77,31 @@ describe("InMemoryEventStore", () => {
     ]);
   });
 
-  it("returns immutable event records and snapshots", () => {
+  it("detaches and deeply freezes stored payloads", () => {
     const store = new InMemoryEventStore();
-    const stored = store.append(event("event-1"), 0);
+    const payload = { nested: { delta: 2 } };
+    const stored = store.append(event("event-1", "workflow-1", payload), 0);
     const snapshot = store.readAll();
 
+    payload.nested.delta = 99;
+
+    expect(stored.payload).toEqual({ nested: { delta: 2 } });
     expect(Object.isFrozen(stored)).toBe(true);
+    expect(Object.isFrozen(stored.payload)).toBe(true);
+    expect(Object.isFrozen((stored.payload as typeof payload).nested)).toBe(true);
     expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(() => {
+      (stored.payload as typeof payload).nested.delta = 5;
+    }).toThrow(TypeError);
+  });
+
+  it("fails closed for payloads that cannot be safely detached", () => {
+    const store = new InMemoryEventStore();
+
+    expect(() =>
+      store.append(event("event-1", "workflow-1", { callback: () => undefined }), 0),
+    ).toThrow(InvalidEventError);
+    expect(store.readAll()).toHaveLength(0);
   });
 
   it.each([
