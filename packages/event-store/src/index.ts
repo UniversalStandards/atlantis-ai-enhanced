@@ -68,8 +68,30 @@ function validateEvent(event: AppendEventInput): void {
   }
 }
 
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const objectValue = value as object;
+  if (seen.has(objectValue)) {
+    return value;
+  }
+  seen.add(objectValue);
+
+  for (const key of Reflect.ownKeys(objectValue)) {
+    deepFreeze(Reflect.get(objectValue, key), seen);
+  }
+
+  return Object.freeze(value);
+}
+
 function immutableCopy<TPayload>(event: StoredEvent<TPayload>): StoredEvent<TPayload> {
-  return Object.freeze({ ...event });
+  try {
+    return deepFreeze(structuredClone(event));
+  } catch {
+    throw new InvalidEventError("event must be structured-cloneable.");
+  }
 }
 
 /**
