@@ -168,6 +168,16 @@ describe("DurableSnapshotEventStore", () => {
     expect(new DurableSnapshotEventStore(storage).readAll()).toHaveLength(1);
   });
 
+  it("refreshes stream version reads across independent instances", () => {
+    const storage = new InMemoryAtomicSnapshotStorage();
+    const reader = new DurableSnapshotEventStore(storage);
+    const writer = new DurableSnapshotEventStore(storage);
+
+    expect(reader.getStreamVersion("workflow-1")).toBe(0);
+    writer.append(event("event-1"), 0);
+    expect(reader.getStreamVersion("workflow-1")).toBe(1);
+  });
+
   it("fails closed when atomic persistence repeatedly conflicts", () => {
     const conflictingStorage: AtomicSnapshotStorage = {
       load: () => ({ revision: 0, value: null }),
