@@ -41,6 +41,13 @@ export class InvalidEventError extends Error {
   }
 }
 
+export class PersistenceConflictError extends Error {
+  public constructor(public readonly attempts: number) {
+    super(`Could not persist event store state after ${attempts} atomic attempts.`);
+    this.name = "PersistenceConflictError";
+  }
+}
+
 export interface EventStore {
   append<TPayload>(
     event: AppendEventInput<TPayload>,
@@ -51,9 +58,30 @@ export interface EventStore {
   getStreamVersion(streamId: string): number;
 }
 
+export interface AtomicSnapshot {
+  readonly revision: number;
+  readonly value: string | null;
+}
+
+/**
+ * Provider-neutral atomic persistence boundary. Implementations may use a file,
+ * database row, object store, or another durable medium, provided compareAndSwap
+ * is atomic for a single snapshot key.
+ */
+export interface AtomicSnapshotStorage {
+  load(): AtomicSnapshot;
+  compareAndSwap(expectedRevision: number, nextValue: string): boolean;
+}
+
 function assertNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) {
     throw new InvalidEventError(`${field} must be non-empty.`);
+  }
+}
+
+function assertCursor(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new InvalidEventError(`${field} must be a non-negative safe integer.`);
   }
 }
 
@@ -63,8 +91,16 @@ function validateEvent(event: AppendEventInput): void {
   assertNonEmpty(event.eventType, "eventType");
   assertNonEmpty(event.traceId, "traceId");
 
-  if (!Number.isFinite(Date.parse(event.occurredAt))) {
-    throw new InvalidEventError("occurredAt must be a valid ISO-8601 timestamp.");
+  if (event.correlationId !== undefined) {
+    assertNonEmpty(event.correlationId, "correlationId");
+  }
+  if (event.causationId !== undefined) {
+    assertNonEmpty(event.causationId, "causationId");
+  }
+
+  const parsedTimestamp = Date.parse(event.occurredAt);
+  if (!Number.isFinite(parsedTimestamp) || new Date(parsedTimestamp).toISOString() !== event.occurredAt) {
+    throw new InvalidEventError("occurredAt must be a canonical ISO-8601 UTC timestamp.");
   }
 }
 
@@ -86,35 +122,92 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   return Object.freeze(value);
 }
 
-function immutableCopy<TPayload>(event: StoredEvent<TPayload>): StoredEvent<TPayload> {
+function detachedCopy<T>(value: T, errorMessage: string): T {
   try {
-    return deepFreeze(structuredClone(event));
+    return deepFreeze(structuredClone(value));
   } catch {
-    throw new InvalidEventError("event must be structured-cloneable.");
+    throw new InvalidEventError(errorMessage);
   }
 }
 
-/**
- * Deterministic append-only event store suitable for tests and the first
- * executable workflow skeleton. Persistence adapters can implement EventStore
- * without changing callers.
- */
-export class InMemoryEventStore implements EventStore {
-  readonly #events: StoredEvent[] = [];
-  readonly #eventIds = new Set<string>();
-  readonly #streamVersions = new Map<string, number>();
+function immutableCopy<TPayload>(event: StoredEvent<TPayload>): StoredEvent<TPayload> {
+  return detachedCopy(event, "event must be structured-cloneable.");
+}
 
-  public append<TPayload>(
+function buildIndexes(events: readonly StoredEvent[]): {
+  readonly eventIds: Set<string>;
+  readonly streamVersions: Map<string, number>;
+} {
+  const eventIds = new Set<string>();
+  const streamVersions = new Map<string, number>();
+
+  events.forEach((event, index) => {
+    validateEvent(event);
+    assertCursor(event.sequence, "sequence");
+    assertCursor(event.streamVersion, "streamVersion");
+
+    if (event.sequence !== index + 1) {
+      throw new InvalidEventError("persisted event sequences must be contiguous and ordered.");
+    }
+    if (eventIds.has(event.eventId)) {
+      throw new InvalidEventError(`persisted eventId ${event.eventId} is duplicated.`);
+    }
+
+    const expectedStreamVersion = (streamVersions.get(event.streamId) ?? 0) + 1;
+    if (event.streamVersion !== expectedStreamVersion) {
+      throw new InvalidEventError(
+        `persisted stream ${event.streamId} has a non-contiguous version.`,
+      );
+    }
+
+    eventIds.add(event.eventId);
+    streamVersions.set(event.streamId, event.streamVersion);
+  });
+
+  return { eventIds, streamVersions };
+}
+
+function parsePersistedEvents(value: string | null): readonly StoredEvent[] {
+  if (value === null) {
+    return Object.freeze([]);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidEventError("persisted event store state must be valid JSON.");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new InvalidEventError("persisted event store state must be an event array.");
+  }
+
+  const events = detachedCopy(parsed, "persisted events must be structured-cloneable.") as readonly StoredEvent[];
+  buildIndexes(events);
+  return Object.freeze(events);
+}
+
+abstract class IndexedEventStore implements EventStore {
+  protected events: readonly StoredEvent[] = Object.freeze([]);
+  protected eventIds = new Set<string>();
+  protected streamVersions = new Map<string, number>();
+
+  protected replaceEvents(events: readonly StoredEvent[]): void {
+    const indexes = buildIndexes(events);
+    this.events = Object.freeze([...events]);
+    this.eventIds = indexes.eventIds;
+    this.streamVersions = indexes.streamVersions;
+  }
+
+  protected createStoredEvent<TPayload>(
     event: AppendEventInput<TPayload>,
     expectedVersion: number,
   ): StoredEvent<TPayload> {
     validateEvent(event);
+    assertCursor(expectedVersion, "expectedVersion");
 
-    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
-      throw new InvalidEventError("expectedVersion must be a non-negative safe integer.");
-    }
-
-    if (this.#eventIds.has(event.eventId)) {
+    if (this.eventIds.has(event.eventId)) {
       throw new DuplicateEventError(event.eventId);
     }
 
@@ -123,41 +216,129 @@ export class InMemoryEventStore implements EventStore {
       throw new ConcurrencyConflictError(event.streamId, expectedVersion, actualVersion);
     }
 
-    const stored = immutableCopy({
+    return immutableCopy({
       ...event,
-      sequence: this.#events.length + 1,
+      sequence: this.events.length + 1,
       streamVersion: actualVersion + 1,
     });
-
-    this.#events.push(stored);
-    this.#eventIds.add(stored.eventId);
-    this.#streamVersions.set(stored.streamId, stored.streamVersion);
-    return stored;
   }
+
+  public abstract append<TPayload>(
+    event: AppendEventInput<TPayload>,
+    expectedVersion: number,
+  ): StoredEvent<TPayload>;
 
   public readStream(streamId: string, afterVersion = 0): readonly StoredEvent[] {
     assertNonEmpty(streamId, "streamId");
-    if (!Number.isSafeInteger(afterVersion) || afterVersion < 0) {
-      throw new InvalidEventError("afterVersion must be a non-negative safe integer.");
-    }
+    assertCursor(afterVersion, "afterVersion");
 
     return Object.freeze(
-      this.#events.filter(
+      this.events.filter(
         (event) => event.streamId === streamId && event.streamVersion > afterVersion,
       ),
     );
   }
 
   public readAll(afterSequence = 0): readonly StoredEvent[] {
-    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) {
-      throw new InvalidEventError("afterSequence must be a non-negative safe integer.");
-    }
-    return Object.freeze(this.#events.filter((event) => event.sequence > afterSequence));
+    assertCursor(afterSequence, "afterSequence");
+    return Object.freeze(this.events.filter((event) => event.sequence > afterSequence));
   }
 
   public getStreamVersion(streamId: string): number {
     assertNonEmpty(streamId, "streamId");
-    return this.#streamVersions.get(streamId) ?? 0;
+    return this.streamVersions.get(streamId) ?? 0;
+  }
+}
+
+/** Deterministic append-only adapter for tests and the executable skeleton. */
+export class InMemoryEventStore extends IndexedEventStore {
+  public append<TPayload>(
+    event: AppendEventInput<TPayload>,
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    const stored = this.createStoredEvent(event, expectedVersion);
+    this.replaceEvents([...this.events, stored]);
+    return stored;
+  }
+}
+
+/**
+ * Durable adapter backed by an atomic snapshot primitive. It preserves the
+ * synchronous EventStore boundary while providing restart recovery and
+ * optimistic multi-writer safety.
+ */
+export class DurableSnapshotEventStore extends IndexedEventStore {
+  public constructor(
+    private readonly storage: AtomicSnapshotStorage,
+    private readonly maxPersistenceAttempts = 3,
+  ) {
+    super();
+    if (!Number.isSafeInteger(maxPersistenceAttempts) || maxPersistenceAttempts < 1) {
+      throw new InvalidEventError("maxPersistenceAttempts must be a positive safe integer.");
+    }
+    this.reload();
+  }
+
+  private reload(): AtomicSnapshot {
+    const snapshot = this.storage.load();
+    assertCursor(snapshot.revision, "storage revision");
+    this.replaceEvents(parsePersistedEvents(snapshot.value));
+    return snapshot;
+  }
+
+  public append<TPayload>(
+    event: AppendEventInput<TPayload>,
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
+      const snapshot = this.reload();
+      const stored = this.createStoredEvent(event, expectedVersion);
+      const nextEvents = [...this.events, stored];
+
+      if (this.storage.compareAndSwap(snapshot.revision, JSON.stringify(nextEvents))) {
+        this.replaceEvents(nextEvents);
+        return stored;
+      }
+    }
+
+    throw new PersistenceConflictError(this.maxPersistenceAttempts);
+  }
+
+  public override readStream(
+    streamId: string,
+    afterVersion = 0,
+  ): readonly StoredEvent[] {
+    this.reload();
+    return super.readStream(streamId, afterVersion);
+  }
+
+  public override readAll(afterSequence = 0): readonly StoredEvent[] {
+    this.reload();
+    return super.readAll(afterSequence);
+  }
+
+  public override getStreamVersion(streamId: string): number {
+    return super.getStreamVersion(streamId);
+  }
+}
+
+/** In-memory atomic storage used for deterministic adapter and recovery tests. */
+export class InMemoryAtomicSnapshotStorage implements AtomicSnapshotStorage {
+  #revision = 0;
+  #value: string | null = null;
+
+  public load(): AtomicSnapshot {
+    return Object.freeze({ revision: this.#revision, value: this.#value });
+  }
+
+  public compareAndSwap(expectedRevision: number, nextValue: string): boolean {
+    assertCursor(expectedRevision, "expectedRevision");
+    if (this.#revision !== expectedRevision) {
+      return false;
+    }
+    this.#value = nextValue;
+    this.#revision += 1;
+    return true;
   }
 }
 
