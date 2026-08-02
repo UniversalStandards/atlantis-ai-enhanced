@@ -102,6 +102,16 @@ export interface SupervisorEscalation<I, O> {
   resolve(context: WorkflowContext): Promise<O>;
 }
 
+export class InvalidBudgetValueError extends Error {
+  constructor(
+    public readonly field: keyof ExecutionBudget | keyof ExecutionUsage,
+    public readonly value: number,
+  ) {
+    super(`Invalid execution budget value for ${field}: ${String(value)}`);
+    this.name = "InvalidBudgetValueError";
+  }
+}
+
 export class BudgetExceededError extends Error {
   constructor(
     public readonly dimension: keyof ExecutionBudget,
@@ -113,8 +123,45 @@ export class BudgetExceededError extends Error {
   }
 }
 
+function assertFiniteNonNegative(
+  field: keyof ExecutionBudget | keyof ExecutionUsage,
+  value: number,
+): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new InvalidBudgetValueError(field, value);
+  }
+}
+
 export function assertWithinBudget(context: WorkflowContext): void {
   const { budget, usage } = context;
+
+  const budgetValues: ReadonlyArray<readonly [keyof ExecutionBudget, number]> = [
+    ["maxToolCalls", budget.maxToolCalls],
+    ["maxRetries", budget.maxRetries],
+    ["maxIterations", budget.maxIterations],
+    ["maxTokens", budget.maxTokens],
+    ["maxDurationMs", budget.maxDurationMs],
+    ["maxCostUsd", budget.maxCostUsd],
+  ];
+
+  const usageValues: ReadonlyArray<readonly [keyof ExecutionUsage, number]> = [
+    ["toolCalls", usage.toolCalls],
+    ["retries", usage.retries],
+    ["iterations", usage.iterations],
+    ["inputTokens", usage.inputTokens],
+    ["outputTokens", usage.outputTokens],
+    ["durationMs", usage.durationMs],
+    ["costUsd", usage.costUsd],
+  ];
+
+  for (const [field, value] of budgetValues) {
+    assertFiniteNonNegative(field, value);
+  }
+
+  for (const [field, value] of usageValues) {
+    assertFiniteNonNegative(field, value);
+  }
+
   const checks: ReadonlyArray<
     readonly [keyof ExecutionBudget, number, number]
   > = [
