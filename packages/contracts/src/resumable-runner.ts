@@ -1,0 +1,225 @@
+import {
+  assertWithinBudget,
+  BudgetExceededError,
+  type EventSink,
+  type ExecutionEvent,
+  type ExecutionUsage,
+  type WorkflowContext,
+  type WorkflowStep,
+} from "./index.js";
+
+export interface ResumableWorkflow<I, O> {
+  readonly id: string;
+  readonly version: string;
+  readonly steps: readonly WorkflowStep<unknown, unknown>[];
+  readonly mapInput?: (input: I) => unknown;
+  readonly mapOutput?: (value: unknown) => O;
+}
+
+export interface WorkflowCheckpoint {
+  readonly executionId: string;
+  readonly workflowId: string;
+  readonly workflowVersion: string;
+  readonly nextStepIndex: number;
+  readonly completedStepIds: readonly string[];
+  readonly value: unknown;
+  readonly usage: ExecutionUsage;
+  readonly lastEventSequence: number;
+  readonly parentEventId?: string;
+  readonly revision: number;
+}
+
+export interface CheckpointStore {
+  load(executionId: string): Promise<WorkflowCheckpoint | undefined>;
+  save(
+    checkpoint: Omit<WorkflowCheckpoint, "revision">,
+    expectedRevision: number | undefined,
+  ): Promise<WorkflowCheckpoint>;
+  clear(executionId: string, expectedRevision: number): Promise<void>;
+}
+
+export class InvalidCheckpointError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidCheckpointError";
+  }
+}
+
+export interface ResumableRunnerOptions {
+  readonly checkpointStore: CheckpointStore;
+  readonly eventSink: EventSink;
+  readonly nextEventId: () => string;
+  readonly actor?: string;
+  readonly now?: () => string;
+}
+
+function copyUsage(usage: ExecutionUsage): ExecutionUsage {
+  return { ...usage };
+}
+
+function restoreUsage(target: ExecutionUsage, source: ExecutionUsage): void {
+  Object.assign(target, copyUsage(source));
+}
+
+function validateCheckpoint<I, O>(
+  checkpoint: WorkflowCheckpoint,
+  workflow: ResumableWorkflow<I, O>,
+  context: WorkflowContext,
+): void {
+  if (checkpoint.executionId !== context.executionId) {
+    throw new InvalidCheckpointError("Checkpoint execution identity does not match context");
+  }
+  if (
+    checkpoint.workflowId !== workflow.id ||
+    checkpoint.workflowVersion !== workflow.version ||
+    context.workflowId !== workflow.id ||
+    context.workflowVersion !== workflow.version
+  ) {
+    throw new InvalidCheckpointError("Checkpoint workflow identity or version does not match");
+  }
+  if (
+    !Number.isInteger(checkpoint.nextStepIndex) ||
+    checkpoint.nextStepIndex < 0 ||
+    checkpoint.nextStepIndex > workflow.steps.length
+  ) {
+    throw new InvalidCheckpointError("Checkpoint nextStepIndex is outside the workflow");
+  }
+  const expectedCompleted = workflow.steps
+    .slice(0, checkpoint.nextStepIndex)
+    .map((step) => step.id);
+  if (
+    checkpoint.completedStepIds.length !== expectedCompleted.length ||
+    checkpoint.completedStepIds.some((stepId, index) => stepId !== expectedCompleted[index])
+  ) {
+    throw new InvalidCheckpointError("Checkpoint completed steps are not a valid workflow prefix");
+  }
+  if (!Number.isInteger(checkpoint.lastEventSequence) || checkpoint.lastEventSequence < 0) {
+    throw new InvalidCheckpointError("Checkpoint event sequence is invalid");
+  }
+  if (!Number.isInteger(checkpoint.revision) || checkpoint.revision < 1) {
+    throw new InvalidCheckpointError("Checkpoint revision is invalid");
+  }
+}
+
+export class ResumableSequentialWorkflowRunner {
+  private readonly actor: string;
+  private readonly now: () => string;
+
+  public constructor(private readonly options: ResumableRunnerOptions) {
+    this.actor = options.actor ?? "resumable-sequential-workflow-runner";
+    this.now = options.now ?? (() => new Date().toISOString());
+  }
+
+  public async run<I, O>(
+    workflow: ResumableWorkflow<I, O>,
+    input: I,
+    context: WorkflowContext,
+  ): Promise<O> {
+    const loaded = await this.options.checkpointStore.load(context.executionId);
+    if (loaded !== undefined) {
+      validateCheckpoint(loaded, workflow, context);
+      restoreUsage(context.usage, loaded.usage);
+    }
+
+    let checkpoint = loaded;
+    let value: unknown = checkpoint?.value ?? workflow.mapInput?.(input) ?? input;
+    let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
+    let sequence = checkpoint?.lastEventSequence ?? 0;
+    let parentEventId = checkpoint?.parentEventId;
+
+    const append = async <T>(type: ExecutionEvent<T>["type"], payload: T): Promise<void> => {
+      const id = this.options.nextEventId();
+      const event: ExecutionEvent<T> = {
+        id,
+        executionId: context.executionId,
+        sequence: ++sequence,
+        type,
+        occurredAt: this.now(),
+        actor: this.actor,
+        ...(parentEventId === undefined ? {} : { parentEventId }),
+        payload,
+      };
+      await this.options.eventSink.append(event);
+      parentEventId = id;
+    };
+
+    await append("execution.started", {
+      workflowId: workflow.id,
+      workflowVersion: workflow.version,
+      stepCount: workflow.steps.length,
+      resumed: checkpoint !== undefined,
+      nextStepIndex,
+    });
+
+    try {
+      assertWithinBudget(context);
+
+      for (let index = nextStepIndex; index < workflow.steps.length; index += 1) {
+        const step = workflow.steps[index];
+        if (step === undefined) {
+          throw new InvalidCheckpointError(`Workflow step ${index} is missing`);
+        }
+
+        assertWithinBudget(context);
+        await append("workflow.step.started", { stepId: step.id, stepIndex: index });
+
+        try {
+          value = await step.execute(value, context);
+          context.usage.iterations += 1;
+          assertWithinBudget(context);
+          await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
+
+          nextStepIndex = index + 1;
+          checkpoint = await this.options.checkpointStore.save(
+            {
+              executionId: context.executionId,
+              workflowId: workflow.id,
+              workflowVersion: workflow.version,
+              nextStepIndex,
+              completedStepIds: workflow.steps.slice(0, nextStepIndex).map((item) => item.id),
+              value,
+              usage: copyUsage(context.usage),
+              lastEventSequence: sequence,
+              ...(parentEventId === undefined ? {} : { parentEventId }),
+            },
+            checkpoint?.revision,
+          );
+        } catch (error) {
+          if (error instanceof BudgetExceededError) {
+            await append("budget.exceeded", {
+              dimension: error.dimension,
+              limit: error.limit,
+              observed: error.observed,
+              stepId: step.id,
+            });
+          } else {
+            await append("workflow.step.failed", {
+              stepId: step.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          throw error;
+        }
+      }
+
+      assertWithinBudget(context);
+      const output = workflow.mapOutput ? workflow.mapOutput(value) : (value as O);
+      await append("execution.completed", {
+        workflowId: workflow.id,
+        completedSteps: workflow.steps.length,
+      });
+
+      if (checkpoint !== undefined) {
+        await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+      }
+      return output;
+    } catch (error) {
+      await append("execution.failed", {
+        workflowId: workflow.id,
+        reason: error instanceof BudgetExceededError ? "budget_exceeded" : "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+}
