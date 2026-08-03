@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./sequential-runner": "./src/sequential-runner.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
