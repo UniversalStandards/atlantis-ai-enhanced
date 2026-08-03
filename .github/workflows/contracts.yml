@@ -9,7 +9,6 @@ on:
       - "packages/contracts/**"
       - "packages/event-store/**"
       - ".github/workflows/contracts.yml"
-      - ".github/workflows/bootstrap-lockfile.yml"
   push:
     branches: [main]
     paths:
@@ -21,17 +20,14 @@ on:
       - ".github/workflows/contracts.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
-          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -40,28 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
 
-      - name: Generate lockfile when absent
-        if: hashFiles('pnpm-lock.yaml') == ''
-        run: pnpm install --lockfile-only
-
-      - name: Verify frozen installation
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify typecheck and tests
-        run: |
-          pnpm typecheck
-          pnpm test
-
-      - name: Commit generated lockfile
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && hashFiles('pnpm-lock.yaml') != ''
-        run: |
-          if git diff --quiet -- pnpm-lock.yaml && git ls-files --error-unmatch pnpm-lock.yaml >/dev/null 2>&1; then
-            echo "Lockfile already committed."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- pnpm-lock.yaml
-          git commit -m "build: lock workspace dependencies with pnpm 10.14.0"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
