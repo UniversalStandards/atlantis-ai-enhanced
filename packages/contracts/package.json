@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./sequential-runner": "./src/sequential-runner.ts"
+    "./sequential-runner": "./src/sequential-runner.ts",
+    "./resumable-runner": "./src/resumable-runner.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
