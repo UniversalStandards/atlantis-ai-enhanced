@@ -1,0 +1,70 @@
+name: Bootstrap pnpm lockfile
+
+on:
+  push:
+    branches:
+      - sprint/7-day-operational-alpha
+    paths:
+      - ".github/workflows/bootstrap-lockfile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bootstrap-pnpm-lockfile
+  cancel-in-progress: false
+
+jobs:
+  generate-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sprint/7-day-operational-alpha
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate authentic lockfile
+        run: pnpm install --lockfile-only
+
+      - name: Verify frozen installation
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify typecheck and tests
+        run: |
+          pnpm typecheck
+          pnpm test
+
+      - name: Convert regular CI to frozen installs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/contracts.yml')
+          text = path.read_text()
+          text = text.replace(
+              '      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      # Temporary bootstrap mode until pnpm-lock.yaml is generated and committed.\n      # Issue #9 tracks conversion to --frozen-lockfile with pnpm caching enabled.\n      - run: pnpm install --no-frozen-lockfile',
+              '      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n          cache: pnpm\n      - run: pnpm install --frozen-lockfile',
+          )
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: rm .github/workflows/bootstrap-lockfile.yml
+
+      - name: Commit verified reproducibility artifacts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- pnpm-lock.yaml .github/workflows/contracts.yml .github/workflows/bootstrap-lockfile.yml
+          git commit -m "build: lock dependencies and enforce frozen CI"
+          git push origin HEAD:sprint/7-day-operational-alpha
