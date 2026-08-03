@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./approval-control": "./src/approval-control.ts",
     "./execution-control": "./src/execution-control.ts",
     "./sequential-runner": "./src/sequential-runner.ts",
     "./resumable-runner": "./src/resumable-runner.ts"
