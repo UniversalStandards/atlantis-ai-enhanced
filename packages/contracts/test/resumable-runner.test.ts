@@ -109,7 +109,7 @@ function ids(): () => string {
 }
 
 describe("ResumableSequentialWorkflowRunner", () => {
-  it("resumes after failure events without repeating completed work", async () => {
+  it("resumes after a nonterminal interruption without repeating completed work", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new ContiguousMemoryEventSink();
     const nextEventId = ids();
@@ -164,6 +164,8 @@ describe("ResumableSequentialWorkflowRunner", () => {
     expect(checkpoints.checkpoint?.nextStepIndex).toBe(1);
     expect(checkpoints.checkpoint?.lastEventSequence).toBe(3);
     expect(events.cursor().sequence).toBe(6);
+    expect(events.events.at(-1)?.type).toBe("execution.interrupted");
+    expect(events.events.some((event) => event.type === "execution.failed")).toBe(false);
 
     failSecond = false;
     const resumedContext = context();
@@ -183,6 +185,11 @@ describe("ResumableSequentialWorkflowRunner", () => {
     );
     expect(events.events[6]?.parentEventId).toBe(events.events[5]?.id);
     expect(events.events.at(-1)?.type).toBe("execution.completed");
+    expect(
+      events.events.filter(
+        (event) => event.type === "execution.completed" || event.type === "execution.failed",
+      ).map((event) => event.type),
+    ).toEqual(["execution.completed"]);
   });
 
   it("fails closed when the event stream is behind the checkpoint", async () => {
