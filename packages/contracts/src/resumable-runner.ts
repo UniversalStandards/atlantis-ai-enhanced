@@ -11,7 +11,9 @@ import {
   assertValidRetryPolicy,
   executeWithControl,
   ExecutionCancelledError,
+  ExecutionTimedOutError,
   type CancellationSignal,
+  type ExecutionDeadline,
   type RetryPolicy,
 } from "./execution-control.js";
 
@@ -69,6 +71,7 @@ export interface ResumableRunnerOptions {
     stepIndex: number,
   ) => RetryPolicy;
   readonly cancellation?: CancellationSignal;
+  readonly deadline?: ExecutionDeadline;
   readonly actor?: string;
   readonly now?: () => string;
 }
@@ -250,6 +253,7 @@ export class ResumableSequentialWorkflowRunner {
             retryPolicy,
             {
               cancellation: this.options.cancellation,
+              deadline: this.options.deadline,
               hooks: {
                 onAttemptFailed: async ({ attempt, maxAttempts }, error, willRetry) => {
                   await append("workflow.step.attempt.failed", {
@@ -265,6 +269,16 @@ export class ResumableSequentialWorkflowRunner {
                     assertWithinBudget(context);
                     await saveCheckpoint();
                   }
+                },
+                onTimedOut: async ({ attempt, maxAttempts, deadlineAtMs, observedAtMs }) => {
+                  await append("workflow.step.timed_out", {
+                    stepId: step.id,
+                    stepIndex: index,
+                    attempt,
+                    maxAttempts,
+                    deadlineAtMs,
+                    observedAtMs,
+                  });
                 },
               },
             },
@@ -283,7 +297,10 @@ export class ResumableSequentialWorkflowRunner {
               observed: error.observed,
               stepId: step.id,
             });
-          } else if (!(error instanceof ExecutionCancelledError)) {
+          } else if (
+            !(error instanceof ExecutionCancelledError) &&
+            !(error instanceof ExecutionTimedOutError)
+          ) {
             await append("workflow.step.failed", {
               stepId: step.id,
               stepIndex: index,
@@ -314,6 +331,17 @@ export class ResumableSequentialWorkflowRunner {
         await append("execution.cancelled", {
           workflowId: workflow.id,
           reason: error.reason,
+          nextStepIndex,
+        });
+      } else if (error instanceof ExecutionTimedOutError) {
+        if (checkpoint !== undefined) {
+          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          checkpoint = undefined;
+        }
+        await append("execution.timed_out", {
+          workflowId: workflow.id,
+          deadlineAtMs: error.deadlineAtMs,
+          observedAtMs: error.observedAtMs,
           nextStepIndex,
         });
       } else if (error instanceof BudgetExceededError) {
