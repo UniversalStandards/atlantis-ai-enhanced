@@ -20,7 +20,9 @@ describe("executeWithControl", () => {
         { maxAttempts: 3 },
         {
           hooks: {
-            onAttemptStarted: ({ attempt }) => attempts.push(attempt),
+            onAttemptStarted: ({ attempt }) => {
+              attempts.push(attempt);
+            },
           },
         },
       ),
