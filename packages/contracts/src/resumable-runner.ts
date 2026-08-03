@@ -8,6 +8,15 @@ import {
   type WorkflowStep,
 } from "./index.js";
 import {
+  ApprovalRejectedError,
+  ApprovalRequiredError,
+  InvalidApprovalError,
+  normalizeApprovalRequest,
+  resolveApproval,
+  type ApprovalRequest,
+  type ApprovalResolution,
+} from "./approval-control.js";
+import {
   assertValidRetryPolicy,
   executeWithControl,
   ExecutionCancelledError,
@@ -35,6 +44,7 @@ export interface WorkflowCheckpoint {
   readonly usage: ExecutionUsage;
   readonly lastEventSequence: number;
   readonly parentEventId?: string;
+  readonly pendingApproval?: ApprovalRequest;
   readonly revision: number;
 }
 
@@ -70,6 +80,14 @@ export interface ResumableRunnerOptions {
     step: WorkflowStep<unknown, unknown>,
     stepIndex: number,
   ) => RetryPolicy;
+  readonly approvalForStep?: (
+    step: WorkflowStep<unknown, unknown>,
+    stepIndex: number,
+    context: WorkflowContext,
+  ) => ApprovalRequest | undefined | Promise<ApprovalRequest | undefined>;
+  readonly loadApprovalResolution?: (
+    request: ApprovalRequest,
+  ) => ApprovalResolution | undefined | Promise<ApprovalResolution | undefined>;
   readonly cancellation?: CancellationSignal;
   readonly deadline?: ExecutionDeadline;
   readonly actor?: string;
@@ -100,6 +118,21 @@ function validateEventCursor(cursor: ExecutionEventCursor): void {
   if (cursor.sequence > 0 && cursor.parentEventId === undefined) {
     throw new InvalidCheckpointError("A non-empty execution stream must identify its tail event");
   }
+}
+
+function validateApprovalBinding(
+  request: ApprovalRequest,
+  executionId: string,
+  stepId: string,
+): ApprovalRequest {
+  const normalized = normalizeApprovalRequest(request);
+  if (normalized.executionId !== executionId) {
+    throw new InvalidApprovalError("approval request executionId does not match context");
+  }
+  if (normalized.stepId !== stepId) {
+    throw new InvalidApprovalError("approval request stepId does not match workflow step");
+  }
+  return normalized;
 }
 
 function validateCheckpoint<I, O>(
@@ -140,6 +173,19 @@ function validateCheckpoint<I, O>(
   if (!Number.isInteger(checkpoint.revision) || checkpoint.revision < 1) {
     throw new InvalidCheckpointError("Checkpoint revision is invalid");
   }
+  if (checkpoint.pendingApproval !== undefined) {
+    const step = workflow.steps[checkpoint.nextStepIndex];
+    if (step === undefined) {
+      throw new InvalidCheckpointError("Completed workflow cannot retain a pending approval");
+    }
+    try {
+      validateApprovalBinding(checkpoint.pendingApproval, context.executionId, step.id);
+    } catch (error) {
+      throw new InvalidCheckpointError(
+        error instanceof Error ? error.message : "Checkpoint approval is invalid",
+      );
+    }
+  }
 }
 
 export class ResumableSequentialWorkflowRunner {
@@ -173,6 +219,7 @@ export class ResumableSequentialWorkflowRunner {
     let checkpoint = loaded;
     let value: unknown = checkpoint?.value ?? workflow.mapInput?.(input) ?? input;
     let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
+    let pendingApproval = checkpoint?.pendingApproval;
     let sequence = cursor.sequence;
     let parentEventId = cursor.parentEventId;
 
@@ -204,6 +251,7 @@ export class ResumableSequentialWorkflowRunner {
           usage: copyUsage(context.usage),
           lastEventSequence: sequence,
           ...(parentEventId === undefined ? {} : { parentEventId }),
+          ...(pendingApproval === undefined ? {} : { pendingApproval }),
         },
         checkpoint?.revision,
       );
@@ -224,6 +272,46 @@ export class ResumableSequentialWorkflowRunner {
         const step = workflow.steps[index];
         if (step === undefined) {
           throw new InvalidCheckpointError(`Workflow step ${index} is missing`);
+        }
+
+        const requestedApproval =
+          pendingApproval ??
+          (await this.options.approvalForStep?.(step, index, context));
+        if (requestedApproval !== undefined) {
+          const request = validateApprovalBinding(
+            requestedApproval,
+            context.executionId,
+            step.id,
+          );
+          if (pendingApproval === undefined) {
+            pendingApproval = request;
+            await append("approval.requested", request);
+            await saveCheckpoint();
+          }
+
+          const resolution = await this.options.loadApprovalResolution?.(request);
+          if (resolution === undefined) {
+            throw new ApprovalRequiredError(request);
+          }
+
+          const approval = resolveApproval(request, resolution);
+          await append("approval.resolved", {
+            approvalId: approval.request.approvalId,
+            executionId: approval.request.executionId,
+            requestVersion: approval.request.requestVersion,
+            stepId: approval.request.stepId,
+            decision: approval.resolution.decision,
+            resolvedBy: approval.resolution.resolvedBy,
+            resolvedAt: approval.resolution.resolvedAt,
+            ...(approval.resolution.comment === undefined
+              ? {}
+              : { comment: approval.resolution.comment }),
+          });
+          if (approval.resolution.decision === "rejected") {
+            throw new ApprovalRejectedError(approval);
+          }
+          pendingApproval = undefined;
+          await saveCheckpoint();
         }
 
         assertWithinBudget(context);
@@ -323,7 +411,21 @@ export class ResumableSequentialWorkflowRunner {
       }
       return output;
     } catch (error) {
-      if (error instanceof ExecutionCancelledError) {
+      if (error instanceof ApprovalRequiredError) {
+        throw error;
+      }
+      if (error instanceof ApprovalRejectedError) {
+        if (checkpoint !== undefined) {
+          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          checkpoint = undefined;
+        }
+        await append("execution.failed", {
+          workflowId: workflow.id,
+          reason: "approval_rejected",
+          approvalId: error.approval.request.approvalId,
+          stepId: error.approval.request.stepId,
+        });
+      } else if (error instanceof ExecutionCancelledError) {
         if (checkpoint !== undefined) {
           await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
           checkpoint = undefined;
