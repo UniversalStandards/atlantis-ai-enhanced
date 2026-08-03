@@ -1,10 +1,13 @@
-import type { ExecutionBudget, WorkflowContext } from "@atlantis/contracts";
+import type {
+  ExecutionBudget,
+  ExecutionEvent,
+  WorkflowContext,
+} from "@atlantis/contracts";
 import {
   SequentialWorkflowRunner,
   type SequentialWorkflow,
 } from "@atlantis/contracts/sequential-runner";
 
-import type { ExecutionEvent } from "@atlantis/contracts";
 import { DurableExecutionEventSink } from "./execution-event-sink.js";
 
 export interface TaskRequest<I = unknown> {
@@ -29,11 +32,118 @@ export interface TaskEntrypointOptions {
   readonly now?: () => string;
 }
 
+export interface TaskAuthorizationDecision {
+  readonly allowed: boolean;
+  readonly reason?: string;
+}
+
+export interface GovernedTaskEntrypointOptions {
+  readonly taskEntrypoint: TaskEntrypoint;
+  readonly authorize: (
+    request: TaskRequest,
+  ) => TaskAuthorizationDecision | Promise<TaskAuthorizationDecision>;
+  readonly normalize?: (request: unknown) => TaskRequest;
+}
+
 export class UnknownWorkflowError extends Error {
   public constructor(public readonly workflowId: string) {
     super(`Unknown workflow: ${workflowId}`);
     this.name = "UnknownWorkflowError";
   }
+}
+
+export class InvalidTaskRequestError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidTaskRequestError";
+  }
+}
+
+export class TaskAuthorizationError extends Error {
+  public constructor(public readonly reason = "Task request was not authorized.") {
+    super(reason);
+    this.name = "TaskAuthorizationError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredString(
+  value: unknown,
+  field: "workflowId" | "userId",
+): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new InvalidTaskRequestError(`${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function requiredBudget(value: unknown): ExecutionBudget {
+  if (!isRecord(value)) {
+    throw new InvalidTaskRequestError("budget must be an object.");
+  }
+
+  const fields = [
+    "maxToolCalls",
+    "maxRetries",
+    "maxIterations",
+    "maxTokens",
+    "maxDurationMs",
+    "maxCostUsd",
+  ] as const;
+  const normalized = {} as Record<(typeof fields)[number], number>;
+
+  for (const field of fields) {
+    const candidate = value[field];
+    if (typeof candidate !== "number" || !Number.isFinite(candidate) || candidate < 0) {
+      throw new InvalidTaskRequestError(
+        `budget.${field} must be a finite non-negative number.`,
+      );
+    }
+    normalized[field] = candidate;
+  }
+
+  return Object.freeze(normalized) as unknown as ExecutionBudget;
+}
+
+function optionalMetadata(value: unknown): Readonly<Record<string, string>> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new InvalidTaskRequestError("metadata must be an object of string values.");
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [key, candidate] of Object.entries(value)) {
+    if (key.trim().length === 0 || typeof candidate !== "string") {
+      throw new InvalidTaskRequestError(
+        "metadata must contain non-empty keys and string values.",
+      );
+    }
+    normalized[key] = candidate;
+  }
+  return Object.freeze(normalized);
+}
+
+export function normalizeTaskRequest(request: unknown): TaskRequest {
+  if (!isRecord(request)) {
+    throw new InvalidTaskRequestError("Task request must be an object.");
+  }
+  if (!("input" in request)) {
+    throw new InvalidTaskRequestError("input is required.");
+  }
+
+  const metadata = optionalMetadata(request.metadata);
+  return Object.freeze({
+    workflowId: requiredString(request.workflowId, "workflowId"),
+    input: request.input,
+    userId: requiredString(request.userId, "userId"),
+    budget: requiredBudget(request.budget),
+    ...(metadata === undefined ? {} : { metadata }),
+  });
 }
 
 export class TaskEntrypoint {
@@ -79,5 +189,22 @@ export class TaskEntrypoint {
       output,
       trace: this.options.eventSink.readExecution(executionId),
     });
+  }
+}
+
+export class GovernedTaskEntrypoint {
+  private readonly normalize: (request: unknown) => TaskRequest;
+
+  public constructor(private readonly options: GovernedTaskEntrypointOptions) {
+    this.normalize = options.normalize ?? normalizeTaskRequest;
+  }
+
+  public async submit<O = unknown>(request: unknown): Promise<TaskResult<O>> {
+    const normalized = this.normalize(request);
+    const decision = await this.options.authorize(normalized);
+    if (!decision.allowed) {
+      throw new TaskAuthorizationError(decision.reason);
+    }
+    return this.options.taskEntrypoint.submit<unknown, O>(normalized);
   }
 }
