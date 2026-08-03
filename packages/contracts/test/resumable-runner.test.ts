@@ -162,8 +162,8 @@ describe("ResumableSequentialWorkflowRunner", () => {
       buildRunner("2026-08-03T15:00:00.000Z").run(workflow, 2, context()),
     ).rejects.toThrow("simulated interruption");
     expect(checkpoints.checkpoint?.nextStepIndex).toBe(1);
-    expect(checkpoints.checkpoint?.lastEventSequence).toBe(3);
-    expect(events.cursor().sequence).toBe(6);
+    expect(checkpoints.checkpoint?.lastEventSequence).toBe(4);
+    expect(events.cursor().sequence).toBe(9);
     expect(events.events.at(-1)?.type).toBe("execution.interrupted");
     expect(events.events.some((event) => event.type === "execution.failed")).toBe(false);
 
@@ -183,7 +183,7 @@ describe("ResumableSequentialWorkflowRunner", () => {
     expect(events.events.map((event) => event.sequence)).toEqual(
       Array.from({ length: events.events.length }, (_item, index) => index + 1),
     );
-    expect(events.events[6]?.parentEventId).toBe(events.events[5]?.id);
+    expect(events.events[9]?.parentEventId).toBe(events.events[8]?.id);
     expect(events.events.at(-1)?.type).toBe("execution.completed");
     expect(
       events.events.filter(
