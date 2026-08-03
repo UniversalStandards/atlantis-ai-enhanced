@@ -38,6 +38,11 @@ export interface CheckpointStore {
   clear(executionId: string, expectedRevision: number): Promise<void>;
 }
 
+export interface ExecutionEventCursor {
+  readonly sequence: number;
+  readonly parentEventId?: string;
+}
+
 export class InvalidCheckpointError extends Error {
   public constructor(message: string) {
     super(message);
@@ -48,6 +53,9 @@ export class InvalidCheckpointError extends Error {
 export interface ResumableRunnerOptions {
   readonly checkpointStore: CheckpointStore;
   readonly eventSink: EventSink;
+  readonly loadEventCursor: (
+    executionId: string,
+  ) => ExecutionEventCursor | Promise<ExecutionEventCursor>;
   readonly nextEventId: () => string;
   readonly actor?: string;
   readonly now?: () => string;
@@ -59,6 +67,24 @@ function copyUsage(usage: ExecutionUsage): ExecutionUsage {
 
 function restoreUsage(target: ExecutionUsage, source: ExecutionUsage): void {
   Object.assign(target, copyUsage(source));
+}
+
+function validateEventCursor(cursor: ExecutionEventCursor): void {
+  if (!Number.isSafeInteger(cursor.sequence) || cursor.sequence < 0) {
+    throw new InvalidCheckpointError("Execution event cursor sequence is invalid");
+  }
+  if (
+    cursor.parentEventId !== undefined &&
+    (typeof cursor.parentEventId !== "string" || cursor.parentEventId.trim().length === 0)
+  ) {
+    throw new InvalidCheckpointError("Execution event cursor parentEventId is invalid");
+  }
+  if (cursor.sequence === 0 && cursor.parentEventId !== undefined) {
+    throw new InvalidCheckpointError("An empty execution stream cannot have a parent event");
+  }
+  if (cursor.sequence > 0 && cursor.parentEventId === undefined) {
+    throw new InvalidCheckpointError("A non-empty execution stream must identify its tail event");
+  }
 }
 
 function validateCheckpoint<I, O>(
@@ -93,7 +119,7 @@ function validateCheckpoint<I, O>(
   ) {
     throw new InvalidCheckpointError("Checkpoint completed steps are not a valid workflow prefix");
   }
-  if (!Number.isInteger(checkpoint.lastEventSequence) || checkpoint.lastEventSequence < 0) {
+  if (!Number.isSafeInteger(checkpoint.lastEventSequence) || checkpoint.lastEventSequence < 0) {
     throw new InvalidCheckpointError("Checkpoint event sequence is invalid");
   }
   if (!Number.isInteger(checkpoint.revision) || checkpoint.revision < 1) {
@@ -121,11 +147,19 @@ export class ResumableSequentialWorkflowRunner {
       restoreUsage(context.usage, loaded.usage);
     }
 
+    const cursor = await this.options.loadEventCursor(context.executionId);
+    validateEventCursor(cursor);
+    if (loaded !== undefined && cursor.sequence < loaded.lastEventSequence) {
+      throw new InvalidCheckpointError(
+        "Execution event stream is behind the durable checkpoint",
+      );
+    }
+
     let checkpoint = loaded;
     let value: unknown = checkpoint?.value ?? workflow.mapInput?.(input) ?? input;
     let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
-    let sequence = checkpoint?.lastEventSequence ?? 0;
-    let parentEventId = checkpoint?.parentEventId;
+    let sequence = cursor.sequence;
+    let parentEventId = cursor.parentEventId;
 
     const append = async <T>(type: ExecutionEvent<T>["type"], payload: T): Promise<void> => {
       const id = this.options.nextEventId();
