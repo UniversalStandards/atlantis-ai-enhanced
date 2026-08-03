@@ -7,6 +7,7 @@ export type ExecutionStatus =
   | "succeeded"
   | "failed"
   | "cancelled"
+  | "timed_out"
   | "budget_exceeded";
 
 export interface ExecutionBudget {
@@ -57,11 +58,13 @@ export type ExecutionEventType =
   | "execution.started"
   | "execution.interrupted"
   | "execution.cancelled"
+  | "execution.timed_out"
   | "execution.completed"
   | "execution.failed"
   | "workflow.step.started"
   | "workflow.step.attempt.started"
   | "workflow.step.attempt.failed"
+  | "workflow.step.timed_out"
   | "workflow.step.completed"
   | "workflow.step.failed"
   | "tool.started"
@@ -162,9 +165,7 @@ export function assertWithinBudget(context: WorkflowContext): void {
     assertFiniteNonNegative(field, value);
   }
 
-  const checks: ReadonlyArray<
-    readonly [keyof ExecutionBudget, number, number]
-  > = [
+  const checks: ReadonlyArray<readonly [keyof ExecutionBudget, number, number]> = [
     ["maxToolCalls", budget.maxToolCalls, usage.toolCalls],
     ["maxRetries", budget.maxRetries, usage.retries],
     ["maxIterations", budget.maxIterations, usage.iterations],
