@@ -22,6 +22,11 @@ export interface ExecutionControlHooks {
   ) => void | Promise<void>;
 }
 
+export interface ExecutionControlOptions {
+  readonly cancellation?: CancellationSignal | undefined;
+  readonly hooks?: ExecutionControlHooks | undefined;
+}
+
 export class ExecutionCancelledError extends Error {
   public constructor(public readonly reason = "Execution cancelled") {
     super(reason);
@@ -53,10 +58,7 @@ function assertNotCancelled(signal?: CancellationSignal): void {
 export async function executeWithControl<T>(
   operation: (context: ExecutionAttemptContext) => Promise<T>,
   policy: RetryPolicy,
-  options: {
-    readonly cancellation?: CancellationSignal;
-    readonly hooks?: ExecutionControlHooks;
-  } = {},
+  options: ExecutionControlOptions = {},
 ): Promise<T> {
   assertValidRetryPolicy(policy);
 
