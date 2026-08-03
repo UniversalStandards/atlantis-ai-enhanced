@@ -7,6 +7,13 @@ import {
   type WorkflowContext,
   type WorkflowStep,
 } from "./index.js";
+import {
+  assertValidRetryPolicy,
+  executeWithControl,
+  ExecutionCancelledError,
+  type CancellationSignal,
+  type RetryPolicy,
+} from "./execution-control.js";
 
 export interface ResumableWorkflow<I, O> {
   readonly id: string;
@@ -57,6 +64,11 @@ export interface ResumableRunnerOptions {
     executionId: string,
   ) => ExecutionEventCursor | Promise<ExecutionEventCursor>;
   readonly nextEventId: () => string;
+  readonly retryPolicyForStep?: (
+    step: WorkflowStep<unknown, unknown>,
+    stepIndex: number,
+  ) => RetryPolicy;
+  readonly cancellation?: CancellationSignal;
   readonly actor?: string;
   readonly now?: () => string;
 }
@@ -197,8 +209,48 @@ export class ResumableSequentialWorkflowRunner {
         assertWithinBudget(context);
         await append("workflow.step.started", { stepId: step.id, stepIndex: index });
 
+        const requestedPolicy = this.options.retryPolicyForStep?.(step, index) ?? {
+          maxAttempts: 1,
+        };
+        assertValidRetryPolicy(requestedPolicy);
+        const remainingRetries = context.budget.maxRetries - context.usage.retries;
+        const retryPolicy: RetryPolicy = {
+          ...requestedPolicy,
+          maxAttempts: Math.min(requestedPolicy.maxAttempts, remainingRetries + 1),
+        };
+
         try {
-          value = await step.execute(value, context);
+          value = await executeWithControl(
+            async ({ attempt, maxAttempts }) => {
+              await append("workflow.step.attempt.started", {
+                stepId: step.id,
+                stepIndex: index,
+                attempt,
+                maxAttempts,
+              });
+              return step.execute(value, context);
+            },
+            retryPolicy,
+            {
+              cancellation: this.options.cancellation,
+              hooks: {
+                onAttemptFailed: async ({ attempt, maxAttempts }, error, willRetry) => {
+                  await append("workflow.step.attempt.failed", {
+                    stepId: step.id,
+                    stepIndex: index,
+                    attempt,
+                    maxAttempts,
+                    willRetry,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  if (willRetry) {
+                    context.usage.retries += 1;
+                    assertWithinBudget(context);
+                  }
+                },
+              },
+            },
+          );
           context.usage.iterations += 1;
           assertWithinBudget(context);
           await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
@@ -226,9 +278,10 @@ export class ResumableSequentialWorkflowRunner {
               observed: error.observed,
               stepId: step.id,
             });
-          } else {
+          } else if (!(error instanceof ExecutionCancelledError)) {
             await append("workflow.step.failed", {
               stepId: step.id,
+              stepIndex: index,
               error: error instanceof Error ? error.message : String(error),
             });
           }
@@ -248,7 +301,17 @@ export class ResumableSequentialWorkflowRunner {
       }
       return output;
     } catch (error) {
-      if (error instanceof BudgetExceededError) {
+      if (error instanceof ExecutionCancelledError) {
+        if (checkpoint !== undefined) {
+          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          checkpoint = undefined;
+        }
+        await append("execution.cancelled", {
+          workflowId: workflow.id,
+          reason: error.reason,
+          nextStepIndex,
+        });
+      } else if (error instanceof BudgetExceededError) {
         await append("execution.failed", {
           workflowId: workflow.id,
           reason: "budget_exceeded",
