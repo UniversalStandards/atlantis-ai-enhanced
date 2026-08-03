@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./execution-event-sink": "./src/execution-event-sink.ts",
-    "./task-entrypoint": "./src/task-entrypoint.ts"
+    "./task-entrypoint": "./src/task-entrypoint.ts",
+    "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
