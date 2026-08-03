@@ -248,11 +248,20 @@ export class ResumableSequentialWorkflowRunner {
       }
       return output;
     } catch (error) {
-      await append("execution.failed", {
-        workflowId: workflow.id,
-        reason: error instanceof BudgetExceededError ? "budget_exceeded" : "error",
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (error instanceof BudgetExceededError) {
+        await append("execution.failed", {
+          workflowId: workflow.id,
+          reason: "budget_exceeded",
+          error: error.message,
+        });
+      } else {
+        await append("execution.interrupted", {
+          workflowId: workflow.id,
+          reason: "recoverable_error",
+          error: error instanceof Error ? error.message : String(error),
+          nextStepIndex,
+        });
+      }
       throw error;
     }
   }
