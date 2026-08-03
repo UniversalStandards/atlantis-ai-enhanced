@@ -16,7 +16,9 @@ class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
 
   public async load(executionId: string): Promise<WorkflowCheckpoint | undefined> {
-    return this.checkpoint?.executionId === executionId ? structuredClone(this.checkpoint) : undefined;
+    return this.checkpoint?.executionId === executionId
+      ? structuredClone(this.checkpoint)
+      : undefined;
   }
 
   public async save(
@@ -45,11 +47,27 @@ class MemoryCheckpointStore implements CheckpointStore {
   }
 }
 
-class MemoryEventSink implements EventSink {
+class ContiguousMemoryEventSink implements EventSink {
   public readonly events: ExecutionEvent[] = [];
 
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
+    const expectedSequence = this.events.length + 1;
+    if (event.sequence !== expectedSequence) {
+      throw new Error(
+        `event sequence ${event.sequence} does not match ${expectedSequence}`,
+      );
+    }
+    if (this.events.some((stored) => stored.id === event.id)) {
+      throw new Error(`duplicate event id ${event.id}`);
+    }
     this.events.push(event as ExecutionEvent);
+  }
+
+  public cursor(): { sequence: number; parentEventId?: string } {
+    const tail = this.events.at(-1);
+    return tail === undefined
+      ? { sequence: 0 }
+      : { sequence: tail.sequence, parentEventId: tail.id };
   }
 }
 
@@ -91,9 +109,10 @@ function ids(): () => string {
 }
 
 describe("ResumableSequentialWorkflowRunner", () => {
-  it("resumes at the next incomplete step without repeating completed work", async () => {
+  it("resumes after failure events without repeating completed work", async () => {
     const checkpoints = new MemoryCheckpointStore();
-    const events = new MemoryEventSink();
+    const events = new ContiguousMemoryEventSink();
+    const nextEventId = ids();
     const calls = { first: 0, second: 0, third: 0 };
     let failSecond = true;
 
@@ -130,39 +149,71 @@ describe("ResumableSequentialWorkflowRunner", () => {
       mapOutput: (value: unknown) => Number(value),
     } as const;
 
-    const firstRunner = new ResumableSequentialWorkflowRunner({
-      checkpointStore: checkpoints,
-      eventSink: events,
-      nextEventId: ids(),
-      now: () => "2026-08-03T15:00:00.000Z",
-    });
+    const buildRunner = (timestamp: string) =>
+      new ResumableSequentialWorkflowRunner({
+        checkpointStore: checkpoints,
+        eventSink: events,
+        loadEventCursor: () => events.cursor(),
+        nextEventId,
+        now: () => timestamp,
+      });
 
-    await expect(firstRunner.run(workflow, 2, context())).rejects.toThrow(
-      "simulated interruption",
-    );
+    await expect(
+      buildRunner("2026-08-03T15:00:00.000Z").run(workflow, 2, context()),
+    ).rejects.toThrow("simulated interruption");
     expect(checkpoints.checkpoint?.nextStepIndex).toBe(1);
-    expect(checkpoints.checkpoint?.completedStepIds).toEqual(["first"]);
+    expect(checkpoints.checkpoint?.lastEventSequence).toBe(3);
+    expect(events.cursor().sequence).toBe(6);
 
     failSecond = false;
-    const secondRunner = new ResumableSequentialWorkflowRunner({
-      checkpointStore: checkpoints,
-      eventSink: events,
-      nextEventId: ids(),
-      now: () => "2026-08-03T15:01:00.000Z",
-    });
     const resumedContext = context();
+    await expect(
+      buildRunner("2026-08-03T15:01:00.000Z").run(
+        workflow,
+        999,
+        resumedContext,
+      ),
+    ).resolves.toBe(9);
 
-    await expect(secondRunner.run(workflow, 999, resumedContext)).resolves.toBe(9);
     expect(calls).toEqual({ first: 1, second: 2, third: 1 });
     expect(resumedContext.usage.iterations).toBe(3);
     expect(checkpoints.checkpoint).toBeUndefined();
-
-    const resumedStart = events.events.find(
-      (event) =>
-        event.type === "execution.started" &&
-        (event.payload as { resumed?: boolean }).resumed === true,
+    expect(events.events.map((event) => event.sequence)).toEqual(
+      Array.from({ length: events.events.length }, (_item, index) => index + 1),
     );
-    expect(resumedStart).toBeDefined();
+    expect(events.events[6]?.parentEventId).toBe(events.events[5]?.id);
+    expect(events.events.at(-1)?.type).toBe("execution.completed");
+  });
+
+  it("fails closed when the event stream is behind the checkpoint", async () => {
+    const checkpoints = new MemoryCheckpointStore();
+    checkpoints.checkpoint = {
+      executionId: "execution-1",
+      workflowId: "recovery-workflow",
+      workflowVersion: "1",
+      nextStepIndex: 0,
+      completedStepIds: [],
+      value: 2,
+      usage: usage(),
+      lastEventSequence: 3,
+      parentEventId: "event-3",
+      revision: 1,
+    };
+
+    const runner = new ResumableSequentialWorkflowRunner({
+      checkpointStore: checkpoints,
+      eventSink: new ContiguousMemoryEventSink(),
+      loadEventCursor: () => ({ sequence: 0 }),
+      nextEventId: ids(),
+    });
+
+    await expect(
+      runner.run(
+        { id: "recovery-workflow", version: "1", steps: [] },
+        2,
+        context(),
+      ),
+    ).rejects.toBeInstanceOf(InvalidCheckpointError);
   });
 
   it("fails closed when a checkpoint does not match the workflow version", async () => {
@@ -181,7 +232,8 @@ describe("ResumableSequentialWorkflowRunner", () => {
 
     const runner = new ResumableSequentialWorkflowRunner({
       checkpointStore: checkpoints,
-      eventSink: new MemoryEventSink(),
+      eventSink: new ContiguousMemoryEventSink(),
+      loadEventCursor: () => ({ sequence: 0 }),
       nextEventId: ids(),
     });
 
@@ -210,7 +262,8 @@ describe("ResumableSequentialWorkflowRunner", () => {
 
     const runner = new ResumableSequentialWorkflowRunner({
       checkpointStore: checkpoints,
-      eventSink: new MemoryEventSink(),
+      eventSink: new ContiguousMemoryEventSink(),
+      loadEventCursor: () => ({ sequence: 3, parentEventId: "event-3" }),
       nextEventId: ids(),
     });
 
@@ -219,7 +272,13 @@ describe("ResumableSequentialWorkflowRunner", () => {
         {
           id: "recovery-workflow",
           version: "1",
-          steps: [{ id: "first", description: "first", execute: async (value) => value }],
+          steps: [
+            {
+              id: "first",
+              description: "first",
+              execute: async (value) => value,
+            },
+          ],
         },
         2,
         context(),
