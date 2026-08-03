@@ -96,9 +96,9 @@ export function normalizeResumableTaskRequest(
   });
 }
 
-function createContext(
-  request: Readonly<ResumableTaskRequest>,
-  workflow: ResumableWorkflow<unknown, unknown>,
+function createContext<I, O>(
+  request: Readonly<ResumableTaskRequest<I>>,
+  workflow: ResumableWorkflow<I, O>,
   executionId: string,
 ): WorkflowContext {
   return {
