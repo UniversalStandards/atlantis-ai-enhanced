@@ -21,7 +21,7 @@ on:
       - ".github/workflows/contracts.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -29,6 +29,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -50,11 +53,15 @@ jobs:
           pnpm typecheck
           pnpm test
 
-      - name: Upload generated lockfile
-        if: hashFiles('pnpm-lock.yaml') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: pnpm-lockfile
-          path: pnpm-lock.yaml
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit generated lockfile
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && hashFiles('pnpm-lock.yaml') != ''
+        run: |
+          if git diff --quiet -- pnpm-lock.yaml && git ls-files --error-unmatch pnpm-lock.yaml >/dev/null 2>&1; then
+            echo "Lockfile already committed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- pnpm-lock.yaml
+          git commit -m "build: lock workspace dependencies with pnpm 10.14.0"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
