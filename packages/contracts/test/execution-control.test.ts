@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ExecutionCancelledError,
+  ExecutionTimedOutError,
+  InvalidExecutionDeadlineError,
   InvalidRetryPolicyError,
   executeWithControl,
 } from "../src/execution-control.js";
@@ -122,4 +124,92 @@ describe("executeWithControl", () => {
 
     expect(failures).toEqual([true, false]);
   });
+
+  it("fails before starting work when the deadline is reached", async () => {
+    let called = false;
+    const timeouts: number[] = [];
+
+    await expect(
+      executeWithControl(
+        async () => {
+          called = true;
+          return "unexpected";
+        },
+        { maxAttempts: 1 },
+        {
+          deadline: { deadlineAtMs: 100, nowMs: () => 100 },
+          hooks: {
+            onTimedOut: ({ observedAtMs }) => {
+              timeouts.push(observedAtMs);
+            },
+          },
+        },
+      ),
+    ).rejects.toEqual(new ExecutionTimedOutError(100, 100));
+
+    expect(called).toBe(false);
+    expect(timeouts).toEqual([100]);
+  });
+
+  it("detects a deadline crossed while work is running", async () => {
+    const times = [10, 101];
+
+    await expect(
+      executeWithControl(
+        async () => "completed-after-deadline",
+        { maxAttempts: 1 },
+        {
+          deadline: {
+            deadlineAtMs: 100,
+            nowMs: () => times.shift() ?? 101,
+          },
+        },
+      ),
+    ).rejects.toEqual(new ExecutionTimedOutError(100, 101));
+  });
+
+  it("does not retry a failure after the deadline has elapsed", async () => {
+    const times = [10, 100];
+    let calls = 0;
+
+    await expect(
+      executeWithControl(
+        async () => {
+          calls += 1;
+          throw new Error("transient");
+        },
+        { maxAttempts: 3 },
+        {
+          deadline: {
+            deadlineAtMs: 100,
+            nowMs: () => times.shift() ?? 100,
+          },
+        },
+      ),
+    ).rejects.toEqual(new ExecutionTimedOutError(100, 100));
+
+    expect(calls).toBe(1);
+  });
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid deadline %s",
+    async (deadlineAtMs) => {
+      await expect(
+        executeWithControl(async () => "never", { maxAttempts: 1 }, {
+          deadline: { deadlineAtMs, nowMs: () => 0 },
+        }),
+      ).rejects.toBeInstanceOf(InvalidExecutionDeadlineError);
+    },
+  );
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid clock output %s",
+    async (observedAtMs) => {
+      await expect(
+        executeWithControl(async () => "never", { maxAttempts: 1 }, {
+          deadline: { deadlineAtMs: 100, nowMs: () => observedAtMs },
+        }),
+      ).rejects.toBeInstanceOf(InvalidExecutionDeadlineError);
+    },
+  );
 });
