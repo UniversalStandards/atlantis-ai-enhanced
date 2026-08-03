@@ -13,6 +13,7 @@ function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
     approvalId: "approval-1",
     executionId: "execution-1",
+    requestVersion: 1,
     stepId: "deploy",
     action: "deploy preview",
     reason: "consequential external change",
@@ -26,6 +27,7 @@ function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
 const approved = {
   approvalId: "approval-1",
   executionId: "execution-1",
+  requestVersion: 1,
   decision: "approved" as const,
   resolvedBy: "reviewer-1",
   resolvedAt: "2026-08-03T20:01:00.000Z",
@@ -78,6 +80,21 @@ describe("approval control", () => {
       resolveApproval(request(), { ...approved, executionId: "execution-2" }),
     ).toThrow(InvalidApprovalError);
   });
+
+  it("fails closed on stale request-version mismatch", () => {
+    expect(() =>
+      resolveApproval(request({ requestVersion: 2 }), approved),
+    ).toThrow(InvalidApprovalError);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid request version %s",
+    (requestVersion) => {
+      expect(() => normalizeApprovalRequest(request({ requestVersion }))).toThrow(
+        InvalidApprovalError,
+      );
+    },
+  );
 
   it("rejects resolutions that predate the request", () => {
     expect(() =>
