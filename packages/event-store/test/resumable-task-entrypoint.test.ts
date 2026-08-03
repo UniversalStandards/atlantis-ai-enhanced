@@ -62,7 +62,11 @@ describe("GovernedResumableTaskEntrypoint", () => {
         return "execution-1";
       },
       createRunner: (normalized) => {
-        runnerRequests.push({ executionId: normalized.executionId });
+        runnerRequests.push(
+          normalized.executionId === undefined
+            ? {}
+            : { executionId: normalized.executionId },
+        );
         return {
           run: async () => {
             if (normalized.approvalResolution === undefined) {
@@ -104,7 +108,7 @@ describe("GovernedResumableTaskEntrypoint", () => {
     });
     expect(allocated).toBe(1);
     expect(runnerRequests).toEqual([
-      { executionId: undefined },
+      {},
       { executionId: "execution-1" },
     ]);
   });
