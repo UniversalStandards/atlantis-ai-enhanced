@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./execution-event-sink": "./src/execution-event-sink.ts"
+    "./execution-event-sink": "./src/execution-event-sink.ts",
+    "./task-entrypoint": "./src/task-entrypoint.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
