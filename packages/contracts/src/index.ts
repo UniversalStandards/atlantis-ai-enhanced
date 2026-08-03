@@ -56,9 +56,12 @@ export interface WorkflowDefinition<I, O> {
 export type ExecutionEventType =
   | "execution.started"
   | "execution.interrupted"
+  | "execution.cancelled"
   | "execution.completed"
   | "execution.failed"
   | "workflow.step.started"
+  | "workflow.step.attempt.started"
+  | "workflow.step.attempt.failed"
   | "workflow.step.completed"
   | "workflow.step.failed"
   | "tool.started"
