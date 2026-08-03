@@ -4,11 +4,15 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./execution-event-sink": "./src/execution-event-sink.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0",
