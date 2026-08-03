@@ -15,6 +15,7 @@ import {
   resolveApproval,
   type ApprovalRequest,
   type ApprovalResolution,
+  type ResolvedApproval,
 } from "./approval-control.js";
 import {
   assertValidRetryPolicy,
@@ -45,6 +46,7 @@ export interface WorkflowCheckpoint {
   readonly lastEventSequence: number;
   readonly parentEventId?: string;
   readonly pendingApproval?: ApprovalRequest;
+  readonly approvedApproval?: ResolvedApproval;
   readonly revision: number;
 }
 
@@ -173,8 +175,17 @@ function validateCheckpoint<I, O>(
   if (!Number.isInteger(checkpoint.revision) || checkpoint.revision < 1) {
     throw new InvalidCheckpointError("Checkpoint revision is invalid");
   }
+  if (
+    checkpoint.pendingApproval !== undefined &&
+    checkpoint.approvedApproval !== undefined
+  ) {
+    throw new InvalidCheckpointError(
+      "Checkpoint cannot retain pending and approved authorization simultaneously",
+    );
+  }
+
+  const step = workflow.steps[checkpoint.nextStepIndex];
   if (checkpoint.pendingApproval !== undefined) {
-    const step = workflow.steps[checkpoint.nextStepIndex];
     if (step === undefined) {
       throw new InvalidCheckpointError("Completed workflow cannot retain a pending approval");
     }
@@ -183,6 +194,31 @@ function validateCheckpoint<I, O>(
     } catch (error) {
       throw new InvalidCheckpointError(
         error instanceof Error ? error.message : "Checkpoint approval is invalid",
+      );
+    }
+  }
+
+  if (checkpoint.approvedApproval !== undefined) {
+    if (step === undefined) {
+      throw new InvalidCheckpointError("Completed workflow cannot retain an approved authorization");
+    }
+    try {
+      const request = validateApprovalBinding(
+        checkpoint.approvedApproval.request,
+        context.executionId,
+        step.id,
+      );
+      const approval = resolveApproval(request, checkpoint.approvedApproval.resolution);
+      if (approval.resolution.decision !== "approved") {
+        throw new InvalidApprovalError(
+          "checkpoint approved authorization must contain an approved decision",
+        );
+      }
+    } catch (error) {
+      throw new InvalidCheckpointError(
+        error instanceof Error
+          ? error.message
+          : "Checkpoint approved authorization is invalid",
       );
     }
   }
@@ -220,6 +256,7 @@ export class ResumableSequentialWorkflowRunner {
     let value: unknown = checkpoint?.value ?? workflow.mapInput?.(input) ?? input;
     let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
     let pendingApproval = checkpoint?.pendingApproval;
+    let approvedApproval = checkpoint?.approvedApproval;
     let sequence = cursor.sequence;
     let parentEventId = cursor.parentEventId;
 
@@ -252,6 +289,7 @@ export class ResumableSequentialWorkflowRunner {
           lastEventSequence: sequence,
           ...(parentEventId === undefined ? {} : { parentEventId }),
           ...(pendingApproval === undefined ? {} : { pendingApproval }),
+          ...(approvedApproval === undefined ? {} : { approvedApproval }),
         },
         checkpoint?.revision,
       );
@@ -276,6 +314,7 @@ export class ResumableSequentialWorkflowRunner {
 
         const requestedApproval =
           pendingApproval ??
+          approvedApproval?.request ??
           (await this.options.approvalForStep?.(step, index, context));
         if (requestedApproval !== undefined) {
           const request = validateApprovalBinding(
@@ -283,35 +322,47 @@ export class ResumableSequentialWorkflowRunner {
             context.executionId,
             step.id,
           );
-          if (pendingApproval === undefined) {
-            pendingApproval = request;
-            await append("approval.requested", request);
+
+          if (approvedApproval !== undefined) {
+            const restored = resolveApproval(request, approvedApproval.resolution);
+            if (restored.resolution.decision !== "approved") {
+              throw new InvalidApprovalError(
+                "persisted protected-step authorization is not approved",
+              );
+            }
+            approvedApproval = restored;
+          } else {
+            if (pendingApproval === undefined) {
+              pendingApproval = request;
+              await append("approval.requested", request);
+              await saveCheckpoint();
+            }
+
+            const resolution = await this.options.loadApprovalResolution?.(request);
+            if (resolution === undefined) {
+              throw new ApprovalRequiredError(request);
+            }
+
+            const approval = resolveApproval(request, resolution);
+            await append("approval.resolved", {
+              approvalId: approval.request.approvalId,
+              executionId: approval.request.executionId,
+              requestVersion: approval.request.requestVersion,
+              stepId: approval.request.stepId,
+              decision: approval.resolution.decision,
+              resolvedBy: approval.resolution.resolvedBy,
+              resolvedAt: approval.resolution.resolvedAt,
+              ...(approval.resolution.comment === undefined
+                ? {}
+                : { comment: approval.resolution.comment }),
+            });
+            if (approval.resolution.decision === "rejected") {
+              throw new ApprovalRejectedError(approval);
+            }
+            pendingApproval = undefined;
+            approvedApproval = approval;
             await saveCheckpoint();
           }
-
-          const resolution = await this.options.loadApprovalResolution?.(request);
-          if (resolution === undefined) {
-            throw new ApprovalRequiredError(request);
-          }
-
-          const approval = resolveApproval(request, resolution);
-          await append("approval.resolved", {
-            approvalId: approval.request.approvalId,
-            executionId: approval.request.executionId,
-            requestVersion: approval.request.requestVersion,
-            stepId: approval.request.stepId,
-            decision: approval.resolution.decision,
-            resolvedBy: approval.resolution.resolvedBy,
-            resolvedAt: approval.resolution.resolvedAt,
-            ...(approval.resolution.comment === undefined
-              ? {}
-              : { comment: approval.resolution.comment }),
-          });
-          if (approval.resolution.decision === "rejected") {
-            throw new ApprovalRejectedError(approval);
-          }
-          pendingApproval = undefined;
-          await saveCheckpoint();
         }
 
         assertWithinBudget(context);
@@ -376,6 +427,7 @@ export class ResumableSequentialWorkflowRunner {
           await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
 
           nextStepIndex = index + 1;
+          approvedApproval = undefined;
           await saveCheckpoint();
         } catch (error) {
           if (error instanceof BudgetExceededError) {
