@@ -3,6 +3,7 @@ export type ApprovalDecision = "approved" | "rejected";
 export interface ApprovalRequest {
   readonly approvalId: string;
   readonly executionId: string;
+  readonly requestVersion: number;
   readonly stepId: string;
   readonly action: string;
   readonly reason: string;
@@ -14,6 +15,7 @@ export interface ApprovalRequest {
 export interface ApprovalResolution {
   readonly approvalId: string;
   readonly executionId: string;
+  readonly requestVersion: number;
   readonly decision: ApprovalDecision;
   readonly resolvedBy: string;
   readonly resolvedAt: string;
@@ -53,6 +55,13 @@ function requireNonBlank(field: string, value: unknown): string {
   return value.trim();
 }
 
+function requirePositiveSafeInteger(field: string, value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new InvalidApprovalError(`${field} must be a positive safe integer`);
+  }
+  return value as number;
+}
+
 function requireCanonicalTimestamp(field: string, value: unknown): string {
   const timestamp = requireNonBlank(field, value);
   const parsed = new Date(timestamp);
@@ -81,6 +90,7 @@ export function normalizeApprovalRequest(request: ApprovalRequest): ApprovalRequ
   return Object.freeze({
     approvalId: requireNonBlank("approvalId", request.approvalId),
     executionId: requireNonBlank("executionId", request.executionId),
+    requestVersion: requirePositiveSafeInteger("requestVersion", request.requestVersion),
     stepId: requireNonBlank("stepId", request.stepId),
     action: requireNonBlank("action", request.action),
     reason: requireNonBlank("reason", request.reason),
@@ -103,6 +113,10 @@ export function resolveApproval(
   const resolution: ApprovalResolution = Object.freeze({
     approvalId: requireNonBlank("approvalId", rawResolution.approvalId),
     executionId: requireNonBlank("executionId", rawResolution.executionId),
+    requestVersion: requirePositiveSafeInteger(
+      "requestVersion",
+      rawResolution.requestVersion,
+    ),
     decision,
     resolvedBy: requireNonBlank("resolvedBy", rawResolution.resolvedBy),
     resolvedAt: requireCanonicalTimestamp("resolvedAt", rawResolution.resolvedAt),
@@ -116,6 +130,9 @@ export function resolveApproval(
   }
   if (resolution.executionId !== request.executionId) {
     throw new InvalidApprovalError("resolution executionId does not match request");
+  }
+  if (resolution.requestVersion !== request.requestVersion) {
+    throw new InvalidApprovalError("resolution requestVersion does not match request");
   }
   if (resolution.resolvedAt < request.requestedAt) {
     throw new InvalidApprovalError("resolution cannot predate the approval request");
