@@ -189,6 +189,23 @@ export class ResumableSequentialWorkflowRunner {
       parentEventId = id;
     };
 
+    const saveCheckpoint = async (): Promise<void> => {
+      checkpoint = await this.options.checkpointStore.save(
+        {
+          executionId: context.executionId,
+          workflowId: workflow.id,
+          workflowVersion: workflow.version,
+          nextStepIndex,
+          completedStepIds: workflow.steps.slice(0, nextStepIndex).map((item) => item.id),
+          value,
+          usage: copyUsage(context.usage),
+          lastEventSequence: sequence,
+          ...(parentEventId === undefined ? {} : { parentEventId }),
+        },
+        checkpoint?.revision,
+      );
+    };
+
     await append("execution.started", {
       workflowId: workflow.id,
       workflowVersion: workflow.version,
@@ -246,6 +263,7 @@ export class ResumableSequentialWorkflowRunner {
                   if (willRetry) {
                     context.usage.retries += 1;
                     assertWithinBudget(context);
+                    await saveCheckpoint();
                   }
                 },
               },
@@ -256,20 +274,7 @@ export class ResumableSequentialWorkflowRunner {
           await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
 
           nextStepIndex = index + 1;
-          checkpoint = await this.options.checkpointStore.save(
-            {
-              executionId: context.executionId,
-              workflowId: workflow.id,
-              workflowVersion: workflow.version,
-              nextStepIndex,
-              completedStepIds: workflow.steps.slice(0, nextStepIndex).map((item) => item.id),
-              value,
-              usage: copyUsage(context.usage),
-              lastEventSequence: sequence,
-              ...(parentEventId === undefined ? {} : { parentEventId }),
-            },
-            checkpoint?.revision,
-          );
+          await saveCheckpoint();
         } catch (error) {
           if (error instanceof BudgetExceededError) {
             await append("budget.exceeded", {
