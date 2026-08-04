@@ -8,6 +8,7 @@
     "./approval-control": "./src/approval-control.ts",
     "./execution-control": "./src/execution-control.ts",
     "./external-effect": "./src/external-effect.ts",
+    "./external-effect-execution": "./src/external-effect-execution.ts",
     "./sequential-runner": "./src/sequential-runner.ts",
     "./resumable-runner": "./src/resumable-runner.ts"
   },
