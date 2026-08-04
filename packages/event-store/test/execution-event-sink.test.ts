@@ -129,4 +129,55 @@ describe("DurableExecutionEventSink", () => {
 
     expect(sink.readExecution("execution-1")).toEqual([]);
   });
+
+  it("serializes independent append adapters and recovers after a failed predecessor", async () => {
+    const sink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    );
+    const order: string[] = [];
+
+    const failedAdapter = sink.withExecutionAppendLock("execution-1", async () => {
+      order.push("failed-start");
+      await Promise.resolve();
+      order.push("failed-end");
+      throw new Error("adapter append failed");
+    });
+
+    const lifecycleAdapter = sink.withExecutionAppendLock("execution-1", async () => {
+      order.push("lifecycle");
+      await sink.append({
+        id: "lifecycle-event",
+        executionId: "execution-1",
+        sequence: 1,
+        type: "external.effect.ownership.acquired",
+        occurredAt: "2026-08-04T20:00:00.000Z",
+        actor: "ownership-runtime",
+        payload: {},
+      });
+    });
+
+    const lossAdapter = sink.withExecutionAppendLock("execution-1", async () => {
+      order.push("loss");
+      const tail = sink.readExecution("execution-1").at(-1);
+      await sink.append({
+        id: "loss-event",
+        executionId: "execution-1",
+        sequence: 2,
+        type: "external.effect.ownership.lost",
+        occurredAt: "2026-08-04T20:00:01.000Z",
+        actor: "ownership-runtime",
+        ...(tail === undefined ? {} : { parentEventId: tail.id }),
+        payload: {},
+      });
+    });
+
+    await expect(failedAdapter).rejects.toThrow("adapter append failed");
+    await Promise.all([lifecycleAdapter, lossAdapter]);
+
+    expect(order).toEqual(["failed-start", "failed-end", "lifecycle", "loss"]);
+    expect(sink.readExecution("execution-1")).toMatchObject([
+      { id: "lifecycle-event", sequence: 1 },
+      { id: "loss-event", sequence: 2, parentEventId: "lifecycle-event" },
+    ]);
+  });
 });
