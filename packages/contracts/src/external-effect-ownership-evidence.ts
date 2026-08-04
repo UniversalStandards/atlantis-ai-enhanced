@@ -1,21 +1,45 @@
-import type { EventSink, ExecutionEvent, ExecutionEventType } from "./index.js";
 import type {
   ExternalEffectOwnershipLifecycleEvent,
   ExternalEffectOwnershipLifecycleObserver,
 } from "./observable-external-effect-ownership-store.js";
 
+export type ExternalEffectOwnershipExecutionEventType =
+  | "external.effect.ownership.acquired"
+  | "external.effect.ownership.contended"
+  | "external.effect.ownership.committed_observed"
+  | "external.effect.ownership.rejected"
+  | "external.effect.ownership.renewed"
+  | "external.effect.ownership.receipt_committed"
+  | "external.effect.ownership.released"
+  | "external.effect.ownership.observed";
+
+export interface ExternalEffectOwnershipEvidencePayload {
+  readonly lifecycle: ExternalEffectOwnershipLifecycleEvent;
+}
+
+export interface ExternalEffectOwnershipExecutionEvent {
+  readonly id: string;
+  readonly executionId: string;
+  readonly sequence: number;
+  readonly type: ExternalEffectOwnershipExecutionEventType;
+  readonly occurredAt: string;
+  readonly actor: string;
+  readonly parentEventId?: string;
+  readonly payload: ExternalEffectOwnershipEvidencePayload;
+}
+
+export interface ExternalEffectOwnershipEvidenceSink {
+  append(event: ExternalEffectOwnershipExecutionEvent): Promise<void>;
+}
+
 export interface ExternalEffectOwnershipEvidenceContext {
-  readonly eventSink: EventSink;
+  readonly eventSink: ExternalEffectOwnershipEvidenceSink;
   readonly executionId: string;
   readonly actor: string;
   readonly initialSequence: number;
   readonly createEventId: () => string;
   readonly now: () => string;
   readonly parentEventId?: string;
-}
-
-export interface ExternalEffectOwnershipEvidencePayload {
-  readonly lifecycle: ExternalEffectOwnershipLifecycleEvent;
 }
 
 function requireNonBlank(field: string, value: string): string {
@@ -72,7 +96,7 @@ function executionIdForLifecycleEvent(
 
 function executionEventTypeForLifecycleEvent(
   event: ExternalEffectOwnershipLifecycleEvent,
-): ExecutionEventType {
+): ExternalEffectOwnershipExecutionEventType {
   switch (event.type) {
     case "ownership.acquired":
       return "external.effect.ownership.acquired";
@@ -94,9 +118,9 @@ function executionEventTypeForLifecycleEvent(
 }
 
 /**
- * Converts non-authoritative ownership lifecycle observations into canonical
- * execution events. Sequence state advances only after the durable sink accepts
- * an event, so failed appends never create a false in-memory tail.
+ * Converts non-authoritative ownership lifecycle observations into ordered
+ * execution evidence. Sequence state advances only after the sink accepts an
+ * event, so a failed append never creates a false in-memory stream tail.
  */
 export function createExternalEffectOwnershipEvidenceObserver(
   context: ExternalEffectOwnershipEvidenceContext,
@@ -117,17 +141,16 @@ export function createExternalEffectOwnershipEvidenceObserver(
         throw new Error("Ownership evidence sequence is exhausted");
       }
 
-      const event: ExecutionEvent<ExternalEffectOwnershipEvidencePayload> =
-        Object.freeze({
-          id: requireNonBlank("event id", context.createEventId()),
-          executionId: context.executionId,
-          sequence: sequence + 1,
-          type: executionEventTypeForLifecycleEvent(lifecycle),
-          occurredAt: requireCanonicalTimestamp("occurredAt", context.now()),
-          actor: requireNonBlank("actor", context.actor),
-          ...(parentEventId === undefined ? {} : { parentEventId }),
-          payload: Object.freeze({ lifecycle }),
-        });
+      const event: ExternalEffectOwnershipExecutionEvent = Object.freeze({
+        id: requireNonBlank("event id", context.createEventId()),
+        executionId: context.executionId,
+        sequence: sequence + 1,
+        type: executionEventTypeForLifecycleEvent(lifecycle),
+        occurredAt: requireCanonicalTimestamp("occurredAt", context.now()),
+        actor: requireNonBlank("actor", context.actor),
+        ...(parentEventId === undefined ? {} : { parentEventId }),
+        payload: Object.freeze({ lifecycle }),
+      });
 
       await context.eventSink.append(event);
       sequence = event.sequence;
