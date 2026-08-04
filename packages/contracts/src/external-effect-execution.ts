@@ -52,8 +52,9 @@ export interface ExternalEffectExecutionOptions {
 
 export interface ExternalEffectEvidenceContext {
   readonly eventSink: EventSink;
+  readonly executionId: string;
   readonly actor: string;
-  readonly nextSequence: () => number;
+  readonly initialSequence: number;
   readonly createEventId: () => string;
   readonly now: () => string;
   readonly parentEventId?: string;
@@ -79,22 +80,60 @@ function requireCommittedReceipt(
   return reconciliation.receipt;
 }
 
+function requireNonBlank(field: string, value: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new Error(`${field} must be a non-blank string`);
+  }
+  return normalized;
+}
+
+function requireCanonicalTimestamp(field: string, value: string): string {
+  const timestamp = requireNonBlank(field, value);
+  const parsed = new Date(timestamp);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== timestamp) {
+    throw new Error(`${field} must be a canonical ISO timestamp`);
+  }
+  return timestamp;
+}
+
+function validateEvidenceContext(context: ExternalEffectEvidenceContext): void {
+  requireNonBlank("executionId", context.executionId);
+  requireNonBlank("actor", context.actor);
+  if (!Number.isSafeInteger(context.initialSequence) || context.initialSequence < 0) {
+    throw new Error("initialSequence must be a non-negative safe integer");
+  }
+  if (context.parentEventId !== undefined) {
+    requireNonBlank("parentEventId", context.parentEventId);
+  }
+  if (context.initialSequence === 0 && context.parentEventId !== undefined) {
+    throw new Error("An empty evidence stream cannot have a parent event");
+  }
+  if (context.initialSequence > 0 && context.parentEventId === undefined) {
+    throw new Error("A non-empty evidence stream must identify its tail event");
+  }
+}
+
 function createEvidenceEvent<T>(
   context: ExternalEffectEvidenceContext,
   receipt: ExternalEffectReceipt,
+  sequence: number,
+  parentEventId: string | undefined,
   type: "external.effect.executed" | "external.effect.reconciled",
   payload: T,
 ): ExecutionEvent<T> {
+  if (receipt.executionId !== context.executionId) {
+    throw new Error("External effect receipt executionId does not match evidence context");
+  }
+
   return Object.freeze({
-    id: context.createEventId(),
-    executionId: receipt.executionId,
-    sequence: context.nextSequence(),
+    id: requireNonBlank("event id", context.createEventId()),
+    executionId: context.executionId,
+    sequence,
     type,
-    occurredAt: context.now(),
-    actor: context.actor,
-    ...(context.parentEventId === undefined
-      ? {}
-      : { parentEventId: context.parentEventId }),
+    occurredAt: requireCanonicalTimestamp("occurredAt", context.now()),
+    actor: requireNonBlank("actor", context.actor),
+    ...(parentEventId === undefined ? {} : { parentEventId }),
     payload,
   });
 }
@@ -102,28 +141,47 @@ function createEvidenceEvent<T>(
 export function createExternalEffectEvidenceHooks(
   context: ExternalEffectEvidenceContext,
 ): ExternalEffectExecutionHooks {
+  validateEvidenceContext(context);
+  let sequence = context.initialSequence;
+  let parentEventId = context.parentEventId;
+
+  const appendEvidence = async <T>(
+    receipt: ExternalEffectReceipt,
+    type: "external.effect.executed" | "external.effect.reconciled",
+    payload: T,
+  ): Promise<void> => {
+    if (sequence >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("External effect evidence sequence is exhausted");
+    }
+    const event = createEvidenceEvent(
+      context,
+      receipt,
+      sequence + 1,
+      parentEventId,
+      type,
+      payload,
+    );
+    await context.eventSink.append(event);
+    sequence = event.sequence;
+    parentEventId = event.id;
+  };
+
   return Object.freeze({
     async onExecuted(receipt: ExternalEffectReceipt) {
-      await context.eventSink.append(
-        createEvidenceEvent<ExternalEffectExecutedPayload>(
-          context,
-          receipt,
-          "external.effect.executed",
-          Object.freeze({ receipt }),
-        ),
+      await appendEvidence(
+        receipt,
+        "external.effect.executed",
+        Object.freeze({ receipt }),
       );
     },
     async onReconciled(
       source: ExternalEffectRecoverySource,
       receipt: ExternalEffectReceipt,
     ) {
-      await context.eventSink.append(
-        createEvidenceEvent<ExternalEffectReconciledPayload>(
-          context,
-          receipt,
-          "external.effect.reconciled",
-          Object.freeze({ source, receipt }),
-        ),
+      await appendEvidence(
+        receipt,
+        "external.effect.reconciled",
+        Object.freeze({ source, receipt }),
       );
     },
   });
