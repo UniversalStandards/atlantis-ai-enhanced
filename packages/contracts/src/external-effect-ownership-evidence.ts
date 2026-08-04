@@ -119,8 +119,10 @@ function executionEventTypeForLifecycleEvent(
 
 /**
  * Converts non-authoritative ownership lifecycle observations into ordered
- * execution evidence. Sequence state advances only after the sink accepts an
- * event, so a failed append never creates a false in-memory stream tail.
+ * execution evidence. Lifecycle callbacks are serialized so concurrent store
+ * operations cannot allocate the same sequence or parent. Cursor state advances
+ * only after the sink accepts an event, so a failed append never creates a
+ * false in-memory stream tail and does not block later evidence attempts.
  */
 export function createExternalEffectOwnershipEvidenceObserver(
   context: ExternalEffectOwnershipEvidenceContext,
@@ -128,33 +130,42 @@ export function createExternalEffectOwnershipEvidenceObserver(
   validateContext(context);
   let sequence = context.initialSequence;
   let parentEventId = context.parentEventId;
+  let appendTail: Promise<void> = Promise.resolve();
+
+  const appendLifecycleEvent = async (
+    lifecycle: ExternalEffectOwnershipLifecycleEvent,
+  ): Promise<void> => {
+    const lifecycleExecutionId = executionIdForLifecycleEvent(lifecycle);
+    if (lifecycleExecutionId !== context.executionId) {
+      throw new Error(
+        "Ownership lifecycle executionId does not match evidence context",
+      );
+    }
+    if (sequence >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Ownership evidence sequence is exhausted");
+    }
+
+    const event: ExternalEffectOwnershipExecutionEvent = Object.freeze({
+      id: requireNonBlank("event id", context.createEventId()),
+      executionId: context.executionId,
+      sequence: sequence + 1,
+      type: executionEventTypeForLifecycleEvent(lifecycle),
+      occurredAt: requireCanonicalTimestamp("occurredAt", context.now()),
+      actor: requireNonBlank("actor", context.actor),
+      ...(parentEventId === undefined ? {} : { parentEventId }),
+      payload: Object.freeze({ lifecycle }),
+    });
+
+    await context.eventSink.append(event);
+    sequence = event.sequence;
+    parentEventId = event.id;
+  };
 
   return Object.freeze({
-    async onLifecycleEvent(lifecycle: ExternalEffectOwnershipLifecycleEvent) {
-      const lifecycleExecutionId = executionIdForLifecycleEvent(lifecycle);
-      if (lifecycleExecutionId !== context.executionId) {
-        throw new Error(
-          "Ownership lifecycle executionId does not match evidence context",
-        );
-      }
-      if (sequence >= Number.MAX_SAFE_INTEGER) {
-        throw new Error("Ownership evidence sequence is exhausted");
-      }
-
-      const event: ExternalEffectOwnershipExecutionEvent = Object.freeze({
-        id: requireNonBlank("event id", context.createEventId()),
-        executionId: context.executionId,
-        sequence: sequence + 1,
-        type: executionEventTypeForLifecycleEvent(lifecycle),
-        occurredAt: requireCanonicalTimestamp("occurredAt", context.now()),
-        actor: requireNonBlank("actor", context.actor),
-        ...(parentEventId === undefined ? {} : { parentEventId }),
-        payload: Object.freeze({ lifecycle }),
-      });
-
-      await context.eventSink.append(event);
-      sequence = event.sequence;
-      parentEventId = event.id;
+    onLifecycleEvent(lifecycle: ExternalEffectOwnershipLifecycleEvent) {
+      const operation = appendTail.then(() => appendLifecycleEvent(lifecycle));
+      appendTail = operation.catch(() => undefined);
+      return operation;
     },
   });
 }
