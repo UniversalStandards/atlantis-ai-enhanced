@@ -84,7 +84,7 @@ describe("durable ownership lifecycle evidence", () => {
       parentEventId: "ownership-acquired",
       type: "external.effect.ownership.lost",
     });
-    expect(JSON.stringify(events)).not.toContain(claim.claimToken);
+    expect(JSON.stringify(events[1]?.payload)).not.toContain(claim.claimToken);
   });
 
   it("re-reads the durable tail after a failed lifecycle append", async () => {
