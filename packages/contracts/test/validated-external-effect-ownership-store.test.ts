@@ -78,7 +78,7 @@ describe("StructurallyValidatedExternalEffectOwnershipStore", () => {
     const store = new StructurallyValidatedExternalEffectOwnershipStore(delegate);
     const request = Object.create({ leaseDurationMs: 60_000 });
 
-    expect(() => store.renew(claim, request)).toThrow(/missing required field/);
+    expect(() => store.renew(claim, request)).toThrow(/plain data record/);
     expect(delegate.renew).not.toHaveBeenCalled();
   });
 
