@@ -1,3 +1,4 @@
+import type { EventSink, ExecutionEvent } from "./index.js";
 import {
   reconcileExternalEffect,
   type ExternalEffectIdentity,
@@ -49,6 +50,24 @@ export interface ExternalEffectExecutionOptions {
   readonly hooks?: ExternalEffectExecutionHooks;
 }
 
+export interface ExternalEffectEvidenceContext {
+  readonly eventSink: EventSink;
+  readonly actor: string;
+  readonly nextSequence: () => number;
+  readonly createEventId: () => string;
+  readonly now: () => string;
+  readonly parentEventId?: string;
+}
+
+export interface ExternalEffectExecutedPayload {
+  readonly receipt: ExternalEffectReceipt;
+}
+
+export interface ExternalEffectReconciledPayload {
+  readonly source: ExternalEffectRecoverySource;
+  readonly receipt: ExternalEffectReceipt;
+}
+
 function requireCommittedReceipt(
   identity: ExternalEffectIdentity,
   receipt: ExternalEffectReceipt,
@@ -58,6 +77,53 @@ function requireCommittedReceipt(
     throw new Error("External effect receipt unexpectedly failed reconciliation");
   }
   return reconciliation.receipt;
+}
+
+function createEvidenceEvent<T>(
+  context: ExternalEffectEvidenceContext,
+  receipt: ExternalEffectReceipt,
+  type: "external.effect.executed" | "external.effect.reconciled",
+  payload: T,
+): ExecutionEvent<T> {
+  return Object.freeze({
+    id: context.createEventId(),
+    executionId: receipt.executionId,
+    sequence: context.nextSequence(),
+    type,
+    occurredAt: context.now(),
+    actor: context.actor,
+    ...(context.parentEventId === undefined
+      ? {}
+      : { parentEventId: context.parentEventId }),
+    payload,
+  });
+}
+
+export function createExternalEffectEvidenceHooks(
+  context: ExternalEffectEvidenceContext,
+): ExternalEffectExecutionHooks {
+  return Object.freeze({
+    async onExecuted(receipt) {
+      await context.eventSink.append(
+        createEvidenceEvent<ExternalEffectExecutedPayload>(
+          context,
+          receipt,
+          "external.effect.executed",
+          Object.freeze({ receipt }),
+        ),
+      );
+    },
+    async onReconciled(source, receipt) {
+      await context.eventSink.append(
+        createEvidenceEvent<ExternalEffectReconciledPayload>(
+          context,
+          receipt,
+          "external.effect.reconciled",
+          Object.freeze({ source, receipt }),
+        ),
+      );
+    },
+  });
 }
 
 export async function executeExternalEffectWithReconciliation(
