@@ -70,6 +70,8 @@ export type ExecutionEventType =
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
+  | "external_effect.executed"
+  | "external_effect.reconciled"
   | "evaluation.completed"
   | "approval.requested"
   | "approval.resolved"
