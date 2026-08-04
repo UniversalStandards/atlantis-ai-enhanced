@@ -11,6 +11,7 @@
     "./external-effect-execution": "./src/external-effect-execution.ts",
     "./external-effect-ownership": "./src/external-effect-ownership.ts",
     "./external-effect-ownership-validation": "./src/external-effect-ownership-validation.ts",
+    "./validated-external-effect-ownership-store": "./src/validated-external-effect-ownership-store.ts",
     "./sequential-runner": "./src/sequential-runner.ts",
     "./resumable-runner": "./src/resumable-runner.ts"
   },
