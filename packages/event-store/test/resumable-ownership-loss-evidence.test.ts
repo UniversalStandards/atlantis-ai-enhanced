@@ -50,7 +50,7 @@ describe("resumable ownership-loss evidence composition", () => {
       id: "event-1",
       executionId: "execution-1",
       sequence: 1,
-      type: "workflow.started",
+      type: "workflow.step.started",
       occurredAt: "2026-08-04T16:00:00.000Z",
       actor: "runner",
       payload: {},
