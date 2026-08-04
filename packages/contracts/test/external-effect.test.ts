@@ -106,4 +106,64 @@ describe("external effect receipts", () => {
       normalizeExternalEffectReceipt(receipt({ metadata: { repository: " " } })),
     ).toThrow(InvalidExternalEffectError);
   });
+
+  it("rejects metadata keys that collide after normalization", () => {
+    expect(() =>
+      normalizeExternalEffectReceipt(
+        receipt({ metadata: { repository: "one", " repository ": "two" } }),
+      ),
+    ).toThrow(InvalidExternalEffectError);
+  });
+
+  it("rejects symbol-keyed metadata", () => {
+    const metadata = { repository: "UniversalStandards/atlantis-ai-enhanced" } as Record<
+      string | symbol,
+      string
+    >;
+    metadata[Symbol("hidden")] = "not-recorded";
+
+    expect(() =>
+      normalizeExternalEffectReceipt(
+        receipt({ metadata: metadata as Readonly<Record<string, string>> }),
+      ),
+    ).toThrow(InvalidExternalEffectError);
+  });
+
+  it("rejects non-enumerable metadata", () => {
+    const metadata = { repository: "UniversalStandards/atlantis-ai-enhanced" };
+    Object.defineProperty(metadata, "hidden", {
+      value: "not-recorded",
+      enumerable: false,
+    });
+
+    expect(() => normalizeExternalEffectReceipt(receipt({ metadata }))).toThrow(
+      InvalidExternalEffectError,
+    );
+  });
+
+  it("rejects accessor metadata without invoking the getter", () => {
+    let getterCalls = 0;
+    const metadata = {} as Record<string, string>;
+    Object.defineProperty(metadata, "repository", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "UniversalStandards/atlantis-ai-enhanced";
+      },
+    });
+
+    expect(() => normalizeExternalEffectReceipt(receipt({ metadata }))).toThrow(
+      InvalidExternalEffectError,
+    );
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects metadata with a custom prototype", () => {
+    const metadata = Object.create({ inherited: "not-recorded" }) as Record<string, string>;
+    metadata.repository = "UniversalStandards/atlantis-ai-enhanced";
+
+    expect(() => normalizeExternalEffectReceipt(receipt({ metadata }))).toThrow(
+      InvalidExternalEffectError,
+    );
+  });
 });
