@@ -8,9 +8,6 @@ import {
   type ApprovalRequest,
   type ApprovalResolution,
 } from "@atlantis/contracts/approval-control";
-import {
-  withExternalEffectOwnershipLossEvidence,
-} from "@atlantis/contracts/external-effect-ownership-loss-evidence";
 import type {
   ResumableSequentialWorkflowRunner,
   ResumableWorkflow,
@@ -18,7 +15,7 @@ import type {
 
 import type { DurableExecutionEventSink } from "./execution-event-sink.js";
 import {
-  createDurableOwnershipLossEvidenceContext,
+  withDurableOwnershipLossEvidence,
   type DurableOwnershipLossEvidenceContextOptions,
 } from "./external-effect-ownership-loss-context.js";
 import {
@@ -192,12 +189,12 @@ export class ResumableTaskEntrypoint {
       const output =
         this.options.ownershipLossEvidence === undefined
           ? await run()
-          : await withExternalEffectOwnershipLossEvidence(
-              createDurableOwnershipLossEvidenceContext({
+          : await withDurableOwnershipLossEvidence(
+              {
                 ...this.options.ownershipLossEvidence,
                 eventSink: this.options.eventSink,
                 executionId,
-              }),
+              },
               run,
             );
       return Object.freeze({
