@@ -59,11 +59,33 @@ export interface ExternalEffectOwnershipLifecycleObserver {
   ): void | Promise<void>;
 }
 
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor !== undefined && "value" in descriptor) {
+      deepFreeze(descriptor.value);
+    }
+  }
+
+  return Object.freeze(value);
+}
+
+function snapshotLifecycleEvent(
+  event: ExternalEffectOwnershipLifecycleEvent,
+): ExternalEffectOwnershipLifecycleEvent {
+  return deepFreeze(structuredClone(event));
+}
+
 /**
  * Decorates an ownership store with lifecycle observation without changing
- * ownership authority or operation outcomes. Observer failures are reported
- * through onLifecycleObservationError and never grant, revoke, renew, release,
- * or commit ownership.
+ * ownership authority or operation outcomes. Observers receive a deeply frozen
+ * structured snapshot, so they cannot mutate authoritative operation inputs or
+ * outputs. Observer failures are reported through onLifecycleObservationError
+ * and never grant, revoke, renew, release, or commit ownership.
  */
 export class ObservableExternalEffectOwnershipStore
   implements ExternalEffectOwnershipStore
@@ -81,10 +103,14 @@ export class ObservableExternalEffectOwnershipStore
 
   async #emit(event: ExternalEffectOwnershipLifecycleEvent): Promise<void> {
     try {
-      await this.#observer.onLifecycleEvent(event);
+      const snapshot = snapshotLifecycleEvent(event);
+      await this.#observer.onLifecycleEvent(snapshot);
     } catch (error) {
       try {
-        await this.#observer.onLifecycleObservationError?.(error, event);
+        await this.#observer.onLifecycleObservationError?.(
+          error,
+          snapshotLifecycleEvent(event),
+        );
       } catch {
         // Observation must never mutate or obscure authoritative ownership state.
       }
