@@ -136,6 +136,10 @@ describe("ObservableExternalEffectOwnershipStore", () => {
     });
 
     expect(result).toBe(mutableResult);
+    expect(result.status).toBe("acquired");
+    if (result.status !== "acquired") {
+      throw new Error("expected acquired ownership result");
+    }
     expect(result.claim.ownerId).toBe("worker-1");
     expect(mutableClaim.ownerId).toBe("worker-1");
     expect(observationErrors).toHaveLength(1);
