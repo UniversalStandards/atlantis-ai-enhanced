@@ -8,12 +8,19 @@ import {
   type ApprovalRequest,
   type ApprovalResolution,
 } from "@atlantis/contracts/approval-control";
+import {
+  withExternalEffectOwnershipLossEvidence,
+} from "@atlantis/contracts/external-effect-ownership-loss-evidence";
 import type {
   ResumableSequentialWorkflowRunner,
   ResumableWorkflow,
 } from "@atlantis/contracts/resumable-runner";
 
 import type { DurableExecutionEventSink } from "./execution-event-sink.js";
+import {
+  createDurableOwnershipLossEvidenceContext,
+  type DurableOwnershipLossEvidenceContextOptions,
+} from "./external-effect-ownership-loss-context.js";
 import {
   InvalidTaskRequestError,
   TaskAuthorizationError,
@@ -61,6 +68,11 @@ export interface TerminalExecutionLookup {
   ): TerminalExecutionRecord | undefined | Promise<TerminalExecutionRecord | undefined>;
 }
 
+export type ResumableOwnershipLossEvidenceOptions = Omit<
+  DurableOwnershipLossEvidenceContextOptions,
+  "eventSink" | "executionId"
+>;
+
 export class TerminalExecutionAlreadyFinalizedError extends Error {
   public constructor(public readonly terminal: TerminalExecutionRecord) {
     super(
@@ -80,6 +92,7 @@ export interface ResumableTaskEntrypointOptions {
     request: Readonly<ResumableTaskRequest>,
   ) => ResumableSequentialWorkflowRunner;
   readonly nextExecutionId: () => string;
+  readonly ownershipLossEvidence?: ResumableOwnershipLossEvidenceOptions;
 }
 
 export interface GovernedResumableTaskEntrypointOptions {
@@ -173,9 +186,20 @@ export class ResumableTaskEntrypoint {
 
     const context = createContext(request, workflow, executionId);
     const runner = this.options.createRunner(request);
+    const run = () => runner.run(workflow, request.input, context);
 
     try {
-      const output = await runner.run(workflow, request.input, context);
+      const output =
+        this.options.ownershipLossEvidence === undefined
+          ? await run()
+          : await withExternalEffectOwnershipLossEvidence(
+              createDurableOwnershipLossEvidenceContext({
+                ...this.options.ownershipLossEvidence,
+                eventSink: this.options.eventSink,
+                executionId,
+              }),
+              run,
+            );
       return Object.freeze({
         status: "completed",
         executionId,
