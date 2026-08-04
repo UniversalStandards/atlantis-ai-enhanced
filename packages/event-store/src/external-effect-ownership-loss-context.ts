@@ -11,6 +11,11 @@ import { DurableExecutionEventSink } from "./execution-event-sink.js";
 
 const DEFAULT_EVIDENCE_TIMEOUT_MS = 1_000;
 
+const ownershipLossEvidenceQueues = new WeakMap<
+  DurableExecutionEventSink,
+  Map<string, Promise<void>>
+>();
+
 export interface DurableOwnershipLossEvidenceContextOptions {
   readonly eventSink: DurableExecutionEventSink;
   readonly executionId: string;
@@ -60,6 +65,39 @@ async function withinDeadline<T>(
   }
 }
 
+async function serializeOwnershipLossEvidence<T>(
+  eventSink: DurableExecutionEventSink,
+  executionId: string,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  let executionQueues = ownershipLossEvidenceQueues.get(eventSink);
+  if (executionQueues === undefined) {
+    executionQueues = new Map<string, Promise<void>>();
+    ownershipLossEvidenceQueues.set(eventSink, executionQueues);
+  }
+
+  const predecessor = executionQueues.get(executionId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = predecessor.catch(() => undefined).then(() => gate);
+  executionQueues.set(executionId, tail);
+
+  await predecessor.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (executionQueues.get(executionId) === tail) {
+      executionQueues.delete(executionId);
+      if (executionQueues.size === 0) {
+        ownershipLossEvidenceQueues.delete(eventSink);
+      }
+    }
+  }
+}
+
 /**
  * Binds ownership-loss evidence to the current durable execution-stream tail.
  *
@@ -100,6 +138,8 @@ export function createDurableOwnershipLossEvidenceContext(
 /**
  * Allocates sequence and parent linkage only after ownership loss occurs, so
  * normal runner events emitted during the operation cannot stale the cursor.
+ * Evidence recording is serialized per durable sink and execution, preventing
+ * concurrent ownership-loss handlers from allocating the same stream position.
  * Evidence and reporter delivery are bounded and remain non-authoritative.
  */
 export async function withDurableOwnershipLossEvidence<T>(
@@ -111,11 +151,16 @@ export async function withDurableOwnershipLossEvidence<T>(
   } catch (error) {
     if (!(error instanceof ExternalEffectOwnershipLostError)) throw error;
 
-    return withExternalEffectOwnershipLossEvidence(
-      createDurableOwnershipLossEvidenceContext(options),
-      async () => {
-        throw error;
-      },
+    return serializeOwnershipLossEvidence(
+      options.eventSink,
+      options.executionId,
+      () =>
+        withExternalEffectOwnershipLossEvidence(
+          createDurableOwnershipLossEvidenceContext(options),
+          async () => {
+            throw error;
+          },
+        ),
     );
   }
 }
