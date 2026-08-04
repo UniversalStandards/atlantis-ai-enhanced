@@ -58,9 +58,42 @@ function restoreExecutionEvent(stored: StoredEvent): ExecutionEvent {
 /**
  * Bridges provider-neutral execution events into the canonical durable event
  * store without leaking persistence details into the workflow runner.
+ *
+ * The execution-wide lock is owned by this durable sink so independent evidence
+ * adapters can share one ordering boundary. Failed operations release the lock
+ * and cannot poison later append attempts.
  */
 export class DurableExecutionEventSink implements EventSink {
+  private readonly executionQueues = new Map<string, Promise<void>>();
+
   public constructor(private readonly store: EventStore) {}
+
+  public async withExecutionAppendLock<T>(
+    executionId: string,
+    operation: () => T | Promise<T>,
+  ): Promise<T> {
+    if (executionId.trim().length === 0) {
+      throw new InvalidEventError("executionId must be non-empty.");
+    }
+
+    const predecessor = this.executionQueues.get(executionId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = predecessor.catch(() => undefined).then(() => gate);
+    this.executionQueues.set(executionId, tail);
+
+    await predecessor.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.executionQueues.get(executionId) === tail) {
+        this.executionQueues.delete(executionId);
+      }
+    }
+  }
 
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
     const expectedVersion = this.store.getStreamVersion(event.executionId);
