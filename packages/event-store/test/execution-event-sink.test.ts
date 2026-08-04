@@ -149,10 +149,10 @@ describe("DurableExecutionEventSink", () => {
         id: "lifecycle-event",
         executionId: "execution-1",
         sequence: 1,
-        type: "external.effect.ownership.acquired",
+        type: "execution.started",
         occurredAt: "2026-08-04T20:00:00.000Z",
         actor: "ownership-runtime",
-        payload: {},
+        payload: { evidenceKind: "ownership.lifecycle" },
       });
     });
 
