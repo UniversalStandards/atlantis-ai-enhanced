@@ -103,7 +103,7 @@ export function createExternalEffectEvidenceHooks(
   context: ExternalEffectEvidenceContext,
 ): ExternalEffectExecutionHooks {
   return Object.freeze({
-    async onExecuted(receipt) {
+    async onExecuted(receipt: ExternalEffectReceipt) {
       await context.eventSink.append(
         createEvidenceEvent<ExternalEffectExecutedPayload>(
           context,
@@ -113,7 +113,10 @@ export function createExternalEffectEvidenceHooks(
         ),
       );
     },
-    async onReconciled(source, receipt) {
+    async onReconciled(
+      source: ExternalEffectRecoverySource,
+      receipt: ExternalEffectReceipt,
+    ) {
       await context.eventSink.append(
         createEvidenceEvent<ExternalEffectReconciledPayload>(
           context,
