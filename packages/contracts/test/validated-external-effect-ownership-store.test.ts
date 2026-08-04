@@ -27,10 +27,13 @@ const claim: ExternalEffectClaim = Object.freeze({
 
 const receipt: ExternalEffectReceipt = Object.freeze({
   ...identity,
-  provider: "github",
-  providerReceiptId: "comment-1",
+  providerReference: "github:comment-1",
   committedAt: "2026-08-04T10:00:10.000Z",
-  evidence: Object.freeze({ url: "https://example.invalid/comment-1" }),
+  payloadDigest:
+    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  metadata: Object.freeze({
+    url: "https://example.invalid/comment-1",
+  }),
 });
 
 function createDelegate(): ExternalEffectOwnershipStore {
