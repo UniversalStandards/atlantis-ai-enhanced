@@ -72,6 +72,7 @@ export type ExecutionEventType =
   | "tool.failed"
   | "external.effect.executed"
   | "external.effect.reconciled"
+  | "external.effect.ownership.lost"
   | "evaluation.completed"
   | "approval.requested"
   | "approval.resolved"
