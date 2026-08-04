@@ -59,6 +59,42 @@ export interface ExternalEffectOwnershipLifecycleObserver {
   ): void | Promise<void>;
 }
 
+export interface ObservableExternalEffectOwnershipStoreOptions {
+  /**
+   * Maximum time an observer callback may delay an authoritative operation.
+   * The callback is not cancelled after the deadline; its late settlement is
+   * isolated from the ownership result.
+   */
+  observationTimeoutMs?: number;
+}
+
+export class ExternalEffectOwnershipObservationTimeoutError extends Error {
+  public readonly timeoutMs: number;
+  public readonly eventType: ExternalEffectOwnershipLifecycleEvent["type"];
+
+  public constructor(
+    timeoutMs: number,
+    eventType: ExternalEffectOwnershipLifecycleEvent["type"],
+  ) {
+    super(
+      `external-effect ownership observer exceeded ${timeoutMs} ms for ${eventType}`,
+    );
+    this.name = "ExternalEffectOwnershipObservationTimeoutError";
+    this.timeoutMs = timeoutMs;
+    this.eventType = eventType;
+  }
+}
+
+const DEFAULT_OBSERVATION_TIMEOUT_MS = 1_000;
+
+function normalizeObservationTimeoutMs(value: number | undefined): number {
+  const timeoutMs = value ?? DEFAULT_OBSERVATION_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError("observationTimeoutMs must be a positive safe integer");
+  }
+  return timeoutMs;
+}
+
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
     return value;
@@ -84,32 +120,74 @@ function snapshotLifecycleEvent(
  * Decorates an ownership store with lifecycle observation without changing
  * ownership authority or operation outcomes. Observers receive a deeply frozen
  * structured snapshot, so they cannot mutate authoritative operation inputs or
- * outputs. Observer failures are reported through onLifecycleObservationError
- * and never grant, revoke, renew, release, or commit ownership.
+ * outputs. Observer failures and stalls are bounded, reported through
+ * onLifecycleObservationError, and never grant, revoke, renew, release, or
+ * commit ownership.
  */
 export class ObservableExternalEffectOwnershipStore
   implements ExternalEffectOwnershipStore
 {
   readonly #store: ExternalEffectOwnershipStore;
   readonly #observer: ExternalEffectOwnershipLifecycleObserver;
+  readonly #observationTimeoutMs: number;
 
   public constructor(
     store: ExternalEffectOwnershipStore,
     observer: ExternalEffectOwnershipLifecycleObserver,
+    options: ObservableExternalEffectOwnershipStoreOptions = {},
   ) {
     this.#store = store;
     this.#observer = observer;
+    this.#observationTimeoutMs = normalizeObservationTimeoutMs(
+      options.observationTimeoutMs,
+    );
+  }
+
+  async #withinObservationDeadline(
+    callback: () => void | Promise<void>,
+    eventType: ExternalEffectOwnershipLifecycleEvent["type"],
+  ): Promise<void> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const callbackSettlement = Promise.resolve()
+      .then(callback)
+      .then(
+        () => undefined,
+        (error: unknown) => Promise.reject(error),
+      );
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(
+          new ExternalEffectOwnershipObservationTimeoutError(
+            this.#observationTimeoutMs,
+            eventType,
+          ),
+        );
+      }, this.#observationTimeoutMs);
+    });
+
+    try {
+      await Promise.race([callbackSettlement, timeout]);
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+    }
   }
 
   async #emit(event: ExternalEffectOwnershipLifecycleEvent): Promise<void> {
+    const snapshot = snapshotLifecycleEvent(event);
     try {
-      const snapshot = snapshotLifecycleEvent(event);
-      await this.#observer.onLifecycleEvent(snapshot);
+      await this.#withinObservationDeadline(
+        () => this.#observer.onLifecycleEvent(snapshot),
+        snapshot.type,
+      );
     } catch (error) {
       try {
-        await this.#observer.onLifecycleObservationError?.(
-          error,
-          snapshotLifecycleEvent(event),
+        const errorSnapshot = snapshotLifecycleEvent(event);
+        await this.#withinObservationDeadline(
+          () =>
+            this.#observer.onLifecycleObservationError?.(error, errorSnapshot),
+          errorSnapshot.type,
         );
       } catch {
         // Observation must never mutate or obscure authoritative ownership state.
