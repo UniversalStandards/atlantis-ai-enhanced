@@ -3,9 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createExternalEffectEvidenceHooks,
   executeExternalEffectWithReconciliation,
+  type ExternalEffectExecutionOptions,
   type ExternalEffectProvider,
   type ExternalEffectReceiptStore,
 } from "../src/external-effect-execution.js";
+import {
+  InMemoryExternalEffectOwnershipStore,
+  type ExternalEffectOwnershipStore,
+} from "../src/external-effect-ownership.js";
 import type {
   ExternalEffectIdentity,
   ExternalEffectReceipt,
@@ -27,6 +32,11 @@ const receipt: ExternalEffectReceipt = {
   metadata: { repository: "UniversalStandards/atlantis-ai-enhanced" },
 };
 
+const ownershipRequest = {
+  ownerId: "external-effect-worker",
+  leaseDurationMs: 30_000,
+} as const;
+
 function createStore(): ExternalEffectReceiptStore & {
   current: ExternalEffectReceipt | undefined;
 } {
@@ -38,6 +48,32 @@ function createStore(): ExternalEffectReceiptStore & {
     save(value) {
       this.current = value;
     },
+  };
+}
+
+function createOwnershipStore(): ExternalEffectOwnershipStore {
+  let tokenNumber = 0;
+  return new InMemoryExternalEffectOwnershipStore({
+    now: () => "2026-08-04T05:00:00.000Z",
+    createClaimToken: () => {
+      tokenNumber += 1;
+      return `claim-${String(tokenNumber)}`;
+    },
+    maxLeaseDurationMs: 60_000,
+  });
+}
+
+function executionOptions(
+  store: ExternalEffectReceiptStore,
+  provider: ExternalEffectProvider,
+  overrides: Partial<ExternalEffectExecutionOptions> = {},
+): ExternalEffectExecutionOptions {
+  return {
+    store,
+    provider,
+    ownershipStore: createOwnershipStore(),
+    ownershipRequest,
+    ...overrides,
   };
 }
 
@@ -67,24 +103,27 @@ function createEvidenceHarness(
 }
 
 describe("external effect execution reconciliation", () => {
-  it("returns a durable receipt without consulting or executing the provider", async () => {
+  it("returns a durable receipt without acquiring ownership or consulting the provider", async () => {
     const store = createStore();
     store.current = receipt;
     const provider: ExternalEffectProvider = {
       reconcile: vi.fn(),
       execute: vi.fn(),
     };
+    const ownershipStore = createOwnershipStore();
+    const acquire = vi.spyOn(ownershipStore, "acquire");
 
-    const result = await executeExternalEffectWithReconciliation(identity, {
-      store,
-      provider,
-    });
+    const result = await executeExternalEffectWithReconciliation(
+      identity,
+      executionOptions(store, provider, { ownershipStore }),
+    );
 
     expect(result).toEqual({
       status: "reconciled",
       source: "durable_store",
       receipt,
     });
+    expect(acquire).not.toHaveBeenCalled();
     expect(provider.reconcile).not.toHaveBeenCalled();
     expect(provider.execute).not.toHaveBeenCalled();
   });
@@ -96,10 +135,10 @@ describe("external effect execution reconciliation", () => {
       execute: vi.fn(),
     };
 
-    const result = await executeExternalEffectWithReconciliation(identity, {
-      store,
-      provider,
-    });
+    const result = await executeExternalEffectWithReconciliation(
+      identity,
+      executionOptions(store, provider),
+    );
 
     expect(result.status).toBe("reconciled");
     expect(result).toMatchObject({ source: "provider", receipt });
@@ -107,25 +146,52 @@ describe("external effect execution reconciliation", () => {
     expect(provider.execute).not.toHaveBeenCalled();
   });
 
-  it("executes once, validates the receipt, and persists it", async () => {
+  it("executes once, validates the receipt, commits ownership, and persists it", async () => {
     const store = createStore();
     const provider: ExternalEffectProvider = {
       reconcile: vi.fn().mockResolvedValue(undefined),
       execute: vi.fn().mockResolvedValue(receipt),
     };
 
-    const result = await executeExternalEffectWithReconciliation(identity, {
-      store,
-      provider,
-    });
+    const result = await executeExternalEffectWithReconciliation(
+      identity,
+      executionOptions(store, provider),
+    );
 
     expect(result).toEqual({ status: "executed", receipt });
     expect(provider.execute).toHaveBeenCalledOnce();
     expect(store.current).toEqual(receipt);
   });
 
-  it("recovers after provider commit when the first durable receipt save fails", async () => {
-    let providerCommitted = false;
+  it("allows only one concurrent caller to invoke the provider", async () => {
+    const store = createStore();
+    const ownershipStore = createOwnershipStore();
+    let resolveExecution: ((value: ExternalEffectReceipt) => void) | undefined;
+    const execution = new Promise<ExternalEffectReceipt>((resolve) => {
+      resolveExecution = resolve;
+    });
+    const provider: ExternalEffectProvider = {
+      reconcile: vi.fn().mockResolvedValue(undefined),
+      execute: vi.fn(() => execution),
+    };
+    const options = executionOptions(store, provider, { ownershipStore });
+
+    const owner = executeExternalEffectWithReconciliation(identity, options);
+    await vi.waitFor(() => expect(provider.execute).toHaveBeenCalledOnce());
+    const contender = await executeExternalEffectWithReconciliation(identity, options);
+
+    expect(contender).toMatchObject({
+      status: "owned",
+      ownerId: ownershipRequest.ownerId,
+      generation: 1,
+    });
+    expect(provider.execute).toHaveBeenCalledOnce();
+
+    resolveExecution?.(receipt);
+    await expect(owner).resolves.toEqual({ status: "executed", receipt });
+  });
+
+  it("recovers from the ownership store after provider commit when receipt mirroring fails", async () => {
     let saveAttempts = 0;
     const durableStore = createStore();
     const store: ExternalEffectReceiptStore = {
@@ -138,31 +204,44 @@ describe("external effect execution reconciliation", () => {
         durableStore.save(value);
       },
     };
-    const execute = vi.fn(async () => {
-      providerCommitted = true;
-      return receipt;
-    });
+    const ownershipStore = createOwnershipStore();
+    const execute = vi.fn().mockResolvedValue(receipt);
     const provider: ExternalEffectProvider = {
-      reconcile: vi.fn(async () => (providerCommitted ? receipt : undefined)),
+      reconcile: vi.fn().mockResolvedValue(undefined),
       execute,
     };
+    const options = executionOptions(store, provider, { ownershipStore });
 
     await expect(
-      executeExternalEffectWithReconciliation(identity, { store, provider }),
+      executeExternalEffectWithReconciliation(identity, options),
     ).rejects.toThrow("simulated durable store outage");
 
-    const recovered = await executeExternalEffectWithReconciliation(identity, {
-      store,
-      provider,
-    });
+    const recovered = await executeExternalEffectWithReconciliation(identity, options);
 
     expect(recovered).toEqual({
       status: "reconciled",
-      source: "provider",
+      source: "durable_store",
       receipt,
     });
     expect(execute).toHaveBeenCalledOnce();
     expect(durableStore.current).toEqual(receipt);
+  });
+
+  it("releases ownership when provider reconciliation fails before execution", async () => {
+    const store = createStore();
+    const ownershipStore = createOwnershipStore();
+    const provider: ExternalEffectProvider = {
+      reconcile: vi.fn().mockRejectedValueOnce(new Error("provider unavailable")).mockResolvedValue(undefined),
+      execute: vi.fn().mockResolvedValue(receipt),
+    };
+    const options = executionOptions(store, provider, { ownershipStore });
+
+    await expect(
+      executeExternalEffectWithReconciliation(identity, options),
+    ).rejects.toThrow("provider unavailable");
+    await expect(
+      executeExternalEffectWithReconciliation(identity, options),
+    ).resolves.toEqual({ status: "executed", receipt });
   });
 
   it("fails closed when a provider receipt belongs to another execution", async () => {
@@ -176,7 +255,10 @@ describe("external effect execution reconciliation", () => {
     };
 
     await expect(
-      executeExternalEffectWithReconciliation(identity, { store, provider }),
+      executeExternalEffectWithReconciliation(
+        identity,
+        executionOptions(store, provider),
+      ),
     ).rejects.toThrow("executionId does not match");
     expect(provider.execute).not.toHaveBeenCalled();
   });
@@ -189,11 +271,10 @@ describe("external effect execution reconciliation", () => {
     };
     const evidence = createEvidenceHarness();
 
-    await executeExternalEffectWithReconciliation(identity, {
-      store,
-      provider,
-      hooks: evidence.hooks,
-    });
+    await executeExternalEffectWithReconciliation(
+      identity,
+      executionOptions(store, provider, { hooks: evidence.hooks }),
+    );
 
     expect(evidence.events).toEqual([
       {
@@ -218,11 +299,10 @@ describe("external effect execution reconciliation", () => {
     };
     const evidence = createEvidenceHarness();
 
-    await executeExternalEffectWithReconciliation(identity, {
-      store,
-      provider,
-      hooks: evidence.hooks,
-    });
+    await executeExternalEffectWithReconciliation(
+      identity,
+      executionOptions(store, provider, { hooks: evidence.hooks }),
+    );
 
     expect(evidence.events).toEqual([
       {
