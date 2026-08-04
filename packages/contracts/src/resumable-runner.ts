@@ -499,6 +499,10 @@ export class ResumableSequentialWorkflowRunner {
           nextStepIndex,
         });
       } else if (error instanceof BudgetExceededError) {
+        if (checkpoint !== undefined) {
+          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          checkpoint = undefined;
+        }
         await append("execution.failed", {
           workflowId: workflow.id,
           reason: "budget_exceeded",
