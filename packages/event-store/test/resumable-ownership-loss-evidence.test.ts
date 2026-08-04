@@ -40,7 +40,7 @@ const claim = Object.freeze({
 });
 
 describe("resumable ownership-loss evidence composition", () => {
-  it("appends a contiguous parent-linked event after durable restart", async () => {
+  it("allocates from the current durable tail after runner events and restart", async () => {
     const storage = new InMemoryAtomicSnapshotStorage();
     const firstSink = new DurableExecutionEventSink(
       new DurableSnapshotEventStore(storage),
@@ -73,12 +73,22 @@ describe("resumable ownership-loss evidence composition", () => {
       createRunner: () =>
         ({
           run: async () => {
+            await restartedSink.append({
+              id: "event-2",
+              executionId: "execution-1",
+              sequence: 2,
+              type: "workflow.step.started",
+              occurredAt: "2026-08-04T16:00:20.000Z",
+              actor: "runner",
+              parentEventId: "event-1",
+              payload: {},
+            });
             throw ownershipLoss;
           },
         }) as unknown as ResumableSequentialWorkflowRunner,
       ownershipLossEvidence: {
         actor: "runtime",
-        createEventId: () => "event-2",
+        createEventId: () => "event-3",
         now: () => "2026-08-04T16:00:30.000Z",
       },
     });
@@ -101,13 +111,13 @@ describe("resumable ownership-loss evidence composition", () => {
       new DurableSnapshotEventStore(storage),
     ).readExecution("execution-1");
 
-    expect(trace).toHaveLength(2);
-    expect(trace[1]).toMatchObject({
-      id: "event-2",
+    expect(trace).toHaveLength(3);
+    expect(trace[2]).toMatchObject({
+      id: "event-3",
       executionId: "execution-1",
-      sequence: 2,
+      sequence: 3,
       type: "external.effect.ownership.lost",
-      parentEventId: "event-1",
+      parentEventId: "event-2",
       actor: "runtime",
       payload: {
         stage: "provider_execution",
@@ -115,6 +125,6 @@ describe("resumable ownership-loss evidence composition", () => {
         generation: 3,
       },
     });
-    expect(JSON.stringify(trace[1])).not.toContain(claim.claimToken);
+    expect(JSON.stringify(trace[2])).not.toContain(claim.claimToken);
   });
 });
