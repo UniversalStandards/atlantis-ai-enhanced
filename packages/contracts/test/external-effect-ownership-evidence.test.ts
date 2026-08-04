@@ -84,6 +84,48 @@ describe("createExternalEffectOwnershipEvidenceObserver", () => {
     expect(events[1]?.payload.lifecycle).toBe(committed);
   });
 
+  it("serializes concurrent callbacks into one contiguous evidence chain", async () => {
+    const events: ExternalEffectOwnershipExecutionEvent[] = [];
+    const ids = ["event-21", "event-22"];
+    let releaseFirstAppend: (() => void) | undefined;
+    const firstAppendBlocked = new Promise<void>((resolve) => {
+      releaseFirstAppend = resolve;
+    });
+    let appendCount = 0;
+    const observer = createExternalEffectOwnershipEvidenceObserver({
+      eventSink: {
+        async append(event) {
+          appendCount += 1;
+          if (appendCount === 1) {
+            await firstAppendBlocked;
+          }
+          events.push(event);
+        },
+      },
+      executionId: identity.executionId,
+      actor: "ownership-store",
+      initialSequence: 20,
+      parentEventId: "event-20",
+      createEventId: () => ids.shift() ?? "unexpected-event",
+      now: () => "2026-08-04T13:00:20.000Z",
+    });
+
+    const first = observer.onLifecycleEvent(acquired);
+    const second = observer.onLifecycleEvent(committed);
+
+    await vi.waitFor(() => expect(appendCount).toBe(1));
+    expect(events).toHaveLength(0);
+
+    releaseFirstAppend?.();
+    await Promise.all([first, second]);
+
+    expect(events.map((event) => event.sequence)).toEqual([21, 22]);
+    expect(events.map((event) => event.parentEventId)).toEqual([
+      "event-20",
+      "event-21",
+    ]);
+  });
+
   it("does not advance the stream tail when append fails", async () => {
     const append = vi
       .fn<(event: ExternalEffectOwnershipExecutionEvent) => Promise<void>>()
