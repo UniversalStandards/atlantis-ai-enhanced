@@ -10,6 +10,7 @@
     "./external-effect": "./src/external-effect.ts",
     "./external-effect-execution": "./src/external-effect-execution.ts",
     "./external-effect-ownership": "./src/external-effect-ownership.ts",
+    "./external-effect-ownership-evidence": "./src/external-effect-ownership-evidence.ts",
     "./external-effect-ownership-validation": "./src/external-effect-ownership-validation.ts",
     "./observable-external-effect-ownership-store": "./src/observable-external-effect-ownership-store.ts",
     "./validated-external-effect-ownership-store": "./src/validated-external-effect-ownership-store.ts",
