@@ -59,11 +59,51 @@ export interface ExternalEffectExecutionHooks {
   ) => void | Promise<void>;
 }
 
+export interface ExternalEffectLeaseMaintenanceOptions {
+  readonly renewalIntervalMs?: number;
+}
+
+export type ExternalEffectLeaseStage =
+  | "provider_reconciliation"
+  | "provider_execution";
+
+export class ExternalEffectOwnershipLostError extends Error {
+  public readonly stage: ExternalEffectLeaseStage;
+  public readonly identity: ExternalEffectIdentity;
+  public readonly ownerId: string;
+  public readonly generation: number;
+  public readonly expiresAt: string;
+  public readonly cause: unknown;
+
+  public constructor(
+    stage: ExternalEffectLeaseStage,
+    claim: ExternalEffectClaim,
+    cause: unknown,
+  ) {
+    super(
+      `External-effect ownership was lost during ${stage} for generation ${String(claim.generation)}`,
+    );
+    this.name = "ExternalEffectOwnershipLostError";
+    this.stage = stage;
+    this.identity = Object.freeze({
+      idempotencyKey: claim.idempotencyKey,
+      executionId: claim.executionId,
+      stepId: claim.stepId,
+      effectType: claim.effectType,
+    });
+    this.ownerId = claim.ownerId;
+    this.generation = claim.generation;
+    this.expiresAt = claim.expiresAt;
+    this.cause = cause;
+  }
+}
+
 export interface ExternalEffectExecutionOptions {
   readonly store: ExternalEffectReceiptStore;
   readonly provider: ExternalEffectProvider;
   readonly ownershipStore: ExternalEffectOwnershipStore;
   readonly ownershipRequest: ExternalEffectOwnershipRequest;
+  readonly leaseMaintenance?: ExternalEffectLeaseMaintenanceOptions;
   readonly hooks?: ExternalEffectExecutionHooks;
 }
 
@@ -84,6 +124,10 @@ export interface ExternalEffectExecutedPayload {
 export interface ExternalEffectReconciledPayload {
   readonly source: ExternalEffectRecoverySource;
   readonly receipt: ExternalEffectReceipt;
+}
+
+interface ExternalEffectLeaseState {
+  claim: ExternalEffectClaim;
 }
 
 function requireCommittedReceipt(
@@ -112,6 +156,128 @@ function requireCanonicalTimestamp(field: string, value: string): string {
     throw new Error(`${field} must be a canonical ISO timestamp`);
   }
   return timestamp;
+}
+
+function normalizeRenewalIntervalMs(
+  leaseDurationMs: number,
+  options: ExternalEffectLeaseMaintenanceOptions | undefined,
+): number {
+  if (!Number.isSafeInteger(leaseDurationMs) || leaseDurationMs < 2) {
+    throw new InvalidExternalEffectOwnershipError(
+      "ownershipRequest.leaseDurationMs must be at least 2 ms for lease maintenance",
+    );
+  }
+  const renewalIntervalMs =
+    options?.renewalIntervalMs ?? Math.max(1, Math.floor(leaseDurationMs / 3));
+  if (
+    !Number.isSafeInteger(renewalIntervalMs) ||
+    renewalIntervalMs <= 0 ||
+    renewalIntervalMs >= leaseDurationMs
+  ) {
+    throw new InvalidExternalEffectOwnershipError(
+      "leaseMaintenance.renewalIntervalMs must be a positive safe integer smaller than the ownership lease duration",
+    );
+  }
+  return renewalIntervalMs;
+}
+
+function waitForLeaseRenewal(
+  delayMs: number,
+  signal: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
+    let settled = false;
+    const settle = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const timeoutHandle = setTimeout(settle, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeoutHandle);
+      settle();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function runWithLeaseMaintenance<T>(
+  store: ExternalEffectOwnershipStore,
+  leaseState: ExternalEffectLeaseState,
+  leaseDurationMs: number,
+  renewalIntervalMs: number,
+  stage: ExternalEffectLeaseStage,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const operationPromise = Promise.resolve().then(operation);
+  const maintenancePromise = (async () => {
+    while (!controller.signal.aborted) {
+      await waitForLeaseRenewal(renewalIntervalMs, controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+      try {
+        leaseState.claim = await store.renew(leaseState.claim, {
+          leaseDurationMs,
+        });
+      } catch (cause) {
+        throw new ExternalEffectOwnershipLostError(
+          stage,
+          leaseState.claim,
+          cause,
+        );
+      }
+    }
+  })();
+
+  try {
+    const result = await Promise.race([
+      operationPromise,
+      maintenancePromise.then(() => new Promise<never>(() => undefined)),
+    ]);
+    controller.abort();
+    await maintenancePromise;
+    try {
+      leaseState.claim = await store.renew(leaseState.claim, {
+        leaseDurationMs,
+      });
+    } catch (cause) {
+      throw new ExternalEffectOwnershipLostError(
+        stage,
+        leaseState.claim,
+        cause,
+      );
+    }
+    return result;
+  } catch (error) {
+    controller.abort();
+    if (error instanceof ExternalEffectOwnershipLostError) {
+      void operationPromise.catch(() => undefined);
+      try {
+        await maintenancePromise;
+      } catch {
+        // The ownership-loss error already carries the authoritative failure.
+      }
+      throw error;
+    }
+
+    try {
+      await maintenancePromise;
+    } catch (maintenanceError) {
+      void operationPromise.catch(() => undefined);
+      throw maintenanceError;
+    }
+    throw error;
+  }
 }
 
 function validateEvidenceContext(context: ExternalEffectEvidenceContext): void {
@@ -232,6 +398,10 @@ export async function executeExternalEffectWithReconciliation(
     });
   }
 
+  const renewalIntervalMs = normalizeRenewalIntervalMs(
+    options.ownershipRequest.leaseDurationMs,
+    options.leaseMaintenance,
+  );
   const ownership = await ownershipStore.acquire(
     identity,
     options.ownershipRequest,
@@ -260,20 +430,30 @@ export async function executeExternalEffectWithReconciliation(
     });
   }
 
-  const claim = ownership.claim;
+  const leaseState: ExternalEffectLeaseState = { claim: ownership.claim };
   let providerReceipt: ExternalEffectReceipt | undefined;
   try {
-    providerReceipt = await options.provider.reconcile(identity);
+    providerReceipt = await runWithLeaseMaintenance(
+      ownershipStore,
+      leaseState,
+      options.ownershipRequest.leaseDurationMs,
+      renewalIntervalMs,
+      "provider_reconciliation",
+      () => options.provider.reconcile(identity),
+    );
     if (providerReceipt !== undefined) {
       providerReceipt = requireCommittedReceipt(identity, providerReceipt);
     }
   } catch (error) {
-    await releasePreExecutionFailure(ownershipStore, claim);
+    if (error instanceof ExternalEffectOwnershipLostError) {
+      throw error;
+    }
+    await releasePreExecutionFailure(ownershipStore, leaseState.claim);
     throw error;
   }
 
   if (providerReceipt !== undefined) {
-    const receipt = await ownershipStore.commit(claim, providerReceipt);
+    const receipt = await ownershipStore.commit(leaseState.claim, providerReceipt);
     await options.store.save(receipt);
     await options.hooks?.onReconciled?.("provider", receipt);
     return Object.freeze({
@@ -285,9 +465,16 @@ export async function executeExternalEffectWithReconciliation(
 
   const receipt = requireCommittedReceipt(
     identity,
-    await options.provider.execute(identity),
+    await runWithLeaseMaintenance(
+      ownershipStore,
+      leaseState,
+      options.ownershipRequest.leaseDurationMs,
+      renewalIntervalMs,
+      "provider_execution",
+      () => options.provider.execute(identity),
+    ),
   );
-  const committed = await ownershipStore.commit(claim, receipt);
+  const committed = await ownershipStore.commit(leaseState.claim, receipt);
   await options.store.save(committed);
   await options.hooks?.onExecuted?.(committed);
   return Object.freeze({ status: "executed", receipt: committed });
