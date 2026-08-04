@@ -10,6 +10,7 @@ import {
   type ExternalEffectOwnershipRequest,
   type ExternalEffectOwnershipStore,
 } from "./external-effect-ownership.js";
+import { StructurallyValidatedExternalEffectOwnershipStore } from "./validated-external-effect-ownership-store.js";
 
 export interface ExternalEffectReceiptStore {
   load(
@@ -215,6 +216,10 @@ export async function executeExternalEffectWithReconciliation(
   options: ExternalEffectExecutionOptions,
 ): Promise<ExternalEffectExecutionResult> {
   const identity = reconcileExternalEffect(rawIdentity).identity;
+  const ownershipStore =
+    options.ownershipStore instanceof StructurallyValidatedExternalEffectOwnershipStore
+      ? options.ownershipStore
+      : new StructurallyValidatedExternalEffectOwnershipStore(options.ownershipStore);
 
   const stored = await options.store.load(identity);
   if (stored !== undefined) {
@@ -227,7 +232,7 @@ export async function executeExternalEffectWithReconciliation(
     });
   }
 
-  const ownership = await options.ownershipStore.acquire(
+  const ownership = await ownershipStore.acquire(
     identity,
     options.ownershipRequest,
   );
@@ -263,12 +268,12 @@ export async function executeExternalEffectWithReconciliation(
       providerReceipt = requireCommittedReceipt(identity, providerReceipt);
     }
   } catch (error) {
-    await releasePreExecutionFailure(options.ownershipStore, claim);
+    await releasePreExecutionFailure(ownershipStore, claim);
     throw error;
   }
 
   if (providerReceipt !== undefined) {
-    const receipt = await options.ownershipStore.commit(claim, providerReceipt);
+    const receipt = await ownershipStore.commit(claim, providerReceipt);
     await options.store.save(receipt);
     await options.hooks?.onReconciled?.("provider", receipt);
     return Object.freeze({
@@ -282,7 +287,7 @@ export async function executeExternalEffectWithReconciliation(
     identity,
     await options.provider.execute(identity),
   );
-  const committed = await options.ownershipStore.commit(claim, receipt);
+  const committed = await ownershipStore.commit(claim, receipt);
   await options.store.save(committed);
   await options.hooks?.onExecuted?.(committed);
   return Object.freeze({ status: "executed", receipt: committed });
