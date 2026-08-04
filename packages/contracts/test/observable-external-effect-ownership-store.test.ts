@@ -50,7 +50,14 @@ function createStore(): ExternalEffectOwnershipStore {
     commit: vi.fn().mockResolvedValue(receipt),
     release: vi.fn().mockResolvedValue(undefined),
     observe: vi.fn().mockResolvedValue(
-      Object.freeze({ status: "owned", identity, ownerId: claim.ownerId, acquiredAt: claim.acquiredAt, expiresAt: claim.expiresAt, generation: claim.generation }),
+      Object.freeze({
+        status: "owned",
+        identity,
+        ownerId: claim.ownerId,
+        acquiredAt: claim.acquiredAt,
+        expiresAt: claim.expiresAt,
+        generation: claim.generation,
+      }),
     ),
   };
 }
@@ -99,6 +106,39 @@ describe("ObservableExternalEffectOwnershipStore", () => {
     expect(authoritative.acquire).toHaveBeenCalledOnce();
     expect(observationErrors).toHaveLength(1);
     expect(observationErrors[0]).toBeInstanceOf(Error);
+  });
+
+  it("isolates authoritative results from observer mutation", async () => {
+    const mutableClaim = { ...claim };
+    const mutableResult = {
+      status: "acquired" as const,
+      identity: { ...identity },
+      claim: mutableClaim,
+      acquisition: "new" as const,
+    };
+    const authoritative = createStore();
+    vi.mocked(authoritative.acquire).mockResolvedValueOnce(mutableResult);
+    const observationErrors: unknown[] = [];
+    const decorated = new ObservableExternalEffectOwnershipStore(authoritative, {
+      onLifecycleEvent(event) {
+        if (event.type === "ownership.acquired") {
+          (event.result.claim as { ownerId: string }).ownerId = "observer-mutated";
+        }
+      },
+      onLifecycleObservationError(error) {
+        observationErrors.push(error);
+      },
+    });
+
+    const result = await decorated.acquire(identity, {
+      ownerId: "worker-1",
+      leaseDurationMs: 60_000,
+    });
+
+    expect(result).toBe(mutableResult);
+    expect(result.claim.ownerId).toBe("worker-1");
+    expect(mutableClaim.ownerId).toBe("worker-1");
+    expect(observationErrors).toHaveLength(1);
   });
 
   it("does not emit success evidence when the authoritative store rejects", async () => {
