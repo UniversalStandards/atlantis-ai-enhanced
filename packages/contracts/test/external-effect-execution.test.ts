@@ -41,21 +41,21 @@ function createStore(): ExternalEffectReceiptStore & {
   };
 }
 
-function createEvidenceHarness() {
+function createEvidenceHarness(
+  append?: (event: ExecutionEvent) => void | Promise<void>,
+) {
   const events: ExecutionEvent[] = [];
-  let sequence = 40;
   let eventNumber = 0;
   const hooks = createExternalEffectEvidenceHooks({
     eventSink: {
       async append(event) {
-        events.push(event);
+        await append?.(event as ExecutionEvent);
+        events.push(event as ExecutionEvent);
       },
     },
+    executionId: "execution-1",
     actor: "external-effect-worker",
-    nextSequence: () => {
-      sequence += 1;
-      return sequence;
-    },
+    initialSequence: 40,
     createEventId: () => {
       eventNumber += 1;
       return `event-${String(eventNumber)}`;
@@ -234,6 +234,59 @@ describe("external effect execution reconciliation", () => {
         actor: "external-effect-worker",
         parentEventId: "step-event-1",
         payload: { source: "durable_store", receipt },
+      },
+    ]);
+  });
+
+  it("chains repeated evidence through the last successfully appended event", async () => {
+    const evidence = createEvidenceHarness();
+
+    await evidence.hooks.onExecuted?.(receipt);
+    await evidence.hooks.onReconciled?.("durable_store", receipt);
+
+    expect(evidence.events.map((event) => ({
+      id: event.id,
+      sequence: event.sequence,
+      parentEventId: event.parentEventId,
+    }))).toEqual([
+      { id: "event-1", sequence: 41, parentEventId: "step-event-1" },
+      { id: "event-2", sequence: 42, parentEventId: "event-1" },
+    ]);
+  });
+
+  it("rejects evidence whose receipt belongs to another execution stream", async () => {
+    const evidence = createEvidenceHarness();
+
+    await expect(
+      evidence.hooks.onExecuted?.({ ...receipt, executionId: "execution-2" }),
+    ).rejects.toThrow("executionId does not match evidence context");
+    expect(evidence.events).toHaveLength(0);
+  });
+
+  it("does not advance the evidence cursor when append fails", async () => {
+    let attempts = 0;
+    const evidence = createEvidenceHarness(() => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("simulated event store outage");
+      }
+    });
+
+    await expect(evidence.hooks.onExecuted?.(receipt)).rejects.toThrow(
+      "simulated event store outage",
+    );
+    await evidence.hooks.onExecuted?.(receipt);
+
+    expect(evidence.events).toEqual([
+      {
+        id: "event-2",
+        executionId: "execution-1",
+        sequence: 41,
+        type: "external.effect.executed",
+        occurredAt: "2026-08-04T05:00:00.000Z",
+        actor: "external-effect-worker",
+        parentEventId: "step-event-1",
+        payload: { receipt },
       },
     ]);
   });
