@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ExternalEffectOwnershipObservationTimeoutError,
   ObservableExternalEffectOwnershipStore,
   type ExternalEffectOwnershipLifecycleEvent,
 } from "../src/observable-external-effect-ownership-store.js";
@@ -106,6 +107,74 @@ describe("ObservableExternalEffectOwnershipStore", () => {
     expect(authoritative.acquire).toHaveBeenCalledOnce();
     expect(observationErrors).toHaveLength(1);
     expect(observationErrors[0]).toBeInstanceOf(Error);
+  });
+
+  it("bounds a stalled observer without changing the ownership result", async () => {
+    const authoritative = createStore();
+    const observationErrors: unknown[] = [];
+    const decorated = new ObservableExternalEffectOwnershipStore(
+      authoritative,
+      {
+        onLifecycleEvent() {
+          return new Promise<void>(() => undefined);
+        },
+        onLifecycleObservationError(error) {
+          observationErrors.push(error);
+        },
+      },
+      { observationTimeoutMs: 10 },
+    );
+
+    const result = await decorated.acquire(identity, {
+      ownerId: "worker-1",
+      leaseDurationMs: 60_000,
+    });
+
+    expect(result.status).toBe("acquired");
+    expect(authoritative.acquire).toHaveBeenCalledOnce();
+    expect(observationErrors).toHaveLength(1);
+    expect(observationErrors[0]).toBeInstanceOf(
+      ExternalEffectOwnershipObservationTimeoutError,
+    );
+    expect(observationErrors[0]).toMatchObject({
+      timeoutMs: 10,
+      eventType: "ownership.acquired",
+    });
+  });
+
+  it("bounds a stalled error observer after a lifecycle failure", async () => {
+    const authoritative = createStore();
+    const decorated = new ObservableExternalEffectOwnershipStore(
+      authoritative,
+      {
+        onLifecycleEvent() {
+          throw new Error("evidence sink unavailable");
+        },
+        onLifecycleObservationError() {
+          return new Promise<void>(() => undefined);
+        },
+      },
+      { observationTimeoutMs: 10 },
+    );
+
+    const result = await decorated.acquire(identity, {
+      ownerId: "worker-1",
+      leaseDurationMs: 60_000,
+    });
+
+    expect(result.status).toBe("acquired");
+    expect(authoritative.acquire).toHaveBeenCalledOnce();
+  });
+
+  it("rejects invalid observation deadlines at construction", () => {
+    expect(
+      () =>
+        new ObservableExternalEffectOwnershipStore(
+          createStore(),
+          { onLifecycleEvent() {} },
+          { observationTimeoutMs: 0 },
+        ),
+    ).toThrow("observationTimeoutMs must be a positive safe integer");
   });
 
   it("isolates authoritative results from observer mutation", async () => {
