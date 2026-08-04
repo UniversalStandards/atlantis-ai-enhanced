@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createExternalEffectEvidenceHooks,
   executeExternalEffectWithReconciliation,
   type ExternalEffectProvider,
   type ExternalEffectReceiptStore,
@@ -9,6 +10,7 @@ import type {
   ExternalEffectIdentity,
   ExternalEffectReceipt,
 } from "../src/external-effect.js";
+import type { ExecutionEvent } from "../src/index.js";
 
 const identity: ExternalEffectIdentity = {
   idempotencyKey: "execution-1:publish-change",
@@ -37,6 +39,31 @@ function createStore(): ExternalEffectReceiptStore & {
       this.current = value;
     },
   };
+}
+
+function createEvidenceHarness() {
+  const events: ExecutionEvent[] = [];
+  let sequence = 40;
+  let eventNumber = 0;
+  const hooks = createExternalEffectEvidenceHooks({
+    eventSink: {
+      async append(event) {
+        events.push(event);
+      },
+    },
+    actor: "external-effect-worker",
+    nextSequence: () => {
+      sequence += 1;
+      return sequence;
+    },
+    createEventId: () => {
+      eventNumber += 1;
+      return `event-${String(eventNumber)}`;
+    },
+    now: () => "2026-08-04T05:00:00.000Z",
+    parentEventId: "step-event-1",
+  });
+  return { events, hooks };
 }
 
 describe("external effect execution reconciliation", () => {
@@ -152,5 +179,62 @@ describe("external effect execution reconciliation", () => {
       executeExternalEffectWithReconciliation(identity, { store, provider }),
     ).rejects.toThrow("executionId does not match");
     expect(provider.execute).not.toHaveBeenCalled();
+  });
+
+  it("appends durable execution evidence after receipt persistence", async () => {
+    const store = createStore();
+    const provider: ExternalEffectProvider = {
+      reconcile: vi.fn().mockResolvedValue(undefined),
+      execute: vi.fn().mockResolvedValue(receipt),
+    };
+    const evidence = createEvidenceHarness();
+
+    await executeExternalEffectWithReconciliation(identity, {
+      store,
+      provider,
+      hooks: evidence.hooks,
+    });
+
+    expect(evidence.events).toEqual([
+      {
+        id: "event-1",
+        executionId: "execution-1",
+        sequence: 41,
+        type: "external.effect.executed",
+        occurredAt: "2026-08-04T05:00:00.000Z",
+        actor: "external-effect-worker",
+        parentEventId: "step-event-1",
+        payload: { receipt },
+      },
+    ]);
+  });
+
+  it("appends reconciliation evidence with the recovery source", async () => {
+    const store = createStore();
+    store.current = receipt;
+    const provider: ExternalEffectProvider = {
+      reconcile: vi.fn(),
+      execute: vi.fn(),
+    };
+    const evidence = createEvidenceHarness();
+
+    await executeExternalEffectWithReconciliation(identity, {
+      store,
+      provider,
+      hooks: evidence.hooks,
+    });
+
+    expect(evidence.events).toEqual([
+      {
+        id: "event-1",
+        executionId: "execution-1",
+        sequence: 41,
+        type: "external.effect.reconciled",
+        occurredAt: "2026-08-04T05:00:00.000Z",
+        actor: "external-effect-worker",
+        parentEventId: "step-event-1",
+        payload: { source: "durable_store", receipt },
+      },
+    ]);
   });
 });
