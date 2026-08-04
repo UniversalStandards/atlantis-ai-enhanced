@@ -5,7 +5,10 @@ import type { ResumableSequentialWorkflowRunner } from "@atlantis/contracts/resu
 import {
   GovernedResumableTaskEntrypoint,
   ResumableTaskEntrypoint,
+  TerminalExecutionAlreadyFinalizedError,
   normalizeResumableTaskRequest,
+  type TerminalExecutionLookup,
+  type TerminalExecutionRecord,
 } from "../src/resumable-task-entrypoint.js";
 import { InvalidTaskRequestError, TaskAuthorizationError } from "../src/task-entrypoint.js";
 
@@ -36,6 +39,10 @@ const approval = {
   metadata: {},
 };
 
+const emptyTerminalLookup: TerminalExecutionLookup = {
+  findTerminalExecution: () => undefined,
+};
+
 function request(overrides: Record<string, unknown> = {}) {
   return {
     workflowId: "deploy",
@@ -56,6 +63,7 @@ describe("GovernedResumableTaskEntrypoint", () => {
       eventSink: {
         readExecution: (executionId: string) => traces.get(executionId) ?? [],
       } as never,
+      terminalExecutionLookup: emptyTerminalLookup,
       resolveWorkflow: () => workflow,
       nextExecutionId: () => {
         allocated += 1;
@@ -117,6 +125,7 @@ describe("GovernedResumableTaskEntrypoint", () => {
     let runnerCreated = false;
     const entrypoint = new ResumableTaskEntrypoint({
       eventSink: { readExecution: () => [] } as never,
+      terminalExecutionLookup: emptyTerminalLookup,
       resolveWorkflow: () => workflow,
       nextExecutionId: () => "unused",
       createRunner: () => {
@@ -133,6 +142,46 @@ describe("GovernedResumableTaskEntrypoint", () => {
       governed.submit(request({ executionId: "execution-1" })),
     ).rejects.toEqual(new TaskAuthorizationError("resume denied"));
     expect(runnerCreated).toBe(false);
+  });
+
+  it("fails closed before runner creation when the identity is terminal", async () => {
+    const terminal: TerminalExecutionRecord = {
+      executionId: "execution-1",
+      outcome: "failed",
+      eventId: "event-terminal",
+      occurredAt: "2026-08-04T03:00:00.000Z",
+    };
+    let runnerCreated = 0;
+    let runnerExecuted = 0;
+
+    const entrypoint = new ResumableTaskEntrypoint({
+      eventSink: { readExecution: () => [] } as never,
+      terminalExecutionLookup: {
+        findTerminalExecution: (executionId) =>
+          executionId === terminal.executionId ? terminal : undefined,
+      },
+      resolveWorkflow: () => workflow,
+      nextExecutionId: () => "execution-1",
+      createRunner: () => {
+        runnerCreated += 1;
+        return {
+          run: async () => {
+            runnerExecuted += 1;
+            return "must-not-run";
+          },
+        } as unknown as ResumableSequentialWorkflowRunner;
+      },
+    });
+    const governed = new GovernedResumableTaskEntrypoint({
+      taskEntrypoint: entrypoint,
+      authorize: () => ({ allowed: true }),
+    });
+
+    await expect(
+      governed.submit(request({ executionId: "execution-1" })),
+    ).rejects.toEqual(new TerminalExecutionAlreadyFinalizedError(terminal));
+    expect(runnerCreated).toBe(0);
+    expect(runnerExecuted).toBe(0);
   });
 
   it("requires execution identity for approval resolution", () => {
