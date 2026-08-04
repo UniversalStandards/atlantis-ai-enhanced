@@ -26,7 +26,7 @@ const receipt: ExternalEffectReceipt = {
 };
 
 function createStore(): ExternalEffectReceiptStore & {
-  current?: ExternalEffectReceipt;
+  current: ExternalEffectReceipt | undefined;
 } {
   return {
     current: undefined,
