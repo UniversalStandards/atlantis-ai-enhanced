@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./execution-event-sink": "./src/execution-event-sink.ts",
+    "./external-effect-ownership-loss-context": "./src/external-effect-ownership-loss-context.ts",
     "./task-entrypoint": "./src/task-entrypoint.ts",
     "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts"
   },
