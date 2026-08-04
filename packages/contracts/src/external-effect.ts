@@ -70,10 +70,38 @@ function normalizeMetadata(
     throw new InvalidExternalEffectError("metadata must be a string record");
   }
 
+  const prototype = Object.getPrototypeOf(metadata);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new InvalidExternalEffectError("metadata must be a plain string record");
+  }
+
   const normalized: Record<string, string> = {};
-  for (const [key, value] of Object.entries(metadata)) {
+  for (const key of Reflect.ownKeys(metadata)) {
+    if (typeof key !== "string") {
+      throw new InvalidExternalEffectError("metadata must not contain symbol keys");
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(metadata, key);
+    if (
+      descriptor === undefined ||
+      descriptor.enumerable !== true ||
+      !("value" in descriptor)
+    ) {
+      throw new InvalidExternalEffectError(
+        `metadata.${key} must be an enumerable data property`,
+      );
+    }
+
     const normalizedKey = requireNonBlank("metadata key", key);
-    normalized[normalizedKey] = requireNonBlank(`metadata.${normalizedKey}`, value);
+    if (Object.prototype.hasOwnProperty.call(normalized, normalizedKey)) {
+      throw new InvalidExternalEffectError(
+        `metadata contains duplicate normalized key ${normalizedKey}`,
+      );
+    }
+    normalized[normalizedKey] = requireNonBlank(
+      `metadata.${normalizedKey}`,
+      descriptor.value,
+    );
   }
   return Object.freeze(normalized);
 }
