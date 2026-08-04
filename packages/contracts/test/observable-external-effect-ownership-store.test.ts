@@ -166,6 +166,46 @@ describe("ObservableExternalEffectOwnershipStore", () => {
     expect(authoritative.acquire).toHaveBeenCalledOnce();
   });
 
+  it("ignores late observer settlement after the timeout boundary", async () => {
+    const authoritative = createStore();
+    const observationErrors: unknown[] = [];
+    let settleObserver: (() => void) | undefined;
+    const observerSettled = new Promise<void>((resolve) => {
+      settleObserver = resolve;
+    });
+    const decorated = new ObservableExternalEffectOwnershipStore(
+      authoritative,
+      {
+        onLifecycleEvent() {
+          return observerSettled;
+        },
+        onLifecycleObservationError(error) {
+          observationErrors.push(error);
+        },
+      },
+      { observationTimeoutMs: 10 },
+    );
+
+    const result = await decorated.acquire(identity, {
+      ownerId: "worker-1",
+      leaseDurationMs: 60_000,
+    });
+
+    expect(result.status).toBe("acquired");
+    expect(authoritative.acquire).toHaveBeenCalledOnce();
+    expect(observationErrors).toHaveLength(1);
+    expect(observationErrors[0]).toBeInstanceOf(
+      ExternalEffectOwnershipObservationTimeoutError,
+    );
+
+    settleObserver?.();
+    await observerSettled;
+    await Promise.resolve();
+
+    expect(observationErrors).toHaveLength(1);
+    expect(result.status).toBe("acquired");
+  });
+
   it("rejects invalid observation deadlines at construction", () => {
     expect(
       () =>
