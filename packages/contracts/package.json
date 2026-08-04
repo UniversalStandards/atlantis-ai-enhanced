@@ -10,6 +10,7 @@
     "./external-effect": "./src/external-effect.ts",
     "./external-effect-execution": "./src/external-effect-execution.ts",
     "./external-effect-ownership": "./src/external-effect-ownership.ts",
+    "./external-effect-ownership-validation": "./src/external-effect-ownership-validation.ts",
     "./sequential-runner": "./src/sequential-runner.ts",
     "./resumable-runner": "./src/resumable-runner.ts"
   },
