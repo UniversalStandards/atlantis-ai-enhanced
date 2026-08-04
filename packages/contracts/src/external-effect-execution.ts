@@ -4,6 +4,12 @@ import {
   type ExternalEffectIdentity,
   type ExternalEffectReceipt,
 } from "./external-effect.js";
+import {
+  InvalidExternalEffectOwnershipError,
+  type ExternalEffectClaim,
+  type ExternalEffectOwnershipRequest,
+  type ExternalEffectOwnershipStore,
+} from "./external-effect-ownership.js";
 
 export interface ExternalEffectReceiptStore {
   load(
@@ -32,6 +38,14 @@ export type ExternalEffectExecutionResult =
       status: "reconciled";
       source: ExternalEffectRecoverySource;
       receipt: ExternalEffectReceipt;
+    }>
+  | Readonly<{
+      status: "owned";
+      identity: ExternalEffectIdentity;
+      ownerId: string;
+      acquiredAt: string;
+      expiresAt: string;
+      generation: number;
     }>;
 
 export interface ExternalEffectExecutionHooks {
@@ -47,6 +61,8 @@ export interface ExternalEffectExecutionHooks {
 export interface ExternalEffectExecutionOptions {
   readonly store: ExternalEffectReceiptStore;
   readonly provider: ExternalEffectProvider;
+  readonly ownershipStore: ExternalEffectOwnershipStore;
+  readonly ownershipRequest: ExternalEffectOwnershipRequest;
   readonly hooks?: ExternalEffectExecutionHooks;
 }
 
@@ -187,6 +203,13 @@ export function createExternalEffectEvidenceHooks(
   });
 }
 
+async function releasePreExecutionFailure(
+  store: ExternalEffectOwnershipStore,
+  claim: ExternalEffectClaim,
+): Promise<void> {
+  await store.release(claim, "pre_execution_failure");
+}
+
 export async function executeExternalEffectWithReconciliation(
   rawIdentity: ExternalEffectIdentity,
   options: ExternalEffectExecutionOptions,
@@ -204,9 +227,48 @@ export async function executeExternalEffectWithReconciliation(
     });
   }
 
-  const providerReceipt = await options.provider.reconcile(identity);
+  const ownership = await options.ownershipStore.acquire(
+    identity,
+    options.ownershipRequest,
+  );
+  if (ownership.status === "rejected") {
+    throw new InvalidExternalEffectOwnershipError(ownership.message);
+  }
+  if (ownership.status === "owned") {
+    return Object.freeze({
+      status: "owned",
+      identity: ownership.identity,
+      ownerId: ownership.ownerId,
+      acquiredAt: ownership.acquiredAt,
+      expiresAt: ownership.expiresAt,
+      generation: ownership.generation,
+    });
+  }
+  if (ownership.status === "committed") {
+    const receipt = requireCommittedReceipt(identity, ownership.receipt);
+    await options.store.save(receipt);
+    await options.hooks?.onReconciled?.("durable_store", receipt);
+    return Object.freeze({
+      status: "reconciled",
+      source: "durable_store",
+      receipt,
+    });
+  }
+
+  const claim = ownership.claim;
+  let providerReceipt: ExternalEffectReceipt | undefined;
+  try {
+    providerReceipt = await options.provider.reconcile(identity);
+    if (providerReceipt !== undefined) {
+      providerReceipt = requireCommittedReceipt(identity, providerReceipt);
+    }
+  } catch (error) {
+    await releasePreExecutionFailure(options.ownershipStore, claim);
+    throw error;
+  }
+
   if (providerReceipt !== undefined) {
-    const receipt = requireCommittedReceipt(identity, providerReceipt);
+    const receipt = await options.ownershipStore.commit(claim, providerReceipt);
     await options.store.save(receipt);
     await options.hooks?.onReconciled?.("provider", receipt);
     return Object.freeze({
@@ -220,7 +282,8 @@ export async function executeExternalEffectWithReconciliation(
     identity,
     await options.provider.execute(identity),
   );
-  await options.store.save(receipt);
-  await options.hooks?.onExecuted?.(receipt);
-  return Object.freeze({ status: "executed", receipt });
+  const committed = await options.ownershipStore.commit(claim, receipt);
+  await options.store.save(committed);
+  await options.hooks?.onExecuted?.(committed);
+  return Object.freeze({ status: "executed", receipt: committed });
 }
