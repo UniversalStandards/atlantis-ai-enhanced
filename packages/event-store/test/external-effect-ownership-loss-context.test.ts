@@ -5,7 +5,10 @@ import { withExternalEffectOwnershipLossEvidence } from "@atlantis/contracts/ext
 import type { ExternalEffectClaim } from "@atlantis/contracts/external-effect-ownership";
 
 import { DurableExecutionEventSink } from "../src/execution-event-sink.js";
-import { createDurableOwnershipLossEvidenceContext } from "../src/external-effect-ownership-loss-context.js";
+import {
+  createDurableOwnershipLossEvidenceContext,
+  withDurableOwnershipLossEvidence,
+} from "../src/external-effect-ownership-loss-context.js";
 import {
   DurableSnapshotEventStore,
   InMemoryAtomicSnapshotStorage,
@@ -119,5 +122,50 @@ describe("durable ownership-loss evidence context", () => {
     expect(evidenceErrors).toHaveLength(1);
     expect(evidenceErrors[0]).toBeInstanceOf(InvalidEventError);
     expect(eventSink.readExecution("execution-1")).toHaveLength(1);
+  });
+
+  it("serializes concurrent ownership-loss handlers onto contiguous stream positions", async () => {
+    const eventSink = sink();
+    const eventIds = ["ownership-loss-1", "ownership-loss-2"];
+    const firstLoss = new ExternalEffectOwnershipLostError(
+      "provider_reconciliation",
+      claim,
+      new Error("first claim superseded"),
+    );
+    const secondLoss = new ExternalEffectOwnershipLostError(
+      "provider_execution",
+      claim,
+      new Error("second claim superseded"),
+    );
+    const options = {
+      eventSink,
+      executionId: "execution-1",
+      actor: "external-effect-runtime",
+      createEventId: () => eventIds.shift() ?? "unexpected-event",
+      now: () => "2026-08-04T16:00:10.000Z",
+    };
+
+    const results = await Promise.allSettled([
+      withDurableOwnershipLossEvidence(options, () => Promise.reject(firstLoss)),
+      withDurableOwnershipLossEvidence(options, () => Promise.reject(secondLoss)),
+    ]);
+
+    expect(results).toEqual([
+      { status: "rejected", reason: firstLoss },
+      { status: "rejected", reason: secondLoss },
+    ]);
+
+    const events = eventSink.readExecution("execution-1");
+    expect(events.map((event) => event.sequence)).toEqual([1, 2]);
+    expect(events.map((event) => event.id)).toEqual([
+      "ownership-loss-1",
+      "ownership-loss-2",
+    ]);
+    expect(events[0]).not.toHaveProperty("parentEventId");
+    expect(events[1]).toMatchObject({
+      parentEventId: "ownership-loss-1",
+      type: "external.effect.ownership.lost",
+    });
+    expect(JSON.stringify(events)).not.toContain(claim.claimToken);
   });
 });
