@@ -42,8 +42,37 @@ export type ResumableTaskResult<O = unknown> =
       trace: readonly ExecutionEvent[];
     }>;
 
+export type TerminalExecutionOutcome =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
+
+export interface TerminalExecutionRecord {
+  readonly executionId: string;
+  readonly outcome: TerminalExecutionOutcome;
+  readonly eventId: string;
+  readonly occurredAt: string;
+}
+
+export interface TerminalExecutionLookup {
+  findTerminalExecution(
+    executionId: string,
+  ): TerminalExecutionRecord | undefined | Promise<TerminalExecutionRecord | undefined>;
+}
+
+export class TerminalExecutionAlreadyFinalizedError extends Error {
+  public constructor(public readonly terminal: TerminalExecutionRecord) {
+    super(
+      `Execution ${terminal.executionId} already has terminal outcome ${terminal.outcome}.`,
+    );
+    this.name = "TerminalExecutionAlreadyFinalizedError";
+  }
+}
+
 export interface ResumableTaskEntrypointOptions {
   readonly eventSink: DurableExecutionEventSink;
+  readonly terminalExecutionLookup: TerminalExecutionLookup;
   readonly resolveWorkflow: (
     workflowId: string,
   ) => ResumableWorkflow<unknown, unknown> | undefined;
@@ -135,6 +164,13 @@ export class ResumableTaskEntrypoint {
     }
 
     const executionId = request.executionId ?? this.options.nextExecutionId();
+    const terminal = await this.options.terminalExecutionLookup.findTerminalExecution(
+      executionId,
+    );
+    if (terminal !== undefined) {
+      throw new TerminalExecutionAlreadyFinalizedError(terminal);
+    }
+
     const context = createContext(request, workflow, executionId);
     const runner = this.options.createRunner(request);
 
