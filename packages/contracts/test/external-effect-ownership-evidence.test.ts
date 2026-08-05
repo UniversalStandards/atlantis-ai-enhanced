@@ -50,6 +50,17 @@ const committed: ExternalEffectOwnershipLifecycleEvent = Object.freeze({
   receipt,
 });
 
+function observerFor(append: (event: ExternalEffectOwnershipExecutionEvent) => Promise<void>) {
+  return createExternalEffectOwnershipEvidenceObserver({
+    eventSink: { append },
+    executionId: identity.executionId,
+    actor: "ownership-store",
+    initialSequence: 0,
+    createEventId: () => "event-1",
+    now: () => "2026-08-04T13:00:20.000Z",
+  });
+}
+
 describe("createExternalEffectOwnershipEvidenceObserver", () => {
   it("appends contiguous lifecycle evidence with parent linkage", async () => {
     const events: ExternalEffectOwnershipExecutionEvent[] = [];
@@ -172,5 +183,77 @@ describe("createExternalEffectOwnershipEvidenceObserver", () => {
       "executionId does not match evidence context",
     );
     expect(append).not.toHaveBeenCalled();
+  });
+
+  it("rejects cyclic lifecycle metadata deterministically before append", async () => {
+    const metadata: Record<string, unknown> = { claimToken: "nested-secret" };
+    metadata.self = metadata;
+    const lifecycle = {
+      ...acquired,
+      result: { ...acquired.result, metadata },
+    } as ExternalEffectOwnershipLifecycleEvent;
+    const append = vi.fn<(event: ExternalEffectOwnershipExecutionEvent) => Promise<void>>();
+
+    await expect(observerFor(append).onLifecycleEvent(lifecycle)).rejects.toThrow(
+      "lifecycle.result.metadata.self must not contain circular references",
+    );
+    expect(append).not.toHaveBeenCalled();
+  });
+
+  it("rejects prototype, accessor, and symbol-bearing metadata before append", async () => {
+    const hostileValues: unknown[] = [
+      new (class ProviderMetadata {
+        public readonly value = "unsafe";
+      })(),
+      Object.defineProperty({}, "claimToken", {
+        get: () => "accessor-secret",
+        enumerable: true,
+      }),
+      Object.defineProperty({}, Symbol("secret"), {
+        value: "symbol-secret",
+        enumerable: true,
+      }),
+    ];
+
+    for (const metadata of hostileValues) {
+      const append = vi.fn<(event: ExternalEffectOwnershipExecutionEvent) => Promise<void>>();
+      const lifecycle = {
+        ...acquired,
+        result: { ...acquired.result, metadata },
+      } as ExternalEffectOwnershipLifecycleEvent;
+
+      await expect(observerFor(append).onLifecycleEvent(lifecycle)).rejects.toThrow();
+      expect(append).not.toHaveBeenCalled();
+    }
+  });
+
+  it("preserves an own __proto__ field without changing snapshot prototypes", async () => {
+    const metadata = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(metadata, "__proto__", {
+      value: { claimToken: "prototype-secret", audit: "retained" },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    const lifecycle = {
+      ...acquired,
+      result: { ...acquired.result, metadata },
+    } as ExternalEffectOwnershipLifecycleEvent;
+    const events: ExternalEffectOwnershipExecutionEvent[] = [];
+
+    await observerFor(async (event) => {
+      events.push(event);
+    }).onLifecycleEvent(lifecycle);
+
+    const snapshot = events[0]?.payload.lifecycle as unknown as {
+      result: { metadata: Record<string, unknown> };
+    };
+    expect(Object.getPrototypeOf(snapshot)).toBeNull();
+    expect(Object.getPrototypeOf(snapshot.result)).toBeNull();
+    expect(Object.getPrototypeOf(snapshot.result.metadata)).toBeNull();
+    expect(Object.hasOwn(snapshot.result.metadata, "__proto__")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("prototype-secret");
+    expect(JSON.stringify(events)).toContain("[REDACTED]");
+    expect(JSON.stringify(events)).toContain("retained");
   });
 });
