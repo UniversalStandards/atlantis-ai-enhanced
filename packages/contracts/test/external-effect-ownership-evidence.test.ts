@@ -80,8 +80,12 @@ describe("createExternalEffectOwnershipEvidenceObserver", () => {
       "event-10",
       "event-11",
     ]);
-    expect(events[0]?.payload.lifecycle).toBe(acquired);
-    expect(events[1]?.payload.lifecycle).toBe(committed);
+    expect(events[0]?.payload.lifecycle).not.toBe(acquired);
+    expect(events[1]?.payload.lifecycle).not.toBe(committed);
+    expect(JSON.stringify(events)).not.toContain(claim.claimToken);
+    expect(JSON.stringify(events)).toContain("[REDACTED]");
+    expect(acquired.result.claim.claimToken).toBe(claim.claimToken);
+    expect(committed.claim.claimToken).toBe(claim.claimToken);
   });
 
   it("serializes concurrent callbacks into one contiguous evidence chain", async () => {
@@ -124,6 +128,7 @@ describe("createExternalEffectOwnershipEvidenceObserver", () => {
       "event-20",
       "event-21",
     ]);
+    expect(JSON.stringify(events)).not.toContain(claim.claimToken);
   });
 
   it("does not advance the stream tail when append fails", async () => {
