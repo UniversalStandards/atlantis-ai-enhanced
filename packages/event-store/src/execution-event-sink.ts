@@ -51,6 +51,23 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   return canonicalExecutionId;
 }
 
+function assertCanonicalEventId(value: unknown, field: "id" | "parentEventId"): string {
+  if (typeof value !== "string") {
+    throw new InvalidEventError(`execution event ${field} must be a string.`);
+  }
+
+  const canonicalValue = value.trim();
+  if (canonicalValue.length === 0) {
+    throw new InvalidEventError(`execution event ${field} must be non-empty.`);
+  }
+  if (canonicalValue !== value) {
+    throw new InvalidEventError(
+      `execution event ${field} must not contain leading or trailing whitespace.`,
+    );
+  }
+  return canonicalValue;
+}
+
 function assertExecutionActor(actor: unknown): string {
   if (typeof actor !== "string" || actor.trim().length === 0) {
     throw new InvalidEventError("execution event actor must be a non-empty string.");
@@ -197,6 +214,11 @@ export class DurableExecutionEventSink implements EventSink {
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
     const validatedEvent = normalizeExecutionEvent<T>(event);
     const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
+    const eventId = assertCanonicalEventId(validatedEvent.id, "id");
+    const parentEventId =
+      validatedEvent.parentEventId === undefined
+        ? undefined
+        : assertCanonicalEventId(validatedEvent.parentEventId, "parentEventId");
     const actor = assertExecutionActor(validatedEvent.actor);
     const expectedVersion = this.store.getStreamVersion(executionId);
     assertExecutionSequence(validatedEvent, expectedVersion);
@@ -204,20 +226,16 @@ export class DurableExecutionEventSink implements EventSink {
     this.store.append(
       {
         streamId: executionId,
-        eventId: validatedEvent.id,
+        eventId,
         eventType: validatedEvent.type,
         occurredAt: validatedEvent.occurredAt,
         traceId: executionId,
         correlationId: executionId,
-        ...(validatedEvent.parentEventId === undefined
-          ? {}
-          : { causationId: validatedEvent.parentEventId }),
+        ...(parentEventId === undefined ? {} : { causationId: parentEventId }),
         payload: {
           sequence: validatedEvent.sequence,
           actor,
-          ...(validatedEvent.parentEventId === undefined
-            ? {}
-            : { parentEventId: validatedEvent.parentEventId }),
+          ...(parentEventId === undefined ? {} : { parentEventId }),
           payload: validatedEvent.payload,
         },
       },
