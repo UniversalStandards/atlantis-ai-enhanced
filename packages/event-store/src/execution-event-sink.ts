@@ -13,6 +13,27 @@ interface PersistedExecutionEventPayload<T = unknown> {
   readonly payload: T;
 }
 
+const executionEventFields = new Set([
+  "id",
+  "executionId",
+  "sequence",
+  "type",
+  "occurredAt",
+  "actor",
+  "parentEventId",
+  "payload",
+]);
+
+const requiredExecutionEventFields = [
+  "id",
+  "executionId",
+  "sequence",
+  "type",
+  "occurredAt",
+  "actor",
+  "payload",
+] as const;
+
 function assertCanonicalExecutionId(executionId: unknown): string {
   if (typeof executionId !== "string") {
     throw new InvalidEventError("executionId must be a string.");
@@ -39,11 +60,49 @@ function assertAppendOperation<T>(
   return operation as () => T | Promise<T>;
 }
 
-function assertExecutionEvent(event: unknown): ExecutionEvent {
+function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
   if (event === null || typeof event !== "object" || Array.isArray(event)) {
     throw new InvalidEventError("execution event must be an object.");
   }
-  return event as ExecutionEvent;
+
+  const prototype = Object.getPrototypeOf(event);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new InvalidEventError("execution event must be a plain data record.");
+  }
+
+  const normalized: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+
+  for (const key of Reflect.ownKeys(event)) {
+    if (typeof key !== "string") {
+      throw new InvalidEventError("execution event must not contain symbol fields.");
+    }
+    if (!executionEventFields.has(key)) {
+      throw new InvalidEventError(`execution event contains unexpected field ${key}.`);
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(event, key);
+    if (
+      descriptor === undefined ||
+      descriptor.enumerable !== true ||
+      !("value" in descriptor)
+    ) {
+      throw new InvalidEventError(
+        `execution event.${key} must be an enumerable data property.`,
+      );
+    }
+    normalized[key] = descriptor.value;
+  }
+
+  for (const field of requiredExecutionEventFields) {
+    if (!Object.prototype.hasOwnProperty.call(normalized, field)) {
+      throw new InvalidEventError(`execution event is missing required field ${field}.`);
+    }
+  }
+
+  return Object.freeze(normalized) as unknown as ExecutionEvent<T>;
 }
 
 function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number): void {
@@ -129,7 +188,7 @@ export class DurableExecutionEventSink implements EventSink {
   }
 
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
-    const validatedEvent = assertExecutionEvent(event) as ExecutionEvent<T>;
+    const validatedEvent = normalizeExecutionEvent<T>(event);
     const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
     const expectedVersion = this.store.getStreamVersion(executionId);
     assertExecutionSequence(validatedEvent, expectedVersion);
