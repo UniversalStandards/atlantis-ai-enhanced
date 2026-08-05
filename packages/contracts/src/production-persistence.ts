@@ -43,6 +43,7 @@ export interface ProductionAppendUncertain {
 }
 
 export interface ExpectedPersistenceEvent {
+  readonly operationId: string;
   readonly eventId: string;
   readonly executionId: string;
   readonly streamVersion: number;
@@ -56,12 +57,33 @@ export interface ObservedPersistenceEvent {
   readonly contentDigest: string;
 }
 
+export type NonCommitProofProvenance =
+  | "provider_transaction_status"
+  | "provider_idempotency_lookup"
+  | "authoritative_post_write_read";
+
+/**
+ * Provider-neutral proof that one exact append operation did not commit.
+ * Every attempted-append identity field is repeated so reconciliation can
+ * reject stale, cross-execution, or cross-event proof before authorizing retry.
+ */
+export interface PersistenceNonCommitProof {
+  readonly operationId: string;
+  readonly executionId: string;
+  readonly eventId: string;
+  readonly expectedStreamVersion: number;
+  readonly contentDigest: string;
+  readonly providerObservationId: string;
+  readonly observedAt: string;
+  readonly provenance: NonCommitProofProvenance;
+}
+
 export interface PersistenceReconciliationEvidence {
   readonly expected: ExpectedPersistenceEvent;
   /** Authoritative durable event observed at the expected stream position. */
   readonly observedAtExpectedPosition?: ObservedPersistenceEvent;
-  /** Authoritative provider proof that the attempted transition did not commit. */
-  readonly providerProvesNotCommitted: boolean;
+  /** Authoritative, identity-bound provider proof that the append did not commit. */
+  readonly nonCommitProof?: PersistenceNonCommitProof;
 }
 
 export type PersistenceReconciliationDecision =
@@ -93,30 +115,98 @@ function requireStreamVersion(value: number, field: string): void {
   }
 }
 
-function validateEventIdentity(
-  event: ExpectedPersistenceEvent | ObservedPersistenceEvent,
-  field: "expected" | "observedAtExpectedPosition",
+function requireCanonicalTimestamp(value: string, field: string): void {
+  requireNonEmpty(value, field);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      `${field} must be a canonical ISO-8601 UTC timestamp`,
+    );
+  }
+}
+
+function validateExpectedEvent(event: ExpectedPersistenceEvent): void {
+  requireNonEmpty(event.operationId, "expected.operationId");
+  requireNonEmpty(event.eventId, "expected.eventId");
+  requireNonEmpty(event.executionId, "expected.executionId");
+  requireStreamVersion(event.streamVersion, "expected.streamVersion");
+  requireNonEmpty(event.contentDigest, "expected.contentDigest");
+}
+
+function validateObservedEvent(event: ObservedPersistenceEvent): void {
+  requireNonEmpty(event.eventId, "observedAtExpectedPosition.eventId");
+  requireNonEmpty(event.executionId, "observedAtExpectedPosition.executionId");
+  requireStreamVersion(
+    event.streamVersion,
+    "observedAtExpectedPosition.streamVersion",
+  );
+  requireNonEmpty(
+    event.contentDigest,
+    "observedAtExpectedPosition.contentDigest",
+  );
+}
+
+function validateNonCommitProof(
+  proof: PersistenceNonCommitProof,
+  expected: ExpectedPersistenceEvent,
 ): void {
-  requireNonEmpty(event.eventId, `${field}.eventId`);
-  requireNonEmpty(event.executionId, `${field}.executionId`);
-  requireStreamVersion(event.streamVersion, `${field}.streamVersion`);
-  requireNonEmpty(event.contentDigest, `${field}.contentDigest`);
+  requireNonEmpty(proof.operationId, "nonCommitProof.operationId");
+  requireNonEmpty(proof.executionId, "nonCommitProof.executionId");
+  requireNonEmpty(proof.eventId, "nonCommitProof.eventId");
+  requireStreamVersion(
+    proof.expectedStreamVersion,
+    "nonCommitProof.expectedStreamVersion",
+  );
+  requireNonEmpty(proof.contentDigest, "nonCommitProof.contentDigest");
+  requireNonEmpty(
+    proof.providerObservationId,
+    "nonCommitProof.providerObservationId",
+  );
+  requireCanonicalTimestamp(proof.observedAt, "nonCommitProof.observedAt");
+
+  if (![
+    "provider_transaction_status",
+    "provider_idempotency_lookup",
+    "authoritative_post_write_read",
+  ].includes(proof.provenance)) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      "nonCommitProof.provenance is not supported",
+    );
+  }
+
+  const exactBinding =
+    proof.operationId === expected.operationId &&
+    proof.executionId === expected.executionId &&
+    proof.eventId === expected.eventId &&
+    proof.expectedStreamVersion === expected.streamVersion &&
+    proof.contentDigest === expected.contentDigest;
+
+  if (!exactBinding) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      "nonCommitProof must be bound to the exact expected append identity",
+    );
+  }
 }
 
 /**
  * Classifies authoritative reconciliation evidence without provider-specific
  * assumptions. A committed decision is derived only from an exact immutable
- * identity, stream-position, and content-digest match. Ambiguity remains
- * blocked; this function never trusts a caller-supplied match assertion.
+ * identity, stream-position, and content-digest match. Retry is authorized
+ * only by a validated proof envelope bound to the exact append operation.
  */
 export function classifyPersistenceReconciliation(
   evidence: PersistenceReconciliationEvidence,
 ): PersistenceReconciliationDecision {
-  validateEventIdentity(evidence.expected, "expected");
+  validateExpectedEvent(evidence.expected);
+
+  const proof = evidence.nonCommitProof;
+  if (proof !== undefined) {
+    validateNonCommitProof(proof, evidence.expected);
+  }
 
   const observed = evidence.observedAtExpectedPosition;
   if (observed !== undefined) {
-    validateEventIdentity(observed, "observedAtExpectedPosition");
+    validateObservedEvent(observed);
 
     if (observed.streamVersion !== evidence.expected.streamVersion) {
       throw new InvalidPersistenceReconciliationEvidenceError(
@@ -124,7 +214,7 @@ export function classifyPersistenceReconciliation(
       );
     }
 
-    if (evidence.providerProvesNotCommitted) {
+    if (proof !== undefined) {
       throw new InvalidPersistenceReconciliationEvidenceError(
         "a durable event at the expected position cannot coexist with proof of non-commit",
       );
@@ -140,7 +230,7 @@ export function classifyPersistenceReconciliation(
       : Object.freeze({ kind: "conflict", quarantine: true });
   }
 
-  if (evidence.providerProvesNotCommitted) {
+  if (proof !== undefined) {
     return Object.freeze({ kind: "retry_permitted" });
   }
 
