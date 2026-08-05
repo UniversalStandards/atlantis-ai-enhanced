@@ -248,11 +248,11 @@ function normalizePersistedExecutionPayload(
   ) as unknown as PersistedExecutionEventPayload;
 }
 
-function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number): void {
+function assertExecutionSequence(sequence: number, expectedVersion: number): void {
   const expectedSequence = expectedVersion + 1;
-  if (event.sequence !== expectedSequence) {
+  if (sequence !== expectedSequence) {
     throw new InvalidEventError(
-      `execution event sequence ${event.sequence} does not match expected stream sequence ${expectedSequence}.`,
+      `execution event sequence ${sequence} does not match expected stream sequence ${expectedSequence}.`,
     );
   }
 }
@@ -365,6 +365,10 @@ export class DurableExecutionEventSink implements EventSink {
     const validatedEvent = normalizeExecutionEvent<T>(event);
     const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
     const eventId = assertCanonicalEventId(validatedEvent.id, "id");
+    const sequence = assertPositiveSafeInteger(
+      validatedEvent.sequence,
+      "execution event sequence",
+    );
     const parentEventId =
       validatedEvent.parentEventId === undefined
         ? undefined
@@ -376,7 +380,7 @@ export class DurableExecutionEventSink implements EventSink {
       "execution event occurredAt",
     );
     const expectedVersion = this.store.getStreamVersion(executionId);
-    assertExecutionSequence(validatedEvent, expectedVersion);
+    assertExecutionSequence(sequence, expectedVersion);
 
     this.store.append(
       {
@@ -388,7 +392,7 @@ export class DurableExecutionEventSink implements EventSink {
         correlationId: executionId,
         ...(parentEventId === undefined ? {} : { causationId: parentEventId }),
         payload: {
-          sequence: validatedEvent.sequence,
+          sequence,
           actor,
           ...(parentEventId === undefined ? {} : { parentEventId }),
           payload: validatedEvent.payload,
