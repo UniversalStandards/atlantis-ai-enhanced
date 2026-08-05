@@ -371,6 +371,10 @@ export class DurableExecutionEventSink implements EventSink {
         : assertCanonicalEventId(validatedEvent.parentEventId, "parentEventId");
     const actor = assertExecutionActor(validatedEvent.actor);
     const type = assertExecutionEventType(validatedEvent.type);
+    const occurredAt = assertCanonicalTimestamp(
+      validatedEvent.occurredAt,
+      "execution event occurredAt",
+    );
     const expectedVersion = this.store.getStreamVersion(executionId);
     assertExecutionSequence(validatedEvent, expectedVersion);
 
@@ -379,7 +383,7 @@ export class DurableExecutionEventSink implements EventSink {
         streamId: executionId,
         eventId,
         eventType: type,
-        occurredAt: validatedEvent.occurredAt,
+        occurredAt,
         traceId: executionId,
         correlationId: executionId,
         ...(parentEventId === undefined ? {} : { causationId: parentEventId }),
