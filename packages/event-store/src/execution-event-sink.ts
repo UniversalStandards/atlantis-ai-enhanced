@@ -59,6 +59,7 @@ const requiredStoredEventFields = [
   "payload",
   "occurredAt",
   "traceId",
+  "correlationId",
   "sequence",
   "streamVersion",
 ] as const;
@@ -145,6 +146,27 @@ function assertAppendOperation<T>(operation: unknown): () => T | Promise<T> {
     throw new InvalidEventError("execution append operation must be a function.");
   }
   return operation as () => T | Promise<T>;
+}
+
+function assertPositiveSafeInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new InvalidEventError(`${field} must be a positive safe integer.`);
+  }
+  return value as number;
+}
+
+function assertCanonicalTimestamp(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new InvalidEventError(`${field} must be a canonical ISO-8601 UTC timestamp.`);
+  }
+  const parsedTimestamp = Date.parse(value);
+  if (
+    !Number.isFinite(parsedTimestamp) ||
+    new Date(parsedTimestamp).toISOString() !== value
+  ) {
+    throw new InvalidEventError(`${field} must be a canonical ISO-8601 UTC timestamp.`);
+  }
+  return value;
 }
 
 function normalizeExactRecord(
@@ -237,14 +259,32 @@ function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number)
 
 function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
   const stored = normalizeStoredEvent(untrustedStored);
+  const storedSequence = assertPositiveSafeInteger(
+    stored.sequence,
+    "stored execution event sequence",
+  );
+  const streamVersion = assertPositiveSafeInteger(
+    stored.streamVersion,
+    "stored execution event streamVersion",
+  );
+  const occurredAt = assertCanonicalTimestamp(
+    stored.occurredAt,
+    "stored execution event occurredAt",
+  );
   const persisted = normalizePersistedExecutionPayload(stored.payload);
   if (!Number.isSafeInteger(persisted.sequence) || persisted.sequence < 1) {
     throw new InvalidEventError("persisted execution event payload is invalid.");
   }
 
-  if (persisted.sequence !== stored.streamVersion) {
+  if (persisted.sequence !== streamVersion) {
     throw new InvalidEventError(
       "persisted execution event sequence must match its stream version.",
+    );
+  }
+
+  if (storedSequence < streamVersion) {
+    throw new InvalidEventError(
+      "stored execution event sequence must not precede its stream version.",
     );
   }
 
@@ -274,7 +314,7 @@ function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
     executionId,
     sequence: persisted.sequence,
     type,
-    occurredAt: stored.occurredAt,
+    occurredAt,
     actor,
     ...(parentEventId === undefined ? {} : { parentEventId }),
     payload: persisted.payload,
