@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { ExecutionEvent } from "@atlantis/contracts";
+import {
+  executionEventTypes,
+  type ExecutionEvent,
+  type ExecutionEventType,
+} from "@atlantis/contracts";
 
 import {
   DurableSnapshotEventStore,
@@ -56,4 +60,17 @@ describe("DurableExecutionEventSink execution event type validation", () => {
       { id: "event-1", sequence: 1, type: "execution.started" },
     ]);
   });
+
+  it.each(executionEventTypes)(
+    "accepts contracts-owned execution event type %s",
+    async (type: ExecutionEventType) => {
+      const sink = createSink();
+
+      await sink.append(event(type));
+
+      expect(sink.readExecution("execution-1")).toMatchObject([
+        { id: "event-1", sequence: 1, type },
+      ]);
+    },
+  );
 });
