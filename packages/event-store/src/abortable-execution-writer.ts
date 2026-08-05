@@ -241,10 +241,16 @@ export class AbortAcknowledgedExecutionWriter {
 
       const operationPromise = Promise.resolve().then(() => write.operation(context));
       const releasePromise = new Promise<"settled" | "aborted">((resolve) => {
-        void operationPromise.finally(() => {
-          operationSettled = true;
-          resolve("settled");
-        });
+        void operationPromise.then(
+          () => {
+            operationSettled = true;
+            resolve("settled");
+          },
+          () => {
+            operationSettled = true;
+            resolve("settled");
+          },
+        );
         void write.abortAcknowledged.then(() => resolve("aborted"));
       });
 
