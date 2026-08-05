@@ -5,6 +5,7 @@ import {
   ExecutionWriteAbortedError,
   ExecutionWriteQueueCapacityError,
 } from "../src/abortable-execution-writer.js";
+import { ExecutionCommitClosedError } from "../src/execution-commit-guard.js";
 import { InvalidEventError } from "../src/index.js";
 
 function deferred<T = void>(): {
@@ -70,6 +71,73 @@ describe("AbortAcknowledgedExecutionWriter", () => {
     ]);
     expect(first.getState()).toBe("aborted");
     expect(second.getState()).toBe("committed");
+  });
+
+  it("revokes commit authority before abort acknowledgement releases the queue", async () => {
+    const writer = new AbortAcknowledgedExecutionWriter();
+    const started = deferred();
+    let retainedCommit!: (operation: () => number) => number;
+    let mutations = 0;
+
+    const first = writer.enqueue(
+      "execution-1",
+      async ({ signal, commit, acknowledgeAbort }) => {
+        retainedCommit = commit;
+        started.resolve();
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            acknowledgeAbort();
+            resolve();
+          });
+        });
+      },
+    );
+
+    await started.promise;
+    const second = writer.enqueue("execution-1", ({ commit }) =>
+      commit(() => {
+        mutations += 1;
+        return "second";
+      }),
+    );
+
+    first.abort("deadline");
+    await first.abortAcknowledged;
+
+    expect(() =>
+      retainedCommit(() => {
+        mutations += 100;
+        return mutations;
+      }),
+    ).toThrow(ExecutionCommitClosedError);
+
+    await expect(first.result).rejects.toBeInstanceOf(ExecutionWriteAbortedError);
+    await expect(second.result).resolves.toBe("second");
+    expect(mutations).toBe(1);
+  });
+
+  it("revokes retained commit authority before a settled result is observable", async () => {
+    const writer = new AbortAcknowledgedExecutionWriter();
+    let retainedCommit!: (operation: () => number) => number;
+    let mutations = 0;
+
+    const write = writer.enqueue("execution-1", ({ commit }) => {
+      retainedCommit = commit;
+      return commit(() => {
+        mutations += 1;
+        return mutations;
+      });
+    });
+
+    await expect(write.result).resolves.toBe(1);
+    expect(write.getState()).toBe("committed");
+    expect(() =>
+      retainedCommit(() => {
+        mutations += 100;
+        return mutations;
+      }),
+    ).toThrow(ExecutionCommitClosedError);
+    expect(mutations).toBe(1);
   });
 
   it("removes a queued write immediately when aborted before start", async () => {
