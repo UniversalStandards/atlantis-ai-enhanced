@@ -30,6 +30,13 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   return canonicalExecutionId;
 }
 
+function assertExecutionEvent(event: unknown): ExecutionEvent {
+  if (event === null || typeof event !== "object" || Array.isArray(event)) {
+    throw new InvalidEventError("execution event must be an object.");
+  }
+  return event as ExecutionEvent;
+}
+
 function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number): void {
   const expectedSequence = expectedVersion + 1;
   if (event.sequence !== expectedSequence) {
@@ -112,28 +119,29 @@ export class DurableExecutionEventSink implements EventSink {
   }
 
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
-    const executionId = assertCanonicalExecutionId(event.executionId);
+    const validatedEvent = assertExecutionEvent(event) as ExecutionEvent<T>;
+    const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
     const expectedVersion = this.store.getStreamVersion(executionId);
-    assertExecutionSequence(event, expectedVersion);
+    assertExecutionSequence(validatedEvent, expectedVersion);
 
     this.store.append(
       {
         streamId: executionId,
-        eventId: event.id,
-        eventType: event.type,
-        occurredAt: event.occurredAt,
+        eventId: validatedEvent.id,
+        eventType: validatedEvent.type,
+        occurredAt: validatedEvent.occurredAt,
         traceId: executionId,
         correlationId: executionId,
-        ...(event.parentEventId === undefined
+        ...(validatedEvent.parentEventId === undefined
           ? {}
-          : { causationId: event.parentEventId }),
+          : { causationId: validatedEvent.parentEventId }),
         payload: {
-          sequence: event.sequence,
-          actor: event.actor,
-          ...(event.parentEventId === undefined
+          sequence: validatedEvent.sequence,
+          actor: validatedEvent.actor,
+          ...(validatedEvent.parentEventId === undefined
             ? {}
-            : { parentEventId: event.parentEventId }),
-          payload: event.payload,
+            : { parentEventId: validatedEvent.parentEventId }),
+          payload: validatedEvent.payload,
         },
       },
       expectedVersion,
