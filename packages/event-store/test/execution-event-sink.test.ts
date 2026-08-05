@@ -234,4 +234,21 @@ describe("DurableExecutionEventSink", () => {
 
     expect(order).toEqual(["failed", "recovered"]);
   });
+
+  it("rejects padded execution identities before an adapter can bypass the lock key", async () => {
+    const sink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    );
+    let operationCalls = 0;
+
+    await expect(
+      sink.withExecutionAppendLock(" execution-1 ", () => {
+        operationCalls += 1;
+      }),
+    ).rejects.toThrow(
+      "executionId must not contain leading or trailing whitespace.",
+    );
+
+    expect(operationCalls).toBe(0);
+  });
 });
