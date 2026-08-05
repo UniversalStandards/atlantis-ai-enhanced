@@ -119,26 +119,84 @@ function executionEventTypeForLifecycleEvent(
   }
 }
 
-function redactClaimTokens(value: unknown): unknown {
-  if (value === null || typeof value !== "object") {
+function snapshotEvidenceValue(
+  value: unknown,
+  path = "lifecycle",
+  ancestors = new WeakSet<object>(),
+): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
     return value;
   }
-  if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => redactClaimTokens(item)));
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`${path} must contain only finite JSON numbers`);
+    }
+    return value;
   }
+  if (typeof value !== "object") {
+    throw new Error(`${path} must contain only JSON-native values`);
+  }
+  if (ancestors.has(value)) {
+    throw new Error(`${path} must not contain circular references`);
+  }
+  ancestors.add(value);
 
-  const redacted: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    redacted[key] =
-      key === "claimToken" ? REDACTED_CLAIM_TOKEN : redactClaimTokens(item);
+  try {
+    if (Array.isArray(value)) {
+      const ownKeys = Reflect.ownKeys(value);
+      const allowedKeys = new Set<PropertyKey>([
+        "length",
+        ...Array.from({ length: value.length }, (_item, index) => String(index)),
+      ]);
+      if (ownKeys.some((key) => !allowedKeys.has(key))) {
+        throw new Error(`${path} arrays must not contain non-index properties`);
+      }
+
+      const snapshot: unknown[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.hasOwn(value, index)) {
+          throw new Error(`${path} must not contain sparse array holes`);
+        }
+        snapshot.push(snapshotEvidenceValue(value[index], `${path}[${index}]`, ancestors));
+      }
+      return Object.freeze(snapshot);
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new Error(`${path} must contain only plain records and arrays`);
+    }
+
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const snapshot = Object.create(null) as Record<string, unknown>;
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key === "symbol") {
+        throw new Error(`${path} must not contain symbol-keyed properties`);
+      }
+      const descriptor = descriptors[key];
+      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+        throw new Error(`${path}.${key} must be an enumerable data property`);
+      }
+      Object.defineProperty(snapshot, key, {
+        value:
+          key === "claimToken"
+            ? REDACTED_CLAIM_TOKEN
+            : snapshotEvidenceValue(descriptor.value, `${path}.${key}`, ancestors),
+        enumerable: true,
+        configurable: false,
+        writable: false,
+      });
+    }
+    return Object.freeze(snapshot);
+  } finally {
+    ancestors.delete(value);
   }
-  return Object.freeze(redacted);
 }
 
 function evidenceLifecycleSnapshot(
   lifecycle: ExternalEffectOwnershipLifecycleEvent,
 ): ExternalEffectOwnershipLifecycleEvent {
-  return redactClaimTokens(structuredClone(lifecycle)) as ExternalEffectOwnershipLifecycleEvent;
+  return snapshotEvidenceValue(lifecycle) as ExternalEffectOwnershipLifecycleEvent;
 }
 
 /**
