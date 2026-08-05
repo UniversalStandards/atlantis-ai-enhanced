@@ -30,6 +30,15 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   return canonicalExecutionId;
 }
 
+function assertAppendOperation<T>(
+  operation: unknown,
+): () => T | Promise<T> {
+  if (typeof operation !== "function") {
+    throw new InvalidEventError("execution append operation must be a function.");
+  }
+  return operation as () => T | Promise<T>;
+}
+
 function assertExecutionEvent(event: unknown): ExecutionEvent {
   if (event === null || typeof event !== "object" || Array.isArray(event)) {
     throw new InvalidEventError("execution event must be an object.");
@@ -97,6 +106,7 @@ export class DurableExecutionEventSink implements EventSink {
     operation: () => T | Promise<T>,
   ): Promise<T> {
     const canonicalExecutionId = assertCanonicalExecutionId(executionId);
+    const validatedOperation = assertAppendOperation<T>(operation);
 
     const predecessor =
       this.executionQueues.get(canonicalExecutionId) ?? Promise.resolve();
@@ -109,7 +119,7 @@ export class DurableExecutionEventSink implements EventSink {
 
     await predecessor.catch(() => undefined);
     try {
-      return await operation();
+      return await validatedOperation();
     } finally {
       release();
       if (this.executionQueues.get(canonicalExecutionId) === tail) {
