@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./abortable-execution-writer": "./src/abortable-execution-writer.ts",
     "./execution-event-sink": "./src/execution-event-sink.ts",
     "./external-effect-ownership-evidence-context": "./src/external-effect-ownership-evidence-context.ts",
     "./external-effect-ownership-loss-context": "./src/external-effect-ownership-loss-context.ts",
