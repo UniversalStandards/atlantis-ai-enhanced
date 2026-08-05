@@ -13,6 +13,19 @@ interface PersistedExecutionEventPayload<T = unknown> {
   readonly payload: T;
 }
 
+function assertCanonicalExecutionId(executionId: string): string {
+  const canonicalExecutionId = executionId.trim();
+  if (canonicalExecutionId.length === 0) {
+    throw new InvalidEventError("executionId must be non-empty.");
+  }
+  if (canonicalExecutionId !== executionId) {
+    throw new InvalidEventError(
+      "executionId must not contain leading or trailing whitespace.",
+    );
+  }
+  return canonicalExecutionId;
+}
+
 function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number): void {
   const expectedSequence = expectedVersion + 1;
   if (event.sequence !== expectedSequence) {
@@ -72,15 +85,7 @@ export class DurableExecutionEventSink implements EventSink {
     executionId: string,
     operation: () => T | Promise<T>,
   ): Promise<T> {
-    const canonicalExecutionId = executionId.trim();
-    if (canonicalExecutionId.length === 0) {
-      throw new InvalidEventError("executionId must be non-empty.");
-    }
-    if (canonicalExecutionId !== executionId) {
-      throw new InvalidEventError(
-        "executionId must not contain leading or trailing whitespace.",
-      );
-    }
+    const canonicalExecutionId = assertCanonicalExecutionId(executionId);
 
     const predecessor =
       this.executionQueues.get(canonicalExecutionId) ?? Promise.resolve();
@@ -103,17 +108,18 @@ export class DurableExecutionEventSink implements EventSink {
   }
 
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
-    const expectedVersion = this.store.getStreamVersion(event.executionId);
+    const executionId = assertCanonicalExecutionId(event.executionId);
+    const expectedVersion = this.store.getStreamVersion(executionId);
     assertExecutionSequence(event, expectedVersion);
 
     this.store.append(
       {
-        streamId: event.executionId,
+        streamId: executionId,
         eventId: event.id,
         eventType: event.type,
         occurredAt: event.occurredAt,
-        traceId: event.executionId,
-        correlationId: event.executionId,
+        traceId: executionId,
+        correlationId: executionId,
         ...(event.parentEventId === undefined
           ? {}
           : { causationId: event.parentEventId }),
@@ -131,8 +137,9 @@ export class DurableExecutionEventSink implements EventSink {
   }
 
   public readExecution(executionId: string): readonly ExecutionEvent[] {
+    const canonicalExecutionId = assertCanonicalExecutionId(executionId);
     return Object.freeze(
-      this.store.readStream(executionId).map(restoreExecutionEvent),
+      this.store.readStream(canonicalExecutionId).map(restoreExecutionEvent),
     );
   }
 }
