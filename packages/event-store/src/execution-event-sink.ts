@@ -39,6 +39,19 @@ const requiredExecutionEventFields = [
   "payload",
 ] as const;
 
+const persistedExecutionPayloadFields = new Set([
+  "sequence",
+  "actor",
+  "parentEventId",
+  "payload",
+]);
+
+const requiredPersistedExecutionPayloadFields = [
+  "sequence",
+  "actor",
+  "payload",
+] as const;
+
 const recognizedExecutionEventTypes = new Set<ExecutionEventType>(
   executionEventTypes,
 );
@@ -110,14 +123,19 @@ function assertAppendOperation<T>(operation: unknown): () => T | Promise<T> {
   return operation as () => T | Promise<T>;
 }
 
-function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
-  if (event === null || typeof event !== "object" || Array.isArray(event)) {
-    throw new InvalidEventError("execution event must be an object.");
+function normalizeExactRecord(
+  subject: string,
+  value: unknown,
+  allowedFields: ReadonlySet<string>,
+  requiredFields: readonly string[],
+): Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new InvalidEventError(`${subject} must be an object.`);
   }
 
-  const prototype = Object.getPrototypeOf(event);
+  const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    throw new InvalidEventError("execution event must be a plain data record.");
+    throw new InvalidEventError(`${subject} must be a plain data record.`);
   }
 
   const normalized: Record<string, unknown> = Object.create(null) as Record<
@@ -125,34 +143,54 @@ function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
     unknown
   >;
 
-  for (const key of Reflect.ownKeys(event)) {
+  for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") {
-      throw new InvalidEventError("execution event must not contain symbol fields.");
+      throw new InvalidEventError(`${subject} must not contain symbol fields.`);
     }
-    if (!executionEventFields.has(key)) {
-      throw new InvalidEventError(`execution event contains unexpected field ${key}.`);
+    if (!allowedFields.has(key)) {
+      throw new InvalidEventError(`${subject} contains unexpected field ${key}.`);
     }
 
-    const descriptor = Object.getOwnPropertyDescriptor(event, key);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (
       descriptor === undefined ||
       descriptor.enumerable !== true ||
       !("value" in descriptor)
     ) {
       throw new InvalidEventError(
-        `execution event.${key} must be an enumerable data property.`,
+        `${subject}.${key} must be an enumerable data property.`,
       );
     }
     normalized[key] = descriptor.value;
   }
 
-  for (const field of requiredExecutionEventFields) {
+  for (const field of requiredFields) {
     if (!Object.prototype.hasOwnProperty.call(normalized, field)) {
-      throw new InvalidEventError(`execution event is missing required field ${field}.`);
+      throw new InvalidEventError(`${subject} is missing required field ${field}.`);
     }
   }
 
-  return Object.freeze(normalized) as unknown as ExecutionEvent<T>;
+  return Object.freeze(normalized);
+}
+
+function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
+  return normalizeExactRecord(
+    "execution event",
+    event,
+    executionEventFields,
+    requiredExecutionEventFields,
+  ) as unknown as ExecutionEvent<T>;
+}
+
+function normalizePersistedExecutionPayload(
+  payload: unknown,
+): PersistedExecutionEventPayload {
+  return normalizeExactRecord(
+    "persisted execution event payload",
+    payload,
+    persistedExecutionPayloadFields,
+    requiredPersistedExecutionPayloadFields,
+  ) as unknown as PersistedExecutionEventPayload;
 }
 
 function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number): void {
@@ -165,13 +203,8 @@ function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number)
 }
 
 function restoreExecutionEvent(stored: StoredEvent): ExecutionEvent {
-  const persisted = stored.payload as PersistedExecutionEventPayload;
-  if (
-    persisted === null ||
-    typeof persisted !== "object" ||
-    !Number.isSafeInteger(persisted.sequence) ||
-    persisted.sequence < 1
-  ) {
+  const persisted = normalizePersistedExecutionPayload(stored.payload);
+  if (!Number.isSafeInteger(persisted.sequence) || persisted.sequence < 1) {
     throw new InvalidEventError("persisted execution event payload is invalid.");
   }
 
