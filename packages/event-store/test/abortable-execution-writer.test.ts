@@ -129,6 +129,28 @@ describe("AbortAcknowledgedExecutionWriter", () => {
     ]);
   });
 
+  it("recovers the execution queue after an operation rejects", async () => {
+    const writer = new AbortAcknowledgedExecutionWriter();
+    const order: string[] = [];
+    const failure = new Error("durable write failed");
+
+    const failed = writer.enqueue("execution-1", async () => {
+      order.push("failed");
+      throw failure;
+    });
+    const recovered = writer.enqueue("execution-1", () => {
+      order.push("recovered");
+      return "recovered";
+    });
+
+    await expect(failed.result).rejects.toBe(failure);
+    await expect(recovered.result).resolves.toBe("recovered");
+
+    expect(failed.getState()).toBe("failed");
+    expect(recovered.getState()).toBe("committed");
+    expect(order).toEqual(["failed", "recovered"]);
+  });
+
   it("fails closed when one execution reaches its configured queue capacity", async () => {
     const writer = new AbortAcknowledgedExecutionWriter({
       maxWritesPerExecution: 2,
