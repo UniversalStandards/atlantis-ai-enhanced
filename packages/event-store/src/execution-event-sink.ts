@@ -13,7 +13,11 @@ interface PersistedExecutionEventPayload<T = unknown> {
   readonly payload: T;
 }
 
-function assertCanonicalExecutionId(executionId: string): string {
+function assertCanonicalExecutionId(executionId: unknown): string {
+  if (typeof executionId !== "string") {
+    throw new InvalidEventError("executionId must be a string.");
+  }
+
   const canonicalExecutionId = executionId.trim();
   if (canonicalExecutionId.length === 0) {
     throw new InvalidEventError("executionId must be non-empty.");
