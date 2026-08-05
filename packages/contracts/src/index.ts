@@ -1,3 +1,10 @@
+export {
+  executionEventTypes,
+  type ExecutionEventType,
+} from "./execution-event-types.js";
+
+import type { ExecutionEventType } from "./execution-event-types.js";
+
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
 
 export type ExecutionStatus =
@@ -53,40 +60,6 @@ export interface WorkflowDefinition<I, O> {
   readonly mode: ExecutionMode;
   run(input: I, context: WorkflowContext): Promise<O>;
 }
-
-export type ExecutionEventType =
-  | "execution.started"
-  | "execution.interrupted"
-  | "execution.cancelled"
-  | "execution.timed_out"
-  | "execution.completed"
-  | "execution.failed"
-  | "workflow.step.started"
-  | "workflow.step.attempt.started"
-  | "workflow.step.attempt.failed"
-  | "workflow.step.timed_out"
-  | "workflow.step.completed"
-  | "workflow.step.failed"
-  | "tool.started"
-  | "tool.completed"
-  | "tool.failed"
-  | "external.effect.executed"
-  | "external.effect.reconciled"
-  | "external.effect.ownership.acquired"
-  | "external.effect.ownership.contended"
-  | "external.effect.ownership.committed_observed"
-  | "external.effect.ownership.rejected"
-  | "external.effect.ownership.renewed"
-  | "external.effect.ownership.receipt_committed"
-  | "external.effect.ownership.released"
-  | "external.effect.ownership.observed"
-  | "external.effect.ownership.lost"
-  | "evaluation.completed"
-  | "approval.requested"
-  | "approval.resolved"
-  | "supervisor.escalated"
-  | "supervisor.returned"
-  | "budget.exceeded";
 
 export interface ExecutionEvent<T = unknown> {
   readonly id: string;
