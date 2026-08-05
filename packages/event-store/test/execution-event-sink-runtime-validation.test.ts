@@ -170,4 +170,43 @@ describe("DurableExecutionEventSink runtime execution identity validation", () =
 
     expect(sink.readExecution("execution-1")).toEqual([]);
   });
+
+  it.each([null, undefined, 42, "", "   "])(
+    "rejects unrecoverable execution actor %p before persistence",
+    async (actor) => {
+      const sink = createSink();
+
+      await expect(
+        sink.append({
+          id: "invalid-event",
+          executionId: "execution-1",
+          sequence: 1,
+          type: "execution.started",
+          occurredAt: "2026-08-05T00:00:00.000Z",
+          actor: actor as unknown as string,
+          payload: {},
+        }),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<InvalidEventError>>({
+          message: "execution event actor must be a non-empty string.",
+        }),
+      );
+
+      expect(sink.readExecution("execution-1")).toEqual([]);
+
+      await sink.append({
+        id: "valid-event",
+        executionId: "execution-1",
+        sequence: 1,
+        type: "execution.started",
+        occurredAt: "2026-08-05T00:00:01.000Z",
+        actor: "test",
+        payload: {},
+      });
+
+      expect(sink.readExecution("execution-1")).toMatchObject([
+        { id: "valid-event", actor: "test", sequence: 1 },
+      ]);
+    },
+  );
 });
