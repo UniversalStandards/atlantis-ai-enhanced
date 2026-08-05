@@ -31,12 +31,14 @@ export interface AbortableExecutionWriteHandle<T> {
   abort(reason?: unknown): void;
 }
 
-interface QueuedExecutionWrite<T> {
+interface QueuedExecutionWrite {
   readonly executionId: string;
-  readonly operation: (context: AbortableExecutionWriteContext) => T | Promise<T>;
+  readonly operation: (
+    context: AbortableExecutionWriteContext,
+  ) => unknown | Promise<unknown>;
   readonly controller: AbortController;
-  readonly result: Promise<T>;
-  readonly resolveResult: (value: T | PromiseLike<T>) => void;
+  readonly result: Promise<unknown>;
+  readonly resolveResult: (value: unknown) => void;
   readonly rejectResult: (reason?: unknown) => void;
   readonly abortAcknowledged: Promise<void>;
   readonly acknowledgeAbort: () => void;
@@ -79,7 +81,7 @@ function assertOperation<T>(
  * late settlement from escaping its assigned slot and corrupting trace order.
  */
 export class AbortAcknowledgedExecutionWriter {
-  private readonly queues = new Map<string, QueuedExecutionWrite<unknown>[]>();
+  private readonly queues = new Map<string, QueuedExecutionWrite[]>();
 
   public enqueue<T>(
     executionId: string,
@@ -101,12 +103,12 @@ export class AbortAcknowledgedExecutionWriter {
       acknowledgeAbort = resolve;
     });
 
-    const write: QueuedExecutionWrite<T> = {
+    const write: QueuedExecutionWrite = {
       executionId: canonicalExecutionId,
       operation: validatedOperation,
       controller,
       result,
-      resolveResult,
+      resolveResult: (value) => resolveResult(value as T),
       rejectResult,
       abortAcknowledged,
       acknowledgeAbort,
@@ -115,7 +117,7 @@ export class AbortAcknowledgedExecutionWriter {
     };
 
     const queue = this.queues.get(canonicalExecutionId) ?? [];
-    queue.push(write as QueuedExecutionWrite<unknown>);
+    queue.push(write);
     this.queues.set(canonicalExecutionId, queue);
     if (queue.length === 1) {
       void this.drain(canonicalExecutionId);
@@ -152,7 +154,7 @@ export class AbortAcknowledgedExecutionWriter {
 
   private removeQueuedWrite(
     executionId: string,
-    write: QueuedExecutionWrite<unknown>,
+    write: QueuedExecutionWrite,
   ): void {
     const queue = this.queues.get(executionId);
     if (queue === undefined) return;
@@ -207,12 +209,12 @@ export class AbortAcknowledgedExecutionWriter {
       if (releaseReason === "settled") {
         try {
           const value = await operationPromise;
-          if (write.state !== "aborted") {
+          if (!abortWasAcknowledged) {
             write.state = "committed";
             write.resolveResult(value);
           }
         } catch (error) {
-          if (write.state !== "aborted") {
+          if (!abortWasAcknowledged) {
             write.state = "failed";
             write.rejectResult(error);
           }
