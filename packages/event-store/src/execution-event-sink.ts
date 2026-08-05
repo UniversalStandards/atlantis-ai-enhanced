@@ -170,9 +170,7 @@ function restoreExecutionEvent(stored: StoredEvent): ExecutionEvent {
     persisted === null ||
     typeof persisted !== "object" ||
     !Number.isSafeInteger(persisted.sequence) ||
-    persisted.sequence < 1 ||
-    typeof persisted.actor !== "string" ||
-    persisted.actor.trim().length === 0
+    persisted.sequence < 1
   ) {
     throw new InvalidEventError("persisted execution event payload is invalid.");
   }
@@ -183,18 +181,35 @@ function restoreExecutionEvent(stored: StoredEvent): ExecutionEvent {
     );
   }
 
+  const executionId = assertCanonicalExecutionId(stored.streamId);
+  const eventId = assertCanonicalEventId(stored.eventId, "id");
+  const actor = assertExecutionActor(persisted.actor);
   const type = assertExecutionEventType(stored.eventType);
+  const parentEventId =
+    persisted.parentEventId === undefined
+      ? undefined
+      : assertCanonicalEventId(persisted.parentEventId, "parentEventId");
+
+  if (stored.traceId !== executionId || stored.correlationId !== executionId) {
+    throw new InvalidEventError(
+      "persisted execution event trace and correlation identities must match its stream identity.",
+    );
+  }
+
+  if (stored.causationId !== parentEventId) {
+    throw new InvalidEventError(
+      "persisted execution event parentEventId must match its causationId.",
+    );
+  }
 
   return Object.freeze({
-    id: stored.eventId,
-    executionId: stored.streamId,
+    id: eventId,
+    executionId,
     sequence: persisted.sequence,
     type,
     occurredAt: stored.occurredAt,
-    actor: persisted.actor,
-    ...(persisted.parentEventId === undefined
-      ? {}
-      : { parentEventId: persisted.parentEventId }),
+    actor,
+    ...(parentEventId === undefined ? {} : { parentEventId }),
     payload: persisted.payload,
   });
 }
