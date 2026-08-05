@@ -378,18 +378,19 @@ export class DurableExecutionEventSink implements EventSink {
     );
   }
 
-  public withExecutionAppendLock<T>(
+  public async withExecutionAppendLock<T>(
     executionId: string,
     operation: () => T | Promise<T>,
   ): Promise<T> {
     const validatedOperation = assertAppendOperation<T>(operation);
-    return this.enqueueExecutionAppend(executionId, () => validatedOperation())
-      .result;
+    return await this.enqueueExecutionAppend(
+      executionId,
+      () => validatedOperation(),
+    ).result;
   }
 
-  public append<T>(event: ExecutionEvent<T>): Promise<void> {
+  public async append<T>(event: ExecutionEvent<T>): Promise<void> {
     this.appendSynchronously(event);
-    return Promise.resolve();
   }
 
   private appendSynchronously<T>(event: ExecutionEvent<T>): void {
