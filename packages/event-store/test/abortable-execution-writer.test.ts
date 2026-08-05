@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   AbortAcknowledgedExecutionWriter,
   ExecutionWriteAbortedError,
+  ExecutionWriteQueueCapacityError,
 } from "../src/abortable-execution-writer.js";
+import { InvalidEventError } from "../src/index.js";
 
 function deferred<T = void>(): {
   readonly promise: Promise<T>;
@@ -126,4 +128,59 @@ describe("AbortAcknowledgedExecutionWriter", () => {
       "execution-1-end",
     ]);
   });
+
+  it("fails closed when one execution reaches its configured queue capacity", async () => {
+    const writer = new AbortAcknowledgedExecutionWriter({
+      maxWritesPerExecution: 2,
+    });
+    const gate = deferred();
+
+    const first = writer.enqueue("execution-1", async () => {
+      await gate.promise;
+      return "first";
+    });
+    const second = writer.enqueue("execution-1", () => "second");
+
+    expect(() => writer.enqueue("execution-1", () => "overflow")).toThrow(
+      ExecutionWriteQueueCapacityError,
+    );
+
+    const independent = writer.enqueue("execution-2", () => "independent");
+    await expect(independent.result).resolves.toBe("independent");
+
+    gate.resolve();
+    await expect(first.result).resolves.toBe("first");
+    await expect(second.result).resolves.toBe("second");
+  });
+
+  it("reclaims queue capacity when a queued write is aborted", async () => {
+    const writer = new AbortAcknowledgedExecutionWriter({
+      maxWritesPerExecution: 2,
+    });
+    const gate = deferred();
+
+    const first = writer.enqueue("execution-1", async () => {
+      await gate.promise;
+    });
+    const cancelled = writer.enqueue("execution-1", () => "cancelled");
+
+    cancelled.abort("not needed");
+    await cancelled.abortAcknowledged;
+    await expect(cancelled.result).rejects.toBeInstanceOf(ExecutionWriteAbortedError);
+
+    const replacement = writer.enqueue("execution-1", () => "replacement");
+    gate.resolve();
+    await first.result;
+    await expect(replacement.result).resolves.toBe("replacement");
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid maxWritesPerExecution value %p",
+    (maxWritesPerExecution) => {
+      expect(
+        () =>
+          new AbortAcknowledgedExecutionWriter({ maxWritesPerExecution }),
+      ).toThrow(InvalidEventError);
+    },
+  );
 });
