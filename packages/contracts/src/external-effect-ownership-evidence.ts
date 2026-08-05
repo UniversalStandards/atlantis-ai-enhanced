@@ -143,7 +143,12 @@ function snapshotEvidenceValue(
 
   try {
     if (Array.isArray(value)) {
-      const ownKeys = Reflect.ownKeys(value);
+      if (Object.getPrototypeOf(value) !== Array.prototype) {
+        throw new Error(`${path} must contain only standard arrays`);
+      }
+
+      const descriptors = Object.getOwnPropertyDescriptors(value);
+      const ownKeys = Reflect.ownKeys(descriptors);
       const allowedKeys = new Set<PropertyKey>([
         "length",
         ...Array.from({ length: value.length }, (_item, index) => String(index)),
@@ -154,10 +159,16 @@ function snapshotEvidenceValue(
 
       const snapshot: unknown[] = [];
       for (let index = 0; index < value.length; index += 1) {
-        if (!Object.hasOwn(value, index)) {
+        const descriptor = descriptors[String(index)];
+        if (descriptor === undefined) {
           throw new Error(`${path} must not contain sparse array holes`);
         }
-        snapshot.push(snapshotEvidenceValue(value[index], `${path}[${index}]`, ancestors));
+        if (!descriptor.enumerable || !("value" in descriptor)) {
+          throw new Error(`${path}[${index}] must be an enumerable data property`);
+        }
+        snapshot.push(
+          snapshotEvidenceValue(descriptor.value, `${path}[${index}]`, ancestors),
+        );
       }
       return Object.freeze(snapshot);
     }
