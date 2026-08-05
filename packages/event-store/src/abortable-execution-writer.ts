@@ -1,5 +1,7 @@
 import { InvalidEventError } from "./index.js";
 
+const DEFAULT_MAX_WRITES_PER_EXECUTION = 64;
+
 export type ExecutionWriteState =
   | "queued"
   | "running"
@@ -15,6 +17,22 @@ export class ExecutionWriteAbortedError extends Error {
     super(`Execution write for ${executionId} was aborted.`);
     this.name = "ExecutionWriteAbortedError";
   }
+}
+
+export class ExecutionWriteQueueCapacityError extends Error {
+  public constructor(
+    public readonly executionId: string,
+    public readonly maxWritesPerExecution: number,
+  ) {
+    super(
+      `Execution write queue for ${executionId} reached its limit of ${maxWritesPerExecution}.`,
+    );
+    this.name = "ExecutionWriteQueueCapacityError";
+  }
+}
+
+export interface AbortAcknowledgedExecutionWriterOptions {
+  readonly maxWritesPerExecution?: number;
 }
 
 export interface AbortableExecutionWriteContext {
@@ -73,15 +91,33 @@ function assertOperation<T>(
   ) => T | Promise<T>;
 }
 
+function requireMaxWritesPerExecution(value: number | undefined): number {
+  const maxWritesPerExecution = value ?? DEFAULT_MAX_WRITES_PER_EXECUTION;
+  if (!Number.isSafeInteger(maxWritesPerExecution) || maxWritesPerExecution < 1) {
+    throw new InvalidEventError(
+      "maxWritesPerExecution must be a positive safe integer.",
+    );
+  }
+  return maxWritesPerExecution;
+}
+
 /**
  * Event-store-owned per-execution writer queue.
  *
  * Queued writes may be aborted immediately. A running write retains its ordering
  * slot until it either settles or explicitly acknowledges abort. This prevents a
  * late settlement from escaping its assigned slot and corrupting trace order.
+ * Queue capacity is bounded independently for each execution identity.
  */
 export class AbortAcknowledgedExecutionWriter {
   private readonly queues = new Map<string, QueuedExecutionWrite[]>();
+  private readonly maxWritesPerExecution: number;
+
+  public constructor(options: AbortAcknowledgedExecutionWriterOptions = {}) {
+    this.maxWritesPerExecution = requireMaxWritesPerExecution(
+      options.maxWritesPerExecution,
+    );
+  }
 
   public enqueue<T>(
     executionId: string,
@@ -89,6 +125,14 @@ export class AbortAcknowledgedExecutionWriter {
   ): AbortableExecutionWriteHandle<T> {
     const canonicalExecutionId = assertCanonicalExecutionId(executionId);
     const validatedOperation = assertOperation<T>(operation);
+    const queue = this.queues.get(canonicalExecutionId) ?? [];
+    if (queue.length >= this.maxWritesPerExecution) {
+      throw new ExecutionWriteQueueCapacityError(
+        canonicalExecutionId,
+        this.maxWritesPerExecution,
+      );
+    }
+
     const controller = new AbortController();
 
     let resolveResult!: (value: T | PromiseLike<T>) => void;
@@ -116,7 +160,6 @@ export class AbortAcknowledgedExecutionWriter {
       abortReason: undefined,
     };
 
-    const queue = this.queues.get(canonicalExecutionId) ?? [];
     queue.push(write);
     this.queues.set(canonicalExecutionId, queue);
     if (queue.length === 1) {
