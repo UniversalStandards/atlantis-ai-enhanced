@@ -1,4 +1,8 @@
-import type { EventSink, ExecutionEvent } from "@atlantis/contracts";
+import type {
+  EventSink,
+  ExecutionEvent,
+  ExecutionEventType,
+} from "@atlantis/contracts";
 
 import {
   InvalidEventError,
@@ -33,6 +37,41 @@ const requiredExecutionEventFields = [
   "actor",
   "payload",
 ] as const;
+
+const executionEventTypes = new Set<ExecutionEventType>([
+  "execution.started",
+  "execution.interrupted",
+  "execution.cancelled",
+  "execution.timed_out",
+  "execution.completed",
+  "execution.failed",
+  "workflow.step.started",
+  "workflow.step.attempt.started",
+  "workflow.step.attempt.failed",
+  "workflow.step.timed_out",
+  "workflow.step.completed",
+  "workflow.step.failed",
+  "tool.started",
+  "tool.completed",
+  "tool.failed",
+  "external.effect.executed",
+  "external.effect.reconciled",
+  "external.effect.ownership.acquired",
+  "external.effect.ownership.contended",
+  "external.effect.ownership.committed_observed",
+  "external.effect.ownership.rejected",
+  "external.effect.ownership.renewed",
+  "external.effect.ownership.receipt_committed",
+  "external.effect.ownership.released",
+  "external.effect.ownership.observed",
+  "external.effect.ownership.lost",
+  "evaluation.completed",
+  "approval.requested",
+  "approval.resolved",
+  "supervisor.escalated",
+  "supervisor.returned",
+  "budget.exceeded",
+]);
 
 function assertCanonicalExecutionId(executionId: unknown): string {
   if (typeof executionId !== "string") {
@@ -84,9 +123,14 @@ function assertExecutionActor(actor: unknown): string {
   return canonicalActor;
 }
 
-function assertAppendOperation<T>(
-  operation: unknown,
-): () => T | Promise<T> {
+function assertExecutionEventType(type: unknown): ExecutionEventType {
+  if (typeof type !== "string" || !executionEventTypes.has(type as ExecutionEventType)) {
+    throw new InvalidEventError("execution event type is not recognized.");
+  }
+  return type as ExecutionEventType;
+}
+
+function assertAppendOperation<T>(operation: unknown): () => T | Promise<T> {
   if (typeof operation !== "function") {
     throw new InvalidEventError("execution append operation must be a function.");
   }
@@ -103,10 +147,7 @@ function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
     throw new InvalidEventError("execution event must be a plain data record.");
   }
 
-  const normalized: Record<string, unknown> = Object.create(null) as Record<
-    string,
-    unknown
-  >;
+  const normalized: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
 
   for (const key of Reflect.ownKeys(event)) {
     if (typeof key !== "string") {
@@ -166,11 +207,13 @@ function restoreExecutionEvent(stored: StoredEvent): ExecutionEvent {
     );
   }
 
+  const type = assertExecutionEventType(stored.eventType);
+
   return Object.freeze({
     id: stored.eventId,
     executionId: stored.streamId,
     sequence: persisted.sequence,
-    type: stored.eventType as ExecutionEvent["type"],
+    type,
     occurredAt: stored.occurredAt,
     actor: persisted.actor,
     ...(persisted.parentEventId === undefined
@@ -229,6 +272,7 @@ export class DurableExecutionEventSink implements EventSink {
         ? undefined
         : assertCanonicalEventId(validatedEvent.parentEventId, "parentEventId");
     const actor = assertExecutionActor(validatedEvent.actor);
+    const type = assertExecutionEventType(validatedEvent.type);
     const expectedVersion = this.store.getStreamVersion(executionId);
     assertExecutionSequence(validatedEvent, expectedVersion);
 
@@ -236,7 +280,7 @@ export class DurableExecutionEventSink implements EventSink {
       {
         streamId: executionId,
         eventId,
-        eventType: validatedEvent.type,
+        eventType: type,
         occurredAt: validatedEvent.occurredAt,
         traceId: executionId,
         correlationId: executionId,
