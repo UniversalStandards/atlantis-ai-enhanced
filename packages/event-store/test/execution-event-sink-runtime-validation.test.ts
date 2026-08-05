@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+
+import type { ExecutionEvent } from "@atlantis/contracts";
+
+import {
+  DurableSnapshotEventStore,
+  InMemoryAtomicSnapshotStorage,
+  InvalidEventError,
+} from "../src/index.js";
+import { DurableExecutionEventSink } from "../src/execution-event-sink.js";
+
+function createSink(): DurableExecutionEventSink {
+  return new DurableExecutionEventSink(
+    new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+  );
+}
+
+describe("DurableExecutionEventSink runtime execution identity validation", () => {
+  it("rejects a non-string lock identity before invoking the operation", async () => {
+    const sink = createSink();
+    let operationCalls = 0;
+
+    await expect(
+      sink.withExecutionAppendLock(null as unknown as string, () => {
+        operationCalls += 1;
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<InvalidEventError>>({
+        message: "executionId must be a string.",
+      }),
+    );
+
+    expect(operationCalls).toBe(0);
+  });
+
+  it("rejects a non-string event identity before durable-store access", async () => {
+    const sink = createSink();
+    const malformedEvent = {
+      id: "event-1",
+      executionId: 42,
+      sequence: 1,
+      type: "execution.started",
+      occurredAt: "2026-08-05T00:00:00.000Z",
+      actor: "test",
+      payload: {},
+    } as unknown as ExecutionEvent;
+
+    await expect(sink.append(malformedEvent)).rejects.toEqual(
+      expect.objectContaining<Partial<InvalidEventError>>({
+        message: "executionId must be a string.",
+      }),
+    );
+
+    expect(sink.readExecution("execution-1")).toEqual([]);
+  });
+
+  it("rejects a non-string read identity with the canonical typed error", () => {
+    const sink = createSink();
+
+    expect(() => sink.readExecution(undefined as unknown as string)).toThrow(
+      "executionId must be a string.",
+    );
+  });
+});
