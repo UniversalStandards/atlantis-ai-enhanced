@@ -96,12 +96,15 @@ describe("DurableExecutionEventSink persisted payload integrity", () => {
   });
 
   it("requires correlation identity in the stored envelope", () => {
-    const event = storedEvent({ sequence: 1, actor: "runtime", payload: {} });
-    delete (event as Partial<StoredEvent>).correlationId;
+    const { correlationId: _correlationId, ...eventWithoutCorrelation } = storedEvent({
+      sequence: 1,
+      actor: "runtime",
+      payload: {},
+    });
 
-    expect(() => sinkForEvent(event).readExecution("execution-1")).toThrow(
-      "stored execution event is missing required field correlationId.",
-    );
+    expect(() =>
+      sinkForEvent(eventWithoutCorrelation as StoredEvent).readExecution("execution-1"),
+    ).toThrow("stored execution event is missing required field correlationId.");
   });
 
   it.each([
