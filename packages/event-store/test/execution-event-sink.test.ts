@@ -251,4 +251,36 @@ describe("DurableExecutionEventSink", () => {
 
     expect(operationCalls).toBe(0);
   });
+
+  it("rejects padded execution identities before appending an aliased stream", async () => {
+    const sink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    );
+
+    await expect(
+      sink.append({
+        id: "event-1",
+        executionId: " execution-1 ",
+        sequence: 1,
+        type: "execution.started",
+        occurredAt: "2026-08-05T00:00:00.000Z",
+        actor: "test",
+        payload: {},
+      }),
+    ).rejects.toThrow(
+      "executionId must not contain leading or trailing whitespace.",
+    );
+
+    expect(sink.readExecution("execution-1")).toEqual([]);
+  });
+
+  it("rejects padded execution identities before reading an aliased stream", () => {
+    const sink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    );
+
+    expect(() => sink.readExecution(" execution-1 ")).toThrow(
+      "executionId must not contain leading or trailing whitespace.",
+    );
+  });
 });
