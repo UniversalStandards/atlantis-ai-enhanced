@@ -39,6 +39,30 @@ const requiredExecutionEventFields = [
   "payload",
 ] as const;
 
+const storedEventFields = new Set([
+  "streamId",
+  "eventId",
+  "eventType",
+  "payload",
+  "occurredAt",
+  "traceId",
+  "correlationId",
+  "causationId",
+  "sequence",
+  "streamVersion",
+]);
+
+const requiredStoredEventFields = [
+  "streamId",
+  "eventId",
+  "eventType",
+  "payload",
+  "occurredAt",
+  "traceId",
+  "sequence",
+  "streamVersion",
+] as const;
+
 const persistedExecutionPayloadFields = new Set([
   "sequence",
   "actor",
@@ -182,6 +206,15 @@ function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
   ) as unknown as ExecutionEvent<T>;
 }
 
+function normalizeStoredEvent(event: unknown): StoredEvent {
+  return normalizeExactRecord(
+    "stored execution event",
+    event,
+    storedEventFields,
+    requiredStoredEventFields,
+  ) as unknown as StoredEvent;
+}
+
 function normalizePersistedExecutionPayload(
   payload: unknown,
 ): PersistedExecutionEventPayload {
@@ -202,7 +235,8 @@ function assertExecutionSequence(event: ExecutionEvent, expectedVersion: number)
   }
 }
 
-function restoreExecutionEvent(stored: StoredEvent): ExecutionEvent {
+function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
+  const stored = normalizeStoredEvent(untrustedStored);
   const persisted = normalizePersistedExecutionPayload(stored.payload);
   if (!Number.isSafeInteger(persisted.sequence) || persisted.sequence < 1) {
     throw new InvalidEventError("persisted execution event payload is invalid.");
