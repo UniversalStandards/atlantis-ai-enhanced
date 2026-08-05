@@ -42,11 +42,26 @@ export interface ProductionAppendUncertain {
   readonly observedAt: string;
 }
 
+export interface ExpectedPersistenceEvent {
+  readonly eventId: string;
+  readonly executionId: string;
+  readonly streamVersion: number;
+  readonly contentDigest: string;
+}
+
+export interface ObservedPersistenceEvent {
+  readonly eventId: string;
+  readonly executionId: string;
+  readonly streamVersion: number;
+  readonly contentDigest: string;
+}
+
 export interface PersistenceReconciliationEvidence {
-  readonly exactEventMatch: boolean;
-  readonly conflictingEventAtExpectedPosition: boolean;
+  readonly expected: ExpectedPersistenceEvent;
+  /** Authoritative durable event observed at the expected stream position. */
+  readonly observedAtExpectedPosition?: ObservedPersistenceEvent;
+  /** Authoritative provider proof that the attempted transition did not commit. */
   readonly providerProvesNotCommitted: boolean;
-  readonly observedContentDigest?: string;
 }
 
 export type PersistenceReconciliationDecision =
@@ -62,40 +77,67 @@ export class InvalidPersistenceReconciliationEvidenceError extends Error {
   }
 }
 
+function requireNonEmpty(value: string, field: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      `${field} must be a non-empty string`,
+    );
+  }
+}
+
+function requireStreamVersion(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      `${field} must be a positive safe integer`,
+    );
+  }
+}
+
+function validateEventIdentity(
+  event: ExpectedPersistenceEvent | ObservedPersistenceEvent,
+  field: "expected" | "observedAtExpectedPosition",
+): void {
+  requireNonEmpty(event.eventId, `${field}.eventId`);
+  requireNonEmpty(event.executionId, `${field}.executionId`);
+  requireStreamVersion(event.streamVersion, `${field}.streamVersion`);
+  requireNonEmpty(event.contentDigest, `${field}.contentDigest`);
+}
+
 /**
  * Classifies authoritative reconciliation evidence without provider-specific
- * assumptions. Ambiguity always remains blocked; this function never guesses.
+ * assumptions. A committed decision is derived only from an exact immutable
+ * identity, stream-position, and content-digest match. Ambiguity remains
+ * blocked; this function never trusts a caller-supplied match assertion.
  */
 export function classifyPersistenceReconciliation(
   evidence: PersistenceReconciliationEvidence,
 ): PersistenceReconciliationDecision {
-  if (evidence.exactEventMatch && evidence.conflictingEventAtExpectedPosition) {
-    throw new InvalidPersistenceReconciliationEvidenceError(
-      "an exact event match cannot coexist with a conflicting event at the expected position",
-    );
-  }
+  validateEventIdentity(evidence.expected, "expected");
 
-  if (evidence.exactEventMatch && evidence.providerProvesNotCommitted) {
-    throw new InvalidPersistenceReconciliationEvidenceError(
-      "an exact durable event match cannot coexist with proof of non-commit",
-    );
-  }
+  const observed = evidence.observedAtExpectedPosition;
+  if (observed !== undefined) {
+    validateEventIdentity(observed, "observedAtExpectedPosition");
 
-  if (
-    evidence.conflictingEventAtExpectedPosition &&
-    evidence.providerProvesNotCommitted
-  ) {
-    throw new InvalidPersistenceReconciliationEvidenceError(
-      "a conflicting durable event cannot coexist with proof that no relevant transition committed",
-    );
-  }
+    if (observed.streamVersion !== evidence.expected.streamVersion) {
+      throw new InvalidPersistenceReconciliationEvidenceError(
+        "observedAtExpectedPosition.streamVersion must equal expected.streamVersion",
+      );
+    }
 
-  if (evidence.exactEventMatch) {
-    return Object.freeze({ kind: "committed" });
-  }
+    if (evidence.providerProvesNotCommitted) {
+      throw new InvalidPersistenceReconciliationEvidenceError(
+        "a durable event at the expected position cannot coexist with proof of non-commit",
+      );
+    }
 
-  if (evidence.conflictingEventAtExpectedPosition) {
-    return Object.freeze({ kind: "conflict", quarantine: true });
+    const exactMatch =
+      observed.eventId === evidence.expected.eventId &&
+      observed.executionId === evidence.expected.executionId &&
+      observed.contentDigest === evidence.expected.contentDigest;
+
+    return exactMatch
+      ? Object.freeze({ kind: "committed" })
+      : Object.freeze({ kind: "conflict", quarantine: true });
   }
 
   if (evidence.providerProvesNotCommitted) {
