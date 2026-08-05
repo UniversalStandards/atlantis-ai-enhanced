@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ExternalEffectOwnershipLostError } from "@atlantis/contracts/external-effect-execution";
 import { withExternalEffectOwnershipLossEvidence } from "@atlantis/contracts/external-effect-ownership-loss-evidence";
@@ -167,5 +167,39 @@ describe("durable ownership-loss evidence context", () => {
       type: "external.effect.ownership.lost",
     });
     expect(JSON.stringify(events)).not.toContain(claim.claimToken);
+  });
+
+  it("persists through the governed append capability instead of the compatibility append API", async () => {
+    const eventSink = sink();
+    const compatibilityAppend = vi
+      .spyOn(eventSink, "append")
+      .mockRejectedValue(new Error("compatibility append must not be used"));
+    const ownershipLoss = new ExternalEffectOwnershipLostError(
+      "provider_execution",
+      claim,
+      new Error("claim superseded"),
+    );
+
+    await expect(
+      withDurableOwnershipLossEvidence(
+        {
+          eventSink,
+          executionId: "execution-1",
+          actor: "external-effect-runtime",
+          createEventId: () => "ownership-loss-event",
+          now: () => "2026-08-04T16:00:10.000Z",
+        },
+        () => Promise.reject(ownershipLoss),
+      ),
+    ).rejects.toBe(ownershipLoss);
+
+    expect(compatibilityAppend).not.toHaveBeenCalled();
+    expect(eventSink.readExecution("execution-1")).toMatchObject([
+      {
+        id: "ownership-loss-event",
+        sequence: 1,
+        type: "external.effect.ownership.lost",
+      },
+    ]);
   });
 });
