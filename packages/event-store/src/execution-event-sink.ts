@@ -69,10 +69,19 @@ function assertCanonicalEventId(value: unknown, field: "id" | "parentEventId"): 
 }
 
 function assertExecutionActor(actor: unknown): string {
-  if (typeof actor !== "string" || actor.trim().length === 0) {
+  if (typeof actor !== "string") {
     throw new InvalidEventError("execution event actor must be a non-empty string.");
   }
-  return actor;
+  const canonicalActor = actor.trim();
+  if (canonicalActor.length === 0) {
+    throw new InvalidEventError("execution event actor must be a non-empty string.");
+  }
+  if (canonicalActor !== actor) {
+    throw new InvalidEventError(
+      "execution event actor must not contain leading or trailing whitespace.",
+    );
+  }
+  return canonicalActor;
 }
 
 function assertAppendOperation<T>(
