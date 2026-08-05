@@ -1,3 +1,4 @@
+import { ExecutionCommitGuard } from "./execution-commit-guard.js";
 import { InvalidEventError } from "./index.js";
 
 const DEFAULT_MAX_WRITES_PER_EXECUTION = 64;
@@ -38,6 +39,7 @@ export interface AbortAcknowledgedExecutionWriterOptions {
 export interface AbortableExecutionWriteContext {
   readonly executionId: string;
   readonly signal: AbortSignal;
+  commit<T>(operation: () => T): T;
   acknowledgeAbort(): void;
 }
 
@@ -55,6 +57,7 @@ interface QueuedExecutionWrite {
     context: AbortableExecutionWriteContext,
   ) => unknown | Promise<unknown>;
   readonly controller: AbortController;
+  readonly commitGuard: ExecutionCommitGuard;
   readonly result: Promise<unknown>;
   readonly resolveResult: (value: unknown) => void;
   readonly rejectResult: (reason?: unknown) => void;
@@ -104,9 +107,11 @@ function requireMaxWritesPerExecution(value: number | undefined): number {
 /**
  * Event-store-owned per-execution writer queue.
  *
- * Queued writes may be aborted immediately. A running write retains its ordering
- * slot until it either settles or explicitly acknowledges abort. This prevents a
- * late settlement from escaping its assigned slot and corrupting trace order.
+ * Each write receives revocable synchronous commit authority. Queued writes may
+ * be aborted immediately. A running write retains its ordering slot until it
+ * settles or explicitly acknowledges abort, and commit authority is closed
+ * before either release path becomes observable. Retained callbacks therefore
+ * cannot mutate through the governed boundary after settlement or abandonment.
  * Queue capacity is bounded independently for each execution identity.
  */
 export class AbortAcknowledgedExecutionWriter {
@@ -151,6 +156,7 @@ export class AbortAcknowledgedExecutionWriter {
       executionId: canonicalExecutionId,
       operation: validatedOperation,
       controller,
+      commitGuard: new ExecutionCommitGuard(canonicalExecutionId),
       result,
       resolveResult: (value) => resolveResult(value as T),
       rejectResult,
@@ -184,6 +190,7 @@ export class AbortAcknowledgedExecutionWriter {
         controller.abort(reason);
 
         if (write.state === "queued") {
+          write.commitGuard.close(reason);
           write.state = "aborted";
           write.acknowledgeAbort();
           write.rejectResult(
@@ -228,9 +235,11 @@ export class AbortAcknowledgedExecutionWriter {
       const context: AbortableExecutionWriteContext = Object.freeze({
         executionId,
         signal: write.controller.signal,
+        commit: <T>(operation: () => T): T => write.commitGuard.commit(operation),
         acknowledgeAbort: () => {
           if (!write.controller.signal.aborted || abortWasAcknowledged) return;
           abortWasAcknowledged = true;
+          write.commitGuard.close(write.abortReason);
           write.state = "aborted";
           write.acknowledgeAbort();
           write.rejectResult(
@@ -256,6 +265,7 @@ export class AbortAcknowledgedExecutionWriter {
 
       const releaseReason = await releasePromise;
       if (releaseReason === "settled") {
+        write.commitGuard.close("execution write settled");
         try {
           const value = await operationPromise;
           if (!abortWasAcknowledged) {
