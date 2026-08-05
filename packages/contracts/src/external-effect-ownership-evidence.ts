@@ -42,6 +42,8 @@ export interface ExternalEffectOwnershipEvidenceContext {
   readonly parentEventId?: string;
 }
 
+const REDACTED_CLAIM_TOKEN = "[REDACTED]";
+
 function requireNonBlank(field: string, value: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) {
@@ -117,6 +119,28 @@ function executionEventTypeForLifecycleEvent(
   }
 }
 
+function redactClaimTokens(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((item) => redactClaimTokens(item)));
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    redacted[key] =
+      key === "claimToken" ? REDACTED_CLAIM_TOKEN : redactClaimTokens(item);
+  }
+  return Object.freeze(redacted);
+}
+
+function evidenceLifecycleSnapshot(
+  lifecycle: ExternalEffectOwnershipLifecycleEvent,
+): ExternalEffectOwnershipLifecycleEvent {
+  return redactClaimTokens(structuredClone(lifecycle)) as ExternalEffectOwnershipLifecycleEvent;
+}
+
 /**
  * Converts non-authoritative ownership lifecycle observations into ordered
  * execution evidence. Lifecycle callbacks are serialized so concurrent store
@@ -153,7 +177,7 @@ export function createExternalEffectOwnershipEvidenceObserver(
       occurredAt: requireCanonicalTimestamp("occurredAt", context.now()),
       actor: requireNonBlank("actor", context.actor),
       ...(parentEventId === undefined ? {} : { parentEventId }),
-      payload: Object.freeze({ lifecycle }),
+      payload: Object.freeze({ lifecycle: evidenceLifecycleSnapshot(lifecycle) }),
     });
 
     await context.eventSink.append(event);
