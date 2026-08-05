@@ -13,6 +13,9 @@ import {
   DurableSnapshotEventStore,
   InMemoryAtomicSnapshotStorage,
   InvalidEventError,
+  PersistenceConflictError,
+  type AtomicSnapshot,
+  type AtomicSnapshotStorage,
 } from "../src/index.js";
 
 const claim: ExternalEffectClaim = {
@@ -31,6 +34,23 @@ function sink(): DurableExecutionEventSink {
   return new DurableExecutionEventSink(
     new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
   );
+}
+
+class RecoverableAtomicSnapshotStorage implements AtomicSnapshotStorage {
+  #revision = 0;
+  #value: string | null = null;
+  public rejectWrites = true;
+
+  public load(): AtomicSnapshot {
+    return Object.freeze({ revision: this.#revision, value: this.#value });
+  }
+
+  public compareAndSwap(expectedRevision: number, nextValue: string): boolean {
+    if (this.rejectWrites || expectedRevision !== this.#revision) return false;
+    this.#value = nextValue;
+    this.#revision += 1;
+    return true;
+  }
 }
 
 describe("durable ownership-loss evidence context", () => {
@@ -197,6 +217,69 @@ describe("durable ownership-loss evidence context", () => {
     expect(eventSink.readExecution("execution-1")).toMatchObject([
       {
         id: "ownership-loss-event",
+        sequence: 1,
+        type: "external.effect.ownership.lost",
+      },
+    ]);
+  });
+
+  it("reports exhausted persistence without consuming the cursor and recovers after restart", async () => {
+    const storage = new RecoverableAtomicSnapshotStorage();
+    const eventSink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(storage, 2),
+    );
+    const evidenceErrors: unknown[] = [];
+    const eventIds = ["failed-ownership-loss", "recovered-ownership-loss"];
+    const ownershipLoss = new ExternalEffectOwnershipLostError(
+      "provider_execution",
+      claim,
+      new Error("claim superseded"),
+    );
+    const options = {
+      eventSink,
+      executionId: "execution-1",
+      actor: "external-effect-runtime",
+      createEventId: () => eventIds.shift() ?? "unexpected-event",
+      now: () => "2026-08-04T16:00:10.000Z",
+      onEvidenceError: (error: unknown) => {
+        evidenceErrors.push(error);
+      },
+    };
+
+    await expect(
+      withDurableOwnershipLossEvidence(options, () => Promise.reject(ownershipLoss)),
+    ).rejects.toBe(ownershipLoss);
+
+    expect(evidenceErrors).toHaveLength(1);
+    expect(evidenceErrors[0]).toBeInstanceOf(PersistenceConflictError);
+    expect(storage.load()).toEqual({ revision: 0, value: null });
+    expect(eventSink.readExecution("execution-1")).toEqual([]);
+
+    const failedRestart = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(storage, 2),
+    );
+    expect(failedRestart.readExecution("execution-1")).toEqual([]);
+
+    storage.rejectWrites = false;
+    await expect(
+      withDurableOwnershipLossEvidence(options, () => Promise.reject(ownershipLoss)),
+    ).rejects.toBe(ownershipLoss);
+
+    expect(evidenceErrors).toHaveLength(1);
+    expect(eventSink.readExecution("execution-1")).toMatchObject([
+      {
+        id: "recovered-ownership-loss",
+        sequence: 1,
+        type: "external.effect.ownership.lost",
+      },
+    ]);
+
+    const recoveredRestart = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(storage, 2),
+    );
+    expect(recoveredRestart.readExecution("execution-1")).toMatchObject([
+      {
+        id: "recovered-ownership-loss",
         sequence: 1,
         type: "external.effect.ownership.lost",
       },
