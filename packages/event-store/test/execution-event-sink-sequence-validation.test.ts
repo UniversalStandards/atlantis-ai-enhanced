@@ -48,6 +48,21 @@ function createEvent(sequence: unknown): ExecutionEvent {
   } as unknown as ExecutionEvent;
 }
 
+async function expectRejectedBeforeStoreAccess(sequence: unknown): Promise<void> {
+  const store = new AccessRecordingEventStore();
+  const sink = new DurableExecutionEventSink(store);
+
+  await expect(sink.append(createEvent(sequence))).rejects.toEqual(
+    expect.objectContaining<Partial<InvalidEventError>>({
+      name: "InvalidEventError",
+      message: "execution event sequence must be a positive safe integer.",
+    }),
+  );
+
+  expect(store.streamVersionReads).toBe(0);
+  expect(store.appends).toBe(0);
+}
+
 describe("DurableExecutionEventSink sequence validation", () => {
   it.each([
     null,
@@ -59,22 +74,12 @@ describe("DurableExecutionEventSink sequence validation", () => {
     Number.POSITIVE_INFINITY,
     Number.MAX_SAFE_INTEGER + 1,
     "1",
-    Symbol("sequence"),
   ])(
     "rejects malformed sequence %p before durable-store access",
-    async (sequence) => {
-      const store = new AccessRecordingEventStore();
-      const sink = new DurableExecutionEventSink(store);
-
-      await expect(sink.append(createEvent(sequence))).rejects.toEqual(
-        expect.objectContaining<Partial<InvalidEventError>>({
-          name: "InvalidEventError",
-          message: "execution event sequence must be a positive safe integer.",
-        }),
-      );
-
-      expect(store.streamVersionReads).toBe(0);
-      expect(store.appends).toBe(0);
-    },
+    expectRejectedBeforeStoreAccess,
   );
+
+  it("rejects a symbol sequence before durable-store access", async () => {
+    await expectRejectedBeforeStoreAccess(Symbol("sequence"));
+  });
 });
