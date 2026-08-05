@@ -5,7 +5,6 @@ import type {
   EventStore,
   StoredEvent,
 } from "../src/index.js";
-import { InvalidEventError } from "../src/index.js";
 import { DurableExecutionEventSink } from "../src/execution-event-sink.js";
 
 function storedEvent(
@@ -89,11 +88,8 @@ describe("DurableExecutionEventSink restoration identity integrity", () => {
   it("revalidates canonical persisted actor identity during restoration", () => {
     const sink = sinkFor(storedEvent({}, { actor: " test " }));
 
-    expect(() => sink.readExecution("execution-1")).toEqual(
-      expect.objectContaining<Partial<InvalidEventError>>({
-        message:
-          "execution event actor must not contain leading or trailing whitespace.",
-      }),
+    expect(() => sink.readExecution("execution-1")).toThrow(
+      "execution event actor must not contain leading or trailing whitespace.",
     );
   });
 
