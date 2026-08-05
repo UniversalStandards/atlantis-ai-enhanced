@@ -5,57 +5,78 @@ import {
   classifyPersistenceReconciliation,
 } from "../src/production-persistence.js";
 
+const expected = {
+  eventId: "event-1",
+  executionId: "execution-1",
+  streamVersion: 4,
+  contentDigest: "sha256:expected",
+} as const;
+
 describe("persistence reconciliation", () => {
-  it("maps durable evidence to fail-closed decisions", () => {
+  it("derives committed only from exact authoritative identity, position, and digest evidence", () => {
     expect(classifyPersistenceReconciliation({
-      exactEventMatch: true,
-      conflictingEventAtExpectedPosition: false,
+      expected,
+      observedAtExpectedPosition: { ...expected },
       providerProvesNotCommitted: false,
     })).toEqual({ kind: "committed" });
 
-    expect(classifyPersistenceReconciliation({
-      exactEventMatch: false,
-      conflictingEventAtExpectedPosition: true,
-      providerProvesNotCommitted: false,
-    })).toEqual({ kind: "conflict", quarantine: true });
+    for (const observedAtExpectedPosition of [
+      { ...expected, eventId: "event-2" },
+      { ...expected, executionId: "execution-2" },
+      { ...expected, contentDigest: "sha256:different" },
+    ]) {
+      expect(classifyPersistenceReconciliation({
+        expected,
+        observedAtExpectedPosition,
+        providerProvesNotCommitted: false,
+      })).toEqual({ kind: "conflict", quarantine: true });
+    }
+  });
 
+  it("permits retry only from authoritative non-commit proof and otherwise remains uncertain", () => {
     expect(classifyPersistenceReconciliation({
-      exactEventMatch: false,
-      conflictingEventAtExpectedPosition: false,
+      expected,
       providerProvesNotCommitted: true,
     })).toEqual({ kind: "retry_permitted" });
 
     expect(classifyPersistenceReconciliation({
-      exactEventMatch: false,
-      conflictingEventAtExpectedPosition: false,
+      expected,
       providerProvesNotCommitted: false,
     })).toEqual({ kind: "uncertain", blockFurtherMutation: true });
   });
 
-  it("rejects contradictory evidence", () => {
+  it("rejects contradictory or malformed evidence", () => {
     expect(() => classifyPersistenceReconciliation({
-      exactEventMatch: true,
-      conflictingEventAtExpectedPosition: true,
+      expected,
+      observedAtExpectedPosition: { ...expected },
+      providerProvesNotCommitted: true,
+    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+
+    expect(() => classifyPersistenceReconciliation({
+      expected,
+      observedAtExpectedPosition: { ...expected, streamVersion: 5 },
       providerProvesNotCommitted: false,
     })).toThrow(InvalidPersistenceReconciliationEvidenceError);
 
     expect(() => classifyPersistenceReconciliation({
-      exactEventMatch: true,
-      conflictingEventAtExpectedPosition: false,
-      providerProvesNotCommitted: true,
+      expected: { ...expected, eventId: " " },
+      providerProvesNotCommitted: false,
     })).toThrow(InvalidPersistenceReconciliationEvidenceError);
 
     expect(() => classifyPersistenceReconciliation({
-      exactEventMatch: false,
-      conflictingEventAtExpectedPosition: true,
-      providerProvesNotCommitted: true,
+      expected: { ...expected, streamVersion: 0 },
+      providerProvesNotCommitted: false,
+    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+
+    expect(() => classifyPersistenceReconciliation({
+      expected: { ...expected, contentDigest: "" },
+      providerProvesNotCommitted: false,
     })).toThrow(InvalidPersistenceReconciliationEvidenceError);
   });
 
   it("returns an immutable decision", () => {
     const decision = classifyPersistenceReconciliation({
-      exactEventMatch: false,
-      conflictingEventAtExpectedPosition: false,
+      expected,
       providerProvesNotCommitted: false,
     });
     expect(Object.isFrozen(decision)).toBe(true);
