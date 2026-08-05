@@ -6,6 +6,11 @@ import {
 } from "@atlantis/contracts";
 
 import {
+  AbortAcknowledgedExecutionWriter,
+  type AbortableExecutionWriteHandle,
+  type AbortAcknowledgedExecutionWriterOptions,
+} from "./abortable-execution-writer.js";
+import {
   InvalidEventError,
   type EventStore,
   type StoredEvent,
@@ -18,6 +23,16 @@ interface PersistedExecutionEventPayload<T = unknown> {
   readonly payload: T;
 }
 
+export interface GovernedExecutionAppendContext {
+  readonly executionId: string;
+  readonly signal: AbortSignal;
+  append<T>(event: ExecutionEvent<T>): Promise<void>;
+  acknowledgeAbort(): void;
+}
+
+export interface DurableExecutionEventSinkOptions
+  extends AbortAcknowledgedExecutionWriterOptions {}
+
 const executionEventFields = new Set([
   "id",
   "executionId",
@@ -28,7 +43,6 @@ const executionEventFields = new Set([
   "parentEventId",
   "payload",
 ]);
-
 const requiredExecutionEventFields = [
   "id",
   "executionId",
@@ -38,7 +52,6 @@ const requiredExecutionEventFields = [
   "actor",
   "payload",
 ] as const;
-
 const storedEventFields = new Set([
   "streamId",
   "eventId",
@@ -51,7 +64,6 @@ const storedEventFields = new Set([
   "sequence",
   "streamVersion",
 ]);
-
 const requiredStoredEventFields = [
   "streamId",
   "eventId",
@@ -63,20 +75,17 @@ const requiredStoredEventFields = [
   "sequence",
   "streamVersion",
 ] as const;
-
 const persistedExecutionPayloadFields = new Set([
   "sequence",
   "actor",
   "parentEventId",
   "payload",
 ]);
-
 const requiredPersistedExecutionPayloadFields = [
   "sequence",
   "actor",
   "payload",
 ] as const;
-
 const recognizedExecutionEventTypes = new Set<ExecutionEventType>(
   executionEventTypes,
 );
@@ -85,7 +94,6 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   if (typeof executionId !== "string") {
     throw new InvalidEventError("executionId must be a string.");
   }
-
   const canonicalExecutionId = executionId.trim();
   if (canonicalExecutionId.length === 0) {
     throw new InvalidEventError("executionId must be non-empty.");
@@ -98,11 +106,13 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   return canonicalExecutionId;
 }
 
-function assertCanonicalEventId(value: unknown, field: "id" | "parentEventId"): string {
+function assertCanonicalEventId(
+  value: unknown,
+  field: "id" | "parentEventId",
+): string {
   if (typeof value !== "string") {
     throw new InvalidEventError(`execution event ${field} must be a string.`);
   }
-
   const canonicalValue = value.trim();
   if (canonicalValue.length === 0) {
     throw new InvalidEventError(`execution event ${field} must be non-empty.`);
@@ -148,6 +158,17 @@ function assertAppendOperation<T>(operation: unknown): () => T | Promise<T> {
   return operation as () => T | Promise<T>;
 }
 
+function assertGovernedAppendOperation<T>(
+  operation: unknown,
+): (context: GovernedExecutionAppendContext) => T | Promise<T> {
+  if (typeof operation !== "function") {
+    throw new InvalidEventError("governed execution append operation must be a function.");
+  }
+  return operation as (
+    context: GovernedExecutionAppendContext,
+  ) => T | Promise<T>;
+}
+
 function assertPositiveSafeInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new InvalidEventError(`${field} must be a positive safe integer.`);
@@ -157,14 +178,18 @@ function assertPositiveSafeInteger(value: unknown, field: string): number {
 
 function assertCanonicalTimestamp(value: unknown, field: string): string {
   if (typeof value !== "string") {
-    throw new InvalidEventError(`${field} must be a canonical ISO-8601 UTC timestamp.`);
+    throw new InvalidEventError(
+      `${field} must be a canonical ISO-8601 UTC timestamp.`,
+    );
   }
   const parsedTimestamp = Date.parse(value);
   if (
     !Number.isFinite(parsedTimestamp) ||
     new Date(parsedTimestamp).toISOString() !== value
   ) {
-    throw new InvalidEventError(`${field} must be a canonical ISO-8601 UTC timestamp.`);
+    throw new InvalidEventError(
+      `${field} must be a canonical ISO-8601 UTC timestamp.`,
+    );
   }
   return value;
 }
@@ -178,7 +203,6 @@ function normalizeExactRecord(
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new InvalidEventError(`${subject} must be an object.`);
   }
-
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
     throw new InvalidEventError(`${subject} must be a plain data record.`);
@@ -188,7 +212,6 @@ function normalizeExactRecord(
     string,
     unknown
   >;
-
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string") {
       throw new InvalidEventError(`${subject} must not contain symbol fields.`);
@@ -196,7 +219,6 @@ function normalizeExactRecord(
     if (!allowedFields.has(key)) {
       throw new InvalidEventError(`${subject} contains unexpected field ${key}.`);
     }
-
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (
       descriptor === undefined ||
@@ -209,13 +231,11 @@ function normalizeExactRecord(
     }
     normalized[key] = descriptor.value;
   }
-
   for (const field of requiredFields) {
     if (!Object.prototype.hasOwnProperty.call(normalized, field)) {
       throw new InvalidEventError(`${subject} is missing required field ${field}.`);
     }
   }
-
   return Object.freeze(normalized);
 }
 
@@ -275,13 +295,11 @@ function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
   if (!Number.isSafeInteger(persisted.sequence) || persisted.sequence < 1) {
     throw new InvalidEventError("persisted execution event payload is invalid.");
   }
-
   if (persisted.sequence !== streamVersion) {
     throw new InvalidEventError(
       "persisted execution event sequence must match its stream version.",
     );
   }
-
   if (storedSequence < streamVersion) {
     throw new InvalidEventError(
       "stored execution event sequence must not precede its stream version.",
@@ -296,13 +314,11 @@ function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
     persisted.parentEventId === undefined
       ? undefined
       : assertCanonicalEventId(persisted.parentEventId, "parentEventId");
-
   if (stored.traceId !== executionId || stored.correlationId !== executionId) {
     throw new InvalidEventError(
       "persisted execution event trace and correlation identities must match its stream identity.",
     );
   }
-
   if (stored.causationId !== parentEventId) {
     throw new InvalidEventError(
       "persisted execution event parentEventId must match its causationId.",
@@ -325,43 +341,58 @@ function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
  * Bridges provider-neutral execution events into the canonical durable event
  * store without leaking persistence details into the workflow runner.
  *
- * The execution-wide lock is owned by this durable sink so independent evidence
- * adapters can share one ordering boundary. Failed operations release the lock
- * and cannot poison later append attempts.
+ * Abortable work receives a bound append capability whose final synchronous
+ * store mutation is routed through that work item's revocable commit guard.
+ * The compatibility lock remains available and is serialized by the same
+ * event-store-owned writer.
  */
 export class DurableExecutionEventSink implements EventSink {
-  private readonly executionQueues = new Map<string, Promise<void>>();
+  private readonly writer: AbortAcknowledgedExecutionWriter;
 
-  public constructor(private readonly store: EventStore) {}
+  public constructor(
+    private readonly store: EventStore,
+    options: DurableExecutionEventSinkOptions = {},
+  ) {
+    this.writer = new AbortAcknowledgedExecutionWriter(options);
+  }
 
-  public async withExecutionAppendLock<T>(
+  public enqueueExecutionAppend<T>(
+    executionId: string,
+    operation: (context: GovernedExecutionAppendContext) => T | Promise<T>,
+  ): AbortableExecutionWriteHandle<T> {
+    const canonicalExecutionId = assertCanonicalExecutionId(executionId);
+    const validatedOperation = assertGovernedAppendOperation<T>(operation);
+
+    return this.writer.enqueue(canonicalExecutionId, (writerContext) =>
+      validatedOperation(
+        Object.freeze({
+          executionId: canonicalExecutionId,
+          signal: writerContext.signal,
+          append: <TPayload>(event: ExecutionEvent<TPayload>): Promise<void> => {
+            writerContext.commit(() => this.appendSynchronously(event));
+            return Promise.resolve();
+          },
+          acknowledgeAbort: () => writerContext.acknowledgeAbort(),
+        }),
+      ),
+    );
+  }
+
+  public withExecutionAppendLock<T>(
     executionId: string,
     operation: () => T | Promise<T>,
   ): Promise<T> {
-    const canonicalExecutionId = assertCanonicalExecutionId(executionId);
     const validatedOperation = assertAppendOperation<T>(operation);
-
-    const predecessor =
-      this.executionQueues.get(canonicalExecutionId) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = predecessor.catch(() => undefined).then(() => gate);
-    this.executionQueues.set(canonicalExecutionId, tail);
-
-    await predecessor.catch(() => undefined);
-    try {
-      return await validatedOperation();
-    } finally {
-      release();
-      if (this.executionQueues.get(canonicalExecutionId) === tail) {
-        this.executionQueues.delete(canonicalExecutionId);
-      }
-    }
+    return this.enqueueExecutionAppend(executionId, () => validatedOperation())
+      .result;
   }
 
-  public async append<T>(event: ExecutionEvent<T>): Promise<void> {
+  public append<T>(event: ExecutionEvent<T>): Promise<void> {
+    this.appendSynchronously(event);
+    return Promise.resolve();
+  }
+
+  private appendSynchronously<T>(event: ExecutionEvent<T>): void {
     const validatedEvent = normalizeExecutionEvent<T>(event);
     const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
     const eventId = assertCanonicalEventId(validatedEvent.id, "id");
