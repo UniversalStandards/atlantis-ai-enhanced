@@ -104,4 +104,70 @@ describe("DurableExecutionEventSink runtime execution identity validation", () =
       "executionId must be a string.",
     );
   });
+
+  it("rejects an accessor field without invoking its getter", async () => {
+    const sink = createSink();
+    let getterCalls = 0;
+    const event = {
+      id: "event-1",
+      get executionId() {
+        getterCalls += 1;
+        return "execution-1";
+      },
+      sequence: 1,
+      type: "execution.started",
+      occurredAt: "2026-08-05T00:00:00.000Z",
+      actor: "test",
+      payload: {},
+    } as unknown as ExecutionEvent;
+
+    await expect(sink.append(event)).rejects.toThrow(
+      "execution event.executionId must be an enumerable data property.",
+    );
+
+    expect(getterCalls).toBe(0);
+    expect(sink.readExecution("execution-1")).toEqual([]);
+  });
+
+  it("rejects inherited event fields before durable-store access", async () => {
+    const sink = createSink();
+    const event = Object.create({ executionId: "execution-1" }) as Record<
+      string,
+      unknown
+    >;
+    Object.assign(event, {
+      id: "event-1",
+      sequence: 1,
+      type: "execution.started",
+      occurredAt: "2026-08-05T00:00:00.000Z",
+      actor: "test",
+      payload: {},
+    });
+
+    await expect(
+      sink.append(event as unknown as ExecutionEvent),
+    ).rejects.toThrow("execution event must be a plain data record.");
+
+    expect(sink.readExecution("execution-1")).toEqual([]);
+  });
+
+  it("rejects symbol-keyed event fields before durable-store access", async () => {
+    const sink = createSink();
+    const event = {
+      id: "event-1",
+      executionId: "execution-1",
+      sequence: 1,
+      type: "execution.started",
+      occurredAt: "2026-08-05T00:00:00.000Z",
+      actor: "test",
+      payload: {},
+      [Symbol("hidden")]: true,
+    } as unknown as ExecutionEvent;
+
+    await expect(sink.append(event)).rejects.toThrow(
+      "execution event must not contain symbol fields.",
+    );
+
+    expect(sink.readExecution("execution-1")).toEqual([]);
+  });
 });
