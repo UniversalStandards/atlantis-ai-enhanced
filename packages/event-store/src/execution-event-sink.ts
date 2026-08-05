@@ -106,6 +106,17 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   return canonicalExecutionId;
 }
 
+function assertGovernedExecutionIdentity(
+  admittedExecutionId: string,
+  eventExecutionId: string,
+): void {
+  if (eventExecutionId !== admittedExecutionId) {
+    throw new InvalidEventError(
+      "governed execution append event executionId must match its admitted executionId.",
+    );
+  }
+}
+
 function assertCanonicalEventId(
   value: unknown,
   field: "id" | "parentEventId",
@@ -369,7 +380,15 @@ export class DurableExecutionEventSink implements EventSink {
           executionId: canonicalExecutionId,
           signal: writerContext.signal,
           append: <TPayload>(event: ExecutionEvent<TPayload>): Promise<void> => {
-            writerContext.commit(() => this.appendSynchronously(event));
+            const validatedEvent = normalizeExecutionEvent<TPayload>(event);
+            const eventExecutionId = assertCanonicalExecutionId(
+              validatedEvent.executionId,
+            );
+            assertGovernedExecutionIdentity(
+              canonicalExecutionId,
+              eventExecutionId,
+            );
+            writerContext.commit(() => this.appendSynchronously(validatedEvent));
             return Promise.resolve();
           },
           acknowledgeAbort: () => writerContext.acknowledgeAbort(),
