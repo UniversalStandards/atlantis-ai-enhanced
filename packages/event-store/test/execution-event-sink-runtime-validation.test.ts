@@ -54,6 +54,23 @@ describe("DurableExecutionEventSink runtime execution identity validation", () =
     expect(sink.readExecution("execution-1")).toEqual([]);
   });
 
+  it.each([null, undefined, 42, [], "event"])(
+    "rejects malformed non-object event input %p before durable-store access",
+    async (malformedEvent) => {
+      const sink = createSink();
+
+      await expect(
+        sink.append(malformedEvent as unknown as ExecutionEvent),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<InvalidEventError>>({
+          message: "execution event must be an object.",
+        }),
+      );
+
+      expect(sink.readExecution("execution-1")).toEqual([]);
+    },
+  );
+
   it("rejects a non-string read identity with the canonical typed error", () => {
     const sink = createSink();
 
