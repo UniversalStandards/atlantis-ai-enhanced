@@ -11,6 +11,10 @@ import { DurableExecutionEventSink } from "./execution-event-sink.js";
 
 const DEFAULT_EVIDENCE_TIMEOUT_MS = 1_000;
 
+type OwnershipLossEvidenceAppend = (
+  event: ExternalEffectOwnershipLossExecutionEvent,
+) => void | Promise<void>;
+
 export interface DurableOwnershipLossEvidenceContextOptions {
   readonly eventSink: DurableExecutionEventSink;
   readonly executionId: string;
@@ -63,12 +67,14 @@ async function withinDeadline<T>(
 /**
  * Binds ownership-loss evidence to the current durable execution-stream tail.
  *
- * Call this immediately before append while holding the sink's execution-wide
- * append lock. The returned sequence and parent are derived from the
- * authoritative stream rather than supplied by a caller.
+ * The optional append capability allows the high-level wrapper to inject the
+ * sink-owned governed append boundary while preserving this factory for direct
+ * compatibility callers.
  */
 export function createDurableOwnershipLossEvidenceContext(
   options: DurableOwnershipLossEvidenceContextOptions,
+  appendEvidence: OwnershipLossEvidenceAppend = (event) =>
+    options.eventSink.append(event),
 ): ExternalEffectOwnershipLossEvidenceContext {
   const timeoutMs = requireTimeout(options.evidenceTimeoutMs);
   const events = options.eventSink.readExecution(options.executionId);
@@ -77,7 +83,7 @@ export function createDurableOwnershipLossEvidenceContext(
   return Object.freeze({
     eventSink: Object.freeze({
       append: (event: ExternalEffectOwnershipLossExecutionEvent) =>
-        withinDeadline("append", timeoutMs, () => options.eventSink.append(event)),
+        withinDeadline("append", timeoutMs, () => appendEvidence(event)),
     }),
     executionId: options.executionId,
     actor: options.actor,
@@ -99,9 +105,9 @@ export function createDurableOwnershipLossEvidenceContext(
 /**
  * Allocates sequence and parent linkage only after ownership loss occurs, so
  * normal runner events emitted during the operation cannot stale the cursor.
- * Evidence recording uses the durable sink's execution-wide append lock, which
- * is shared with other evidence adapters instead of maintaining a private queue.
- * Evidence and reporter delivery are bounded and remain non-authoritative.
+ * Evidence recording uses the sink-owned governed queue and its identity-bound,
+ * revocable append capability. Evidence and reporter delivery remain bounded
+ * and non-authoritative.
  */
 export async function withDurableOwnershipLossEvidence<T>(
   options: DurableOwnershipLossEvidenceContextOptions,
@@ -112,15 +118,15 @@ export async function withDurableOwnershipLossEvidence<T>(
   } catch (error) {
     if (!(error instanceof ExternalEffectOwnershipLostError)) throw error;
 
-    return options.eventSink.withExecutionAppendLock(
+    return await options.eventSink.enqueueExecutionAppend(
       options.executionId,
-      () =>
+      ({ append }) =>
         withExternalEffectOwnershipLossEvidence(
-          createDurableOwnershipLossEvidenceContext(options),
+          createDurableOwnershipLossEvidenceContext(options, append),
           async () => {
             throw error;
           },
         ),
-    );
+    ).result;
   }
 }
