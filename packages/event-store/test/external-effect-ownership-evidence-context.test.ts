@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { ExternalEffectOwnershipLostError } from "@atlantis/contracts/external-effect-execution";
 import type { ExternalEffectClaim } from "@atlantis/contracts/external-effect-ownership";
@@ -10,6 +10,9 @@ import { withDurableOwnershipLossEvidence } from "../src/external-effect-ownersh
 import {
   DurableSnapshotEventStore,
   InMemoryAtomicSnapshotStorage,
+  type AppendEventInput,
+  type EventStore,
+  type StoredEvent,
 } from "../src/index.js";
 
 const claim: ExternalEffectClaim = Object.freeze({
@@ -39,10 +42,42 @@ const acquired: ExternalEffectOwnershipLifecycleEvent = Object.freeze({
   }),
 });
 
-function sink(): DurableExecutionEventSink {
+function sink(store?: EventStore): DurableExecutionEventSink {
   return new DurableExecutionEventSink(
-    new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    store ?? new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
   );
+}
+
+class FailFirstAppendEventStore implements EventStore {
+  private shouldFail = true;
+
+  public constructor(private readonly delegate: EventStore) {}
+
+  public append<TPayload>(
+    event: AppendEventInput<TPayload>,
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    if (this.shouldFail) {
+      this.shouldFail = false;
+      throw new Error("durable sink unavailable");
+    }
+    return this.delegate.append(event, expectedVersion);
+  }
+
+  public readStream(
+    streamId: string,
+    afterVersion?: number,
+  ): readonly StoredEvent[] {
+    return this.delegate.readStream(streamId, afterVersion);
+  }
+
+  public readAll(afterSequence?: number): readonly StoredEvent[] {
+    return this.delegate.readAll(afterSequence);
+  }
+
+  public getStreamVersion(streamId: string): number {
+    return this.delegate.getStreamVersion(streamId);
+  }
 }
 
 describe("durable ownership lifecycle evidence", () => {
@@ -87,13 +122,10 @@ describe("durable ownership lifecycle evidence", () => {
     expect(JSON.stringify(events[1]?.payload)).not.toContain(claim.claimToken);
   });
 
-  it("re-reads the durable tail after a failed lifecycle append", async () => {
-    const eventSink = sink();
-    const originalAppend = eventSink.append.bind(eventSink);
-    const append = vi
-      .spyOn(eventSink, "append")
-      .mockRejectedValueOnce(new Error("durable sink unavailable"))
-      .mockImplementation((event) => originalAppend(event));
+  it("re-reads the durable tail after a governed lifecycle append failure", async () => {
+    const storage = new InMemoryAtomicSnapshotStorage();
+    const baseStore = new DurableSnapshotEventStore(storage);
+    const eventSink = sink(new FailFirstAppendEventStore(baseStore));
     const eventIds = ["failed-event", "recovered-event"];
     const observer = createDurableOwnershipEvidenceObserver({
       eventSink,
@@ -108,7 +140,6 @@ describe("durable ownership lifecycle evidence", () => {
     );
     await observer.onLifecycleEvent(acquired);
 
-    expect(append).toHaveBeenCalledTimes(2);
     const events = eventSink.readExecution("execution-1");
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -117,5 +148,8 @@ describe("durable ownership lifecycle evidence", () => {
       type: "external.effect.ownership.acquired",
     });
     expect(events[0]).not.toHaveProperty("parentEventId");
+
+    const restarted = sink(new DurableSnapshotEventStore(storage));
+    expect(restarted.readExecution("execution-1")).toEqual(events);
   });
 });
