@@ -209,4 +209,69 @@ describe("DurableExecutionEventSink runtime execution identity validation", () =
       ]);
     },
   );
+
+  it("rejects padded event IDs before an aliased trace event can persist", async () => {
+    const sink = createSink();
+
+    await expect(
+      sink.append({
+        id: " event-1 ",
+        executionId: "execution-1",
+        sequence: 1,
+        type: "execution.started",
+        occurredAt: "2026-08-05T00:00:00.000Z",
+        actor: "test",
+        payload: {},
+      }),
+    ).rejects.toThrow(
+      "execution event id must not contain leading or trailing whitespace.",
+    );
+
+    expect(sink.readExecution("execution-1")).toEqual([]);
+  });
+
+  it("rejects padded parent event IDs without poisoning the next sequence", async () => {
+    const sink = createSink();
+
+    await sink.append({
+      id: "event-1",
+      executionId: "execution-1",
+      sequence: 1,
+      type: "execution.started",
+      occurredAt: "2026-08-05T00:00:00.000Z",
+      actor: "test",
+      payload: {},
+    });
+
+    await expect(
+      sink.append({
+        id: "event-2-invalid",
+        executionId: "execution-1",
+        sequence: 2,
+        type: "execution.completed",
+        occurredAt: "2026-08-05T00:00:01.000Z",
+        actor: "test",
+        parentEventId: " event-1 ",
+        payload: {},
+      }),
+    ).rejects.toThrow(
+      "execution event parentEventId must not contain leading or trailing whitespace.",
+    );
+
+    await sink.append({
+      id: "event-2",
+      executionId: "execution-1",
+      sequence: 2,
+      type: "execution.completed",
+      occurredAt: "2026-08-05T00:00:02.000Z",
+      actor: "test",
+      parentEventId: "event-1",
+      payload: {},
+    });
+
+    expect(sink.readExecution("execution-1")).toMatchObject([
+      { id: "event-1", sequence: 1 },
+      { id: "event-2", sequence: 2, parentEventId: "event-1" },
+    ]);
+  });
 });
