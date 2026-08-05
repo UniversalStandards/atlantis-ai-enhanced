@@ -19,11 +19,11 @@ export interface DurableOwnershipEvidenceObserverOptions {
 
 /**
  * Creates ownership lifecycle evidence from the authoritative durable stream
- * tail while holding the sink-owned, execution-wide append lock.
+ * tail while holding the sink-owned, governed per-execution append slot.
  *
- * Each callback allocates sequence and parent linkage at append time. The lock
- * is shared with ownership-loss evidence, so independent evidence adapters
- * cannot race each other against the same execution stream.
+ * Each callback allocates sequence and parent linkage at append time. The
+ * lifecycle event is persisted only through the queue item's identity-bound,
+ * revocable append capability, so abandoned work cannot mutate the stream later.
  */
 export function createDurableOwnershipEvidenceObserver(
   options: DurableOwnershipEvidenceObserverOptions,
@@ -32,15 +32,15 @@ export function createDurableOwnershipEvidenceObserver(
     onLifecycleEvent(
       lifecycle: ExternalEffectOwnershipLifecycleEvent,
     ): Promise<void> {
-      return options.eventSink.withExecutionAppendLock(
+      return options.eventSink.enqueueExecutionAppend(
         options.executionId,
-        async () => {
+        async ({ append }) => {
           const events = options.eventSink.readExecution(options.executionId);
           const tail = events.at(-1);
           const observer = createExternalEffectOwnershipEvidenceObserver({
             eventSink: Object.freeze({
               append: (event: ExternalEffectOwnershipExecutionEvent) =>
-                options.eventSink.append(event),
+                append(event),
             }),
             executionId: options.executionId,
             actor: options.actor,
@@ -52,7 +52,7 @@ export function createDurableOwnershipEvidenceObserver(
 
           await observer.onLifecycleEvent(lifecycle);
         },
-      );
+      ).result;
     },
   });
 }
