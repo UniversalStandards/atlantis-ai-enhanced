@@ -180,4 +180,58 @@ describe("DurableExecutionEventSink", () => {
       { id: "loss-event", sequence: 2, parentEventId: "lifecycle-event" },
     ]);
   });
+
+  it("does not let a stalled execution block append work for another execution", async () => {
+    const sink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    );
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const firstExecution = sink.withExecutionAppendLock("execution-1", async () => {
+      order.push("execution-1-start");
+      await firstGate;
+      order.push("execution-1-end");
+    });
+
+    await Promise.resolve();
+
+    await sink.withExecutionAppendLock("execution-2", () => {
+      order.push("execution-2");
+    });
+
+    expect(order).toEqual(["execution-1-start", "execution-2"]);
+
+    releaseFirst();
+    await firstExecution;
+
+    expect(order).toEqual([
+      "execution-1-start",
+      "execution-2",
+      "execution-1-end",
+    ]);
+  });
+
+  it("releases the execution lock after a synchronous adapter failure", async () => {
+    const sink = new DurableExecutionEventSink(
+      new DurableSnapshotEventStore(new InMemoryAtomicSnapshotStorage()),
+    );
+    const order: string[] = [];
+
+    await expect(
+      sink.withExecutionAppendLock("execution-1", () => {
+        order.push("failed");
+        throw new Error("synchronous adapter failure");
+      }),
+    ).rejects.toThrow("synchronous adapter failure");
+
+    await sink.withExecutionAppendLock("execution-1", () => {
+      order.push("recovered");
+    });
+
+    expect(order).toEqual(["failed", "recovered"]);
+  });
 });
