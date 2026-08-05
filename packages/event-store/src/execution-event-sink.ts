@@ -51,6 +51,13 @@ function assertCanonicalExecutionId(executionId: unknown): string {
   return canonicalExecutionId;
 }
 
+function assertExecutionActor(actor: unknown): string {
+  if (typeof actor !== "string" || actor.trim().length === 0) {
+    throw new InvalidEventError("execution event actor must be a non-empty string.");
+  }
+  return actor;
+}
+
 function assertAppendOperation<T>(
   operation: unknown,
 ): () => T | Promise<T> {
@@ -190,6 +197,7 @@ export class DurableExecutionEventSink implements EventSink {
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
     const validatedEvent = normalizeExecutionEvent<T>(event);
     const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
+    const actor = assertExecutionActor(validatedEvent.actor);
     const expectedVersion = this.store.getStreamVersion(executionId);
     assertExecutionSequence(validatedEvent, expectedVersion);
 
@@ -206,7 +214,7 @@ export class DurableExecutionEventSink implements EventSink {
           : { causationId: validatedEvent.parentEventId }),
         payload: {
           sequence: validatedEvent.sequence,
-          actor: validatedEvent.actor,
+          actor,
           ...(validatedEvent.parentEventId === undefined
             ? {}
             : { parentEventId: validatedEvent.parentEventId }),
