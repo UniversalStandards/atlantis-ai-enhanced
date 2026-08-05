@@ -95,6 +95,58 @@ describe("DurableExecutionEventSink persisted payload integrity", () => {
     );
   });
 
+  it("requires correlation identity in the stored envelope", () => {
+    const event = storedEvent({ sequence: 1, actor: "runtime", payload: {} });
+    delete (event as Partial<StoredEvent>).correlationId;
+
+    expect(() => sinkForEvent(event).readExecution("execution-1")).toThrow(
+      "stored execution event is missing required field correlationId.",
+    );
+  });
+
+  it.each([
+    ["sequence", 0, "stored execution event sequence must be a positive safe integer."],
+    ["sequence", Number.NaN, "stored execution event sequence must be a positive safe integer."],
+    [
+      "streamVersion",
+      Number.POSITIVE_INFINITY,
+      "stored execution event streamVersion must be a positive safe integer.",
+    ],
+  ] as const)("rejects invalid stored envelope %s values", (field, value, message) => {
+    const event = {
+      ...storedEvent({ sequence: 1, actor: "runtime", payload: {} }),
+      [field]: value,
+    } as StoredEvent;
+
+    expect(() => sinkForEvent(event).readExecution("execution-1")).toThrow(message);
+  });
+
+  it("rejects a stored global sequence that precedes its stream version", () => {
+    const event = {
+      ...storedEvent({ sequence: 2, actor: "runtime", payload: {} }),
+      sequence: 1,
+      streamVersion: 2,
+    };
+
+    expect(() => sinkForEvent(event).readExecution("execution-1")).toThrow(
+      "stored execution event sequence must not precede its stream version.",
+    );
+  });
+
+  it.each(["2026-08-05T08:00:00Z", "not-a-timestamp", 1] as const)(
+    "rejects non-canonical stored occurredAt value %p",
+    (occurredAt) => {
+      const event = {
+        ...storedEvent({ sequence: 1, actor: "runtime", payload: {} }),
+        occurredAt,
+      } as unknown as StoredEvent;
+
+      expect(() => sinkForEvent(event).readExecution("execution-1")).toThrow(
+        "stored execution event occurredAt must be a canonical ISO-8601 UTC timestamp.",
+      );
+    },
+  );
+
   it("rejects a getter-bearing persisted payload without invoking the getter", () => {
     let getterCalls = 0;
     const payload = {
