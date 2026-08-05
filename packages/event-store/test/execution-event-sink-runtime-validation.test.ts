@@ -33,6 +33,32 @@ describe("DurableExecutionEventSink runtime execution identity validation", () =
     expect(operationCalls).toBe(0);
   });
 
+  it.each([null, undefined, 42, {}, "operation"])(
+    "rejects non-function append operation %p before queue mutation",
+    async (malformedOperation) => {
+      const sink = createSink();
+      let recoveredCalls = 0;
+
+      await expect(
+        sink.withExecutionAppendLock(
+          "execution-1",
+          malformedOperation as unknown as () => void,
+        ),
+      ).rejects.toEqual(
+        expect.objectContaining<Partial<InvalidEventError>>({
+          message: "execution append operation must be a function.",
+        }),
+      );
+
+      await sink.withExecutionAppendLock("execution-1", () => {
+        recoveredCalls += 1;
+      });
+
+      expect(recoveredCalls).toBe(1);
+      expect(sink.readExecution("execution-1")).toEqual([]);
+    },
+  );
+
   it("rejects a non-string event identity before durable-store access", async () => {
     const sink = createSink();
     const malformedEvent = {
