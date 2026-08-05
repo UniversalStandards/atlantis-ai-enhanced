@@ -72,25 +72,32 @@ export class DurableExecutionEventSink implements EventSink {
     executionId: string,
     operation: () => T | Promise<T>,
   ): Promise<T> {
-    if (executionId.trim().length === 0) {
+    const canonicalExecutionId = executionId.trim();
+    if (canonicalExecutionId.length === 0) {
       throw new InvalidEventError("executionId must be non-empty.");
     }
+    if (canonicalExecutionId !== executionId) {
+      throw new InvalidEventError(
+        "executionId must not contain leading or trailing whitespace.",
+      );
+    }
 
-    const predecessor = this.executionQueues.get(executionId) ?? Promise.resolve();
+    const predecessor =
+      this.executionQueues.get(canonicalExecutionId) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const tail = predecessor.catch(() => undefined).then(() => gate);
-    this.executionQueues.set(executionId, tail);
+    this.executionQueues.set(canonicalExecutionId, tail);
 
     await predecessor.catch(() => undefined);
     try {
       return await operation();
     } finally {
       release();
-      if (this.executionQueues.get(executionId) === tail) {
-        this.executionQueues.delete(executionId);
+      if (this.executionQueues.get(canonicalExecutionId) === tail) {
+        this.executionQueues.delete(canonicalExecutionId);
       }
     }
   }
