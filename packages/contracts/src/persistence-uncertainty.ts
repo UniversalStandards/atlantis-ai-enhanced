@@ -18,6 +18,7 @@ export interface PersistenceReconciliationAttempt {
   readonly observedAt: string;
   readonly decision: PersistenceReconciliationDecision;
   readonly providerObservationId?: string;
+  readonly proofId?: string;
 }
 
 export interface PersistenceUncertaintyRecord {
@@ -136,8 +137,9 @@ export function createPersistenceUncertaintyRecord(
 }
 
 /**
- * Applies one authoritative reconciliation attempt. Terminal and quarantined
- * records are closed to further mutation; unresolved evidence remains pending.
+ * Applies one authoritative reconciliation attempt. Retry-authorizing proof is
+ * bound to this exact uncertainty record and provider operation, and the audit
+ * observation identity/time must exactly match the proof that authorized it.
  */
 export function reconcilePersistenceUncertainty(
   record: PersistenceUncertaintyRecord,
@@ -170,6 +172,50 @@ export function reconcilePersistenceUncertainty(
     );
   }
 
+  const proof = input.evidence.nonCommitProof;
+  if (proof !== undefined) {
+    if (record.providerOperationId === undefined) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "retry-authorizing proof requires a stored providerOperationId",
+      );
+    }
+    if (proof.uncertaintyRecordId !== record.recordId) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "nonCommitProof must be bound to this uncertainty record",
+      );
+    }
+    if (proof.providerOperationId !== record.providerOperationId) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "nonCommitProof must match the stored provider operation",
+      );
+    }
+    if (input.providerObservationId !== proof.providerObservationId) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "attempt providerObservationId must exactly match nonCommitProof",
+      );
+    }
+    if (input.observedAt !== proof.observedAt) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "attempt observedAt must exactly match nonCommitProof",
+      );
+    }
+    if (proof.observedAt < record.firstObservedAt) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "nonCommitProof cannot predate the uncertainty record",
+      );
+    }
+    if (input.observedAt > proof.validUntil) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "nonCommitProof is expired",
+      );
+    }
+    if (record.attempts.some((attempt) => attempt.proofId === proof.proofId)) {
+      throw new InvalidPersistenceUncertaintyTransitionError(
+        "nonCommitProof proofId has already been used",
+      );
+    }
+  }
+
   let decision: PersistenceReconciliationDecision;
   try {
     decision = classifyPersistenceReconciliation(input.evidence);
@@ -188,6 +234,7 @@ export function reconcilePersistenceUncertainty(
     ...(input.providerObservationId === undefined
       ? {}
       : { providerObservationId: input.providerObservationId }),
+    ...(proof === undefined ? {} : { proofId: proof.proofId }),
   });
 
   return Object.freeze({
