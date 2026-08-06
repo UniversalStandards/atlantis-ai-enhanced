@@ -30,15 +30,21 @@ function pendingRecord() {
 
 class ArbitrarySettlementStorage implements AtomicSnapshotStorage {
   public calls = 0;
+  private revision = 0;
+  private value: string | null = null;
 
   public constructor(private readonly settlement: unknown) {}
 
   public load(): AtomicSnapshot {
-    return Object.freeze({ revision: 0, value: null });
+    return Object.freeze({ revision: this.revision, value: this.value });
   }
 
-  public compareAndSwap(): boolean {
+  public compareAndSwap(expectedRevision: number, nextValue: string): boolean {
     this.calls += 1;
+    if (this.settlement === true && expectedRevision === this.revision) {
+      this.revision += 1;
+      this.value = nextValue;
+    }
     return this.settlement as boolean;
   }
 }
@@ -112,7 +118,7 @@ describe("persistence uncertainty repository settlement boundary", () => {
     expect(storage.calls).toBe(3);
   });
 
-  it("accepts literal true as the only successful settlement", () => {
+  it("accepts literal true only when storage exposes the exact committed candidate", () => {
     const storage = new ArbitrarySettlementStorage(true);
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
 
