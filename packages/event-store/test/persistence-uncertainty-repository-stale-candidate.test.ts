@@ -76,7 +76,7 @@ describe("persistence uncertainty repository stale candidate containment", () =>
     const bootstrapStorage = new CommitButReportConflictStorage();
     const bootstrapRepository = new DurableSnapshotPersistenceUncertaintyRepository(
       bootstrapStorage,
-      1,
+      3,
     );
 
     expect(() => bootstrapRepository.create(pendingRecord()))
