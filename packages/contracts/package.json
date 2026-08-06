@@ -16,6 +16,7 @@
     "./observable-external-effect-ownership-store": "./src/observable-external-effect-ownership-store.ts",
     "./persistence-proof-consumption": "./src/persistence-proof-consumption.ts",
     "./persistence-uncertainty": "./src/persistence-uncertainty.ts",
+    "./persistence-uncertainty-atomic-plan": "./src/persistence-uncertainty-atomic-plan.ts",
     "./production-persistence": "./src/production-persistence.ts",
     "./trusted-persistence-reconciliation": "./src/trusted-persistence-reconciliation.ts",
     "./validated-external-effect-ownership-store": "./src/validated-external-effect-ownership-store.ts",
