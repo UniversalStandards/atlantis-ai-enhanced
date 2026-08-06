@@ -48,6 +48,7 @@ describe("persistence uncertainty lifecycle", () => {
     const next = reconcilePersistenceUncertainty(initial, {
       attemptId: "attempt-1",
       observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
       evidence: { expected },
     });
 
@@ -59,6 +60,7 @@ describe("persistence uncertainty lifecycle", () => {
         attemptNumber: 1,
         attemptId: "attempt-1",
         observedAt: "2026-08-06T00:01:00.000Z",
+        reconciledAt: "2026-08-06T00:01:30.000Z",
         decision: { kind: "uncertain", blockFurtherMutation: true },
       },
     ]);
@@ -73,6 +75,7 @@ describe("persistence uncertainty lifecycle", () => {
     const resolved = reconcilePersistenceUncertainty(createRecord(), {
       attemptId: "attempt-not-committed",
       observedAt: proof.observedAt,
+      reconciledAt: "2026-08-06T00:02:00.000Z",
       providerObservationId: proof.providerObservationId,
       evidence: { expected, nonCommitProof: proof },
     });
@@ -82,6 +85,7 @@ describe("persistence uncertainty lifecycle", () => {
       attemptNumber: 1,
       attemptId: "attempt-not-committed",
       observedAt: proof.observedAt,
+      reconciledAt: "2026-08-06T00:02:00.000Z",
       providerObservationId: proof.providerObservationId,
       proofId: proof.proofId,
       decision: { kind: "retry_permitted" },
@@ -97,6 +101,7 @@ describe("persistence uncertainty lifecycle", () => {
       expect(() => reconcilePersistenceUncertainty(createRecord(), {
         attemptId: "attempt-invalid-proof",
         observedAt: invalid.observedAt ?? invalid.proof.observedAt,
+        reconciledAt: "2026-08-06T00:02:00.000Z",
         providerObservationId:
           invalid.providerObservationId ?? invalid.proof.providerObservationId,
         evidence: { expected, nonCommitProof: invalid.proof },
@@ -104,10 +109,23 @@ describe("persistence uncertainty lifecycle", () => {
     }
   });
 
+  it("rejects proof consumed after its validity window", () => {
+    const proof = createNonCommitProof();
+
+    expect(() => reconcilePersistenceUncertainty(createRecord(), {
+      attemptId: "attempt-expired-proof",
+      observedAt: proof.observedAt,
+      reconciledAt: "2026-08-06T00:06:00.001Z",
+      providerObservationId: proof.providerObservationId,
+      evidence: { expected, nonCommitProof: proof },
+    })).toThrowError("nonCommitProof is expired at reconciliation time");
+  });
+
   it("maps committed and conflict evidence to closed states", () => {
     const committed = reconcilePersistenceUncertainty(createRecord(), {
       attemptId: "attempt-committed",
       observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
       evidence: {
         expected,
         observedAtExpectedPosition: {
@@ -123,6 +141,7 @@ describe("persistence uncertainty lifecycle", () => {
     const quarantined = reconcilePersistenceUncertainty(createRecord(), {
       attemptId: "attempt-conflict",
       observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
       evidence: {
         expected,
         observedAtExpectedPosition: {
@@ -139,6 +158,7 @@ describe("persistence uncertainty lifecycle", () => {
       expect(() => reconcilePersistenceUncertainty(closed, {
         attemptId: "late-attempt",
         observedAt: "2026-08-06T00:02:00.000Z",
+        reconciledAt: "2026-08-06T00:02:30.000Z",
         evidence: { expected },
       })).toThrow(InvalidPersistenceUncertaintyTransitionError);
     }
@@ -150,6 +170,7 @@ describe("persistence uncertainty lifecycle", () => {
     expect(() => reconcilePersistenceUncertainty(record, {
       attemptId: "attempt-cross-operation",
       observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
       evidence: {
         expected: { ...expected, operationId: "append-operation-2" },
       },
@@ -158,23 +179,41 @@ describe("persistence uncertainty lifecycle", () => {
     expect(() => reconcilePersistenceUncertainty(record, {
       attemptId: "attempt-stale",
       observedAt: "2026-08-05T23:59:59.000Z",
+      reconciledAt: "2026-08-06T00:01:00.000Z",
+      evidence: { expected },
+    })).toThrow(InvalidPersistenceUncertaintyTransitionError);
+
+    expect(() => reconcilePersistenceUncertainty(record, {
+      attemptId: "attempt-time-travel",
+      observedAt: "2026-08-06T00:02:00.000Z",
+      reconciledAt: "2026-08-06T00:01:59.999Z",
       evidence: { expected },
     })).toThrow(InvalidPersistenceUncertaintyTransitionError);
 
     expect(() => reconcilePersistenceUncertainty(record, {
       attemptId: " ",
       observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
+      evidence: { expected },
+    })).toThrow(InvalidPersistenceUncertaintyTransitionError);
+
+    expect(() => reconcilePersistenceUncertainty(record, {
+      attemptId: "attempt-malformed-time",
+      observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "not-a-timestamp",
       evidence: { expected },
     })).toThrow(InvalidPersistenceUncertaintyTransitionError);
 
     const first = reconcilePersistenceUncertainty(record, {
       attemptId: "attempt-1",
       observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
       evidence: { expected },
     });
     expect(() => reconcilePersistenceUncertainty(first, {
       attemptId: "attempt-1",
       observedAt: "2026-08-06T00:02:00.000Z",
+      reconciledAt: "2026-08-06T00:02:30.000Z",
       evidence: { expected },
     })).toThrow(InvalidPersistenceUncertaintyTransitionError);
   });
