@@ -27,6 +27,16 @@ function pendingRecord() {
   });
 }
 
+function reconciliationAttempt() {
+  return {
+    attemptId: "attempt-1",
+    observedAt: "2026-08-06T00:01:00.000Z",
+    evidence: { expected },
+  } as const;
+}
+
+const trustedClock = { now: () => "2026-08-06T00:02:00.000Z" } as const;
+
 class FalsePositiveStorage implements AtomicSnapshotStorage {
   public loadCalls = 0;
   public compareAndSwapCalls = 0;
@@ -135,6 +145,66 @@ class WrongSuccessorRevisionStorage implements AtomicSnapshotStorage {
   }
 }
 
+type ArmedAcknowledgementFailure = "throw" | "malformed" | "wrong-revision";
+
+class ArmedReconciliationAcknowledgementStorage implements AtomicSnapshotStorage {
+  public accessorCalls = 0;
+  public compareAndSwapCalls = 0;
+  public loadCalls = 0;
+  private acknowledgementFailure: ArmedAcknowledgementFailure | null = null;
+  private failAcknowledgement = false;
+  private revision = 0;
+  private value: string | null = null;
+
+  public arm(failure: ArmedAcknowledgementFailure): void {
+    this.acknowledgementFailure = failure;
+  }
+
+  public load(): AtomicSnapshot {
+    this.loadCalls += 1;
+
+    if (!this.failAcknowledgement) {
+      return Object.freeze({ revision: this.revision, value: this.value });
+    }
+
+    this.failAcknowledgement = false;
+    if (this.acknowledgementFailure === "throw") {
+      throw new Error("authoritative reconciliation acknowledgement read failed");
+    }
+
+    if (this.acknowledgementFailure === "malformed") {
+      const malformed = { revision: this.revision } as Record<string, unknown>;
+      Object.defineProperty(malformed, "value", {
+        enumerable: true,
+        get: () => {
+          this.accessorCalls += 1;
+          return "should-not-be-read";
+        },
+      });
+      return malformed as unknown as AtomicSnapshot;
+    }
+
+    return Object.freeze({
+      revision: this.revision + 1,
+      value: this.value,
+    });
+  }
+
+  public compareAndSwap(expectedRevision: number, nextValue: string): boolean {
+    this.compareAndSwapCalls += 1;
+    if (expectedRevision !== this.revision) {
+      return false;
+    }
+
+    this.revision += 1;
+    this.value = nextValue;
+    if (this.acknowledgementFailure !== null) {
+      this.failAcknowledgement = true;
+    }
+    return true;
+  }
+}
+
 const acknowledgementError = new InvalidPersistedUncertaintyStateError(
   "storage acknowledged a commit without exposing the exact candidate at the expected successor revision.",
 );
@@ -170,12 +240,8 @@ describe("persistence uncertainty repository commit acknowledgement", () => {
     expect(() => repository.reconcile(
       "uncertainty-1",
       1,
-      {
-        attemptId: "attempt-1",
-        observedAt: "2026-08-06T00:01:00.000Z",
-        evidence: { expected },
-      },
-      { now: () => "2026-08-06T00:02:00.000Z" },
+      reconciliationAttempt(),
+      trustedClock,
     )).toThrowError(acknowledgementError);
   });
 
@@ -207,5 +273,54 @@ describe("persistence uncertainty repository commit acknowledgement", () => {
     expect(() => repository.create(pendingRecord())).toThrowError(acknowledgementError);
     expect(storage.compareAndSwapCalls).toBe(1);
     expect(storage.loadCalls).toBe(3);
+  });
+
+  it("propagates a reconciliation acknowledgement-load exception without retrying", () => {
+    const storage = new ArmedReconciliationAcknowledgementStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage, 3);
+    repository.create(pendingRecord());
+    const compareAndSwapCallsBeforeReconcile = storage.compareAndSwapCalls;
+
+    storage.arm("throw");
+    expect(() => repository.reconcile(
+      "uncertainty-1",
+      1,
+      reconciliationAttempt(),
+      trustedClock,
+    )).toThrowError("authoritative reconciliation acknowledgement read failed");
+    expect(storage.compareAndSwapCalls).toBe(compareAndSwapCallsBeforeReconcile + 1);
+  });
+
+  it("rejects an accessor-backed reconciliation acknowledgement without invoking it", () => {
+    const storage = new ArmedReconciliationAcknowledgementStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage, 3);
+    repository.create(pendingRecord());
+    const compareAndSwapCallsBeforeReconcile = storage.compareAndSwapCalls;
+
+    storage.arm("malformed");
+    expect(() => repository.reconcile(
+      "uncertainty-1",
+      1,
+      reconciliationAttempt(),
+      trustedClock,
+    )).toThrowError(accessorError);
+    expect(storage.accessorCalls).toBe(0);
+    expect(storage.compareAndSwapCalls).toBe(compareAndSwapCallsBeforeReconcile + 1);
+  });
+
+  it("rejects a reconciliation acknowledgement at the wrong successor revision", () => {
+    const storage = new ArmedReconciliationAcknowledgementStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage, 3);
+    repository.create(pendingRecord());
+    const compareAndSwapCallsBeforeReconcile = storage.compareAndSwapCalls;
+
+    storage.arm("wrong-revision");
+    expect(() => repository.reconcile(
+      "uncertainty-1",
+      1,
+      reconciliationAttempt(),
+      trustedClock,
+    )).toThrowError(acknowledgementError);
+    expect(storage.compareAndSwapCalls).toBe(compareAndSwapCallsBeforeReconcile + 1);
   });
 });
