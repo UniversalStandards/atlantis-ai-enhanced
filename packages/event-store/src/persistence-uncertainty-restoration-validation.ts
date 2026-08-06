@@ -71,12 +71,7 @@ function requirePositiveInteger(value: unknown, field: string): asserts value is
 
 function restoreExpected(value: unknown): ExpectedPersistenceEvent {
   const record = requirePlainRecord(value, "record.expected");
-  requireExactKeys(
-    record,
-    ["operationId", "eventId", "executionId", "streamVersion", "contentDigest"],
-    [],
-    "record.expected",
-  );
+  requireExactKeys(record, ["operationId", "eventId", "executionId", "streamVersion", "contentDigest"], [], "record.expected");
   requireNonEmpty(record.operationId, "record.expected.operationId");
   requireNonEmpty(record.eventId, "record.expected.eventId");
   requireNonEmpty(record.executionId, "record.expected.executionId");
@@ -118,11 +113,7 @@ function restoreDecision(value: unknown, field: string): PersistenceReconciliati
   }
 }
 
-function restoreAttempt(
-  value: unknown,
-  index: number,
-  firstObservedAt: string,
-): PersistenceReconciliationAttempt {
+function restoreAttempt(value: unknown, index: number, firstObservedAt: string): PersistenceReconciliationAttempt {
   const field = `record.attempts[${index}]`;
   const record = requirePlainRecord(value, field);
   requireExactKeys(
@@ -154,9 +145,7 @@ function restoreAttempt(
     observedAt: record.observedAt,
     reconciledAt: record.reconciledAt,
     decision,
-    ...(record.providerObservationId === undefined
-      ? {}
-      : { providerObservationId: record.providerObservationId }),
+    ...(record.providerObservationId === undefined ? {} : { providerObservationId: record.providerObservationId }),
     ...(record.proofId === undefined ? {} : { proofId: record.proofId }),
   });
 }
@@ -175,9 +164,7 @@ function statusForDecision(decision: PersistenceReconciliationDecision): Persist
  * Accessors, symbols, extra properties, malformed decisions, duplicate evidence,
  * and status/decision contradictions fail before the record can be reconciled.
  */
-export function restoreExactPersistenceUncertaintyRecord(
-  value: unknown,
-): PersistenceUncertaintyRecord {
+export function restoreExactPersistenceUncertaintyRecord(value: unknown): PersistenceUncertaintyRecord {
   const record = requirePlainRecord(value, "record");
   requireExactKeys(
     record,
@@ -187,6 +174,7 @@ export function restoreExactPersistenceUncertaintyRecord(
   );
   requireNonEmpty(record.recordId, "record.recordId");
   requireCanonicalTimestamp(record.firstObservedAt, "record.firstObservedAt");
+  const firstObservedAt = record.firstObservedAt;
   if (record.providerOperationId !== undefined) {
     requireNonEmpty(record.providerOperationId, "record.providerOperationId");
   }
@@ -197,9 +185,7 @@ export function restoreExactPersistenceUncertaintyRecord(
     throw new InvalidPersistedUncertaintyRecordError("record.status is invalid.");
   }
 
-  const attempts = record.attempts.map((attempt, index) =>
-    restoreAttempt(attempt, index, record.firstObservedAt),
-  );
+  const attempts = record.attempts.map((attempt, index) => restoreAttempt(attempt, index, firstObservedAt));
   const attemptIds = new Set<string>();
   const proofIds = new Set<string>();
   for (const attempt of attempts) {
@@ -241,10 +227,8 @@ export function restoreExactPersistenceUncertaintyRecord(
   return Object.freeze({
     recordId: record.recordId,
     expected: restoreExpected(record.expected),
-    ...(record.providerOperationId === undefined
-      ? {}
-      : { providerOperationId: record.providerOperationId }),
-    firstObservedAt: record.firstObservedAt,
+    ...(record.providerOperationId === undefined ? {} : { providerOperationId: record.providerOperationId }),
+    firstObservedAt,
     status,
     attempts: Object.freeze(attempts),
   });
