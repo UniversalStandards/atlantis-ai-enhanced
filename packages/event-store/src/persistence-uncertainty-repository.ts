@@ -317,6 +317,22 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
     });
   }
 
+  private requireCommittedCandidateAcknowledgement(
+    expectedRevision: number,
+    candidate: string,
+  ): void {
+    const acknowledged = restoreAtomicSnapshot(this.storage.load());
+    if (
+      acknowledged.revision !== expectedRevision + 1
+      || acknowledged.value !== candidate
+    ) {
+      throw new InvalidPersistedUncertaintyStateError(
+        "storage acknowledged a commit without exposing the exact candidate at the expected successor revision.",
+      );
+    }
+    restoreState(acknowledged.value);
+  }
+
   public create(record: PersistenceUncertaintyRecord): PersistenceUncertaintySnapshot {
     const validatedRecord = restoreExactPersistenceUncertaintyRecord(record);
 
@@ -338,6 +354,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         this.storage.compareAndSwap(revision, candidate),
       );
       if (committed) {
+        this.requireCommittedCandidateAcknowledgement(revision, candidate);
         return Object.freeze({ version: 1, record: validatedRecord });
       }
     }
@@ -411,6 +428,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         this.storage.compareAndSwap(revision, candidate),
       );
       if (committed) {
+        this.requireCommittedCandidateAcknowledgement(revision, candidate);
         return Object.freeze({
           version: nextVersion,
           record: plan.nextRecord,
