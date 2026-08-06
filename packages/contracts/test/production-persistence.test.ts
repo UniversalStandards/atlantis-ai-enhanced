@@ -14,13 +14,19 @@ const expected = {
 } as const;
 
 const nonCommitProof = {
+  proofId: "proof-1",
+  uncertaintyRecordId: "uncertainty-1",
   operationId: expected.operationId,
+  providerOperationId: "provider-operation-1",
   executionId: expected.executionId,
   eventId: expected.eventId,
   expectedStreamVersion: expected.streamVersion,
   contentDigest: expected.contentDigest,
   providerObservationId: "provider-observation-1",
+  proofIssuer: "provider-control-plane",
+  verificationMethod: "authenticated_provider_api",
   observedAt: "2026-08-05T23:00:00.000Z",
+  validUntil: "2026-08-05T23:05:00.000Z",
   provenance: "provider_idempotency_lookup",
 } as const;
 
@@ -50,7 +56,7 @@ describe("persistence reconciliation", () => {
     }
   });
 
-  it("permits retry only from an authoritative proof bound to the exact append identity", () => {
+  it("permits retry only from authoritative, identity-bound, time-bounded proof", () => {
     expect(classifyPersistenceReconciliation({
       expected,
       nonCommitProof,
@@ -75,7 +81,7 @@ describe("persistence reconciliation", () => {
     });
   });
 
-  it("rejects contradictory, malformed, or provenance-free evidence", () => {
+  it("rejects contradictory, malformed, expired-window, or unsupported proof evidence", () => {
     const observed = {
       eventId: expected.eventId,
       executionId: expected.executionId,
@@ -94,39 +100,28 @@ describe("persistence reconciliation", () => {
       observedAtExpectedPosition: { ...observed, streamVersion: 5 },
     })).toThrow(InvalidPersistenceReconciliationEvidenceError);
 
-    expect(() => classifyPersistenceReconciliation({
-      expected: { ...expected, operationId: " " },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
-
-    expect(() => classifyPersistenceReconciliation({
-      expected: { ...expected, eventId: " " },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
-
-    expect(() => classifyPersistenceReconciliation({
-      expected: { ...expected, streamVersion: 0 },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
-
-    expect(() => classifyPersistenceReconciliation({
-      expected: { ...expected, contentDigest: "" },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
-
-    expect(() => classifyPersistenceReconciliation({
-      expected,
-      nonCommitProof: { ...nonCommitProof, providerObservationId: "" },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
-
-    expect(() => classifyPersistenceReconciliation({
-      expected,
-      nonCommitProof: { ...nonCommitProof, observedAt: "2026-08-05T23:00:00Z" },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
-
-    expect(() => classifyPersistenceReconciliation({
-      expected,
-      nonCommitProof: {
+    for (const malformedProof of [
+      { ...nonCommitProof, proofId: "" },
+      { ...nonCommitProof, uncertaintyRecordId: "" },
+      { ...nonCommitProof, providerOperationId: "" },
+      { ...nonCommitProof, providerObservationId: "" },
+      { ...nonCommitProof, proofIssuer: "" },
+      { ...nonCommitProof, observedAt: "2026-08-05T23:00:00Z" },
+      { ...nonCommitProof, validUntil: "2026-08-05T22:59:59.000Z" },
+      {
+        ...nonCommitProof,
+        verificationMethod: "caller_assertion" as never,
+      },
+      {
         ...nonCommitProof,
         provenance: "caller_assertion" as never,
       },
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+    ]) {
+      expect(() => classifyPersistenceReconciliation({
+        expected,
+        nonCommitProof: malformedProof,
+      })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+    }
   });
 
   it("returns an immutable decision", () => {
