@@ -9,6 +9,7 @@ import {
 import {
   InvalidPersistenceUncertaintyRecoverySelectionError,
   selectPersistenceUncertaintyRecoveryBatch,
+  type PersistenceUncertaintyRecoverySelection,
 } from "../src/persistence-uncertainty-recovery-selection.js";
 import type {
   PersistenceUncertaintySnapshot,
@@ -81,14 +82,15 @@ describe("persistence uncertainty recovery selection", () => {
   });
 
   it.each([
-    { statuses: [] as const, limit: 1 },
-    { statuses: ["pending"] as const, limit: 0 },
-    { statuses: ["pending"] as const, limit: Number.MAX_SAFE_INTEGER + 1 },
-    { statuses: ["pending", "pending"] as const, limit: 1 },
-    { statuses: ["resolved_committed"] as const, limit: 1 },
+    { statuses: [], limit: 1 },
+    { statuses: ["pending"], limit: 0 },
+    { statuses: ["pending"], limit: Number.MAX_SAFE_INTEGER + 1 },
+    { statuses: ["pending", "pending"], limit: 1 },
+    { statuses: ["resolved_committed"], limit: 1 },
   ])("fails closed for invalid selection %#", (selection) => {
-    expect(() => selectPersistenceUncertaintyRecoveryBatch([], selection)).toThrow(
-      InvalidPersistenceUncertaintyRecoverySelectionError,
-    );
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(
+      [],
+      selection as unknown as PersistenceUncertaintyRecoverySelection,
+    )).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
   });
 });
