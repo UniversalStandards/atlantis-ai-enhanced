@@ -23,6 +23,25 @@ function createRecord() {
   });
 }
 
+function createNonCommitProof() {
+  return {
+    proofId: "proof-1",
+    uncertaintyRecordId: "uncertainty-1",
+    operationId: expected.operationId,
+    providerOperationId: "provider-operation-1",
+    executionId: expected.executionId,
+    eventId: expected.eventId,
+    expectedStreamVersion: expected.streamVersion,
+    contentDigest: expected.contentDigest,
+    providerObservationId: "provider-observation-1",
+    proofIssuer: "provider-control-plane",
+    verificationMethod: "authenticated_provider_api",
+    observedAt: "2026-08-06T00:01:00.000Z",
+    validUntil: "2026-08-06T00:06:00.000Z",
+    provenance: "provider_idempotency_lookup",
+  } as const;
+}
+
 describe("persistence uncertainty lifecycle", () => {
   it("records ordered unresolved attempts without mutating the prior record", () => {
     const initial = createRecord();
@@ -49,7 +68,43 @@ describe("persistence uncertainty lifecycle", () => {
     expect(Object.isFrozen(next.attempts[0])).toBe(true);
   });
 
-  it("maps authoritative outcomes to closed terminal or quarantine states", () => {
+  it("binds retry authority and recorded audit metadata to the exact proof", () => {
+    const proof = createNonCommitProof();
+    const resolved = reconcilePersistenceUncertainty(createRecord(), {
+      attemptId: "attempt-not-committed",
+      observedAt: proof.observedAt,
+      providerObservationId: proof.providerObservationId,
+      evidence: { expected, nonCommitProof: proof },
+    });
+
+    expect(resolved.status).toBe("resolved_not_committed");
+    expect(resolved.attempts[0]).toEqual({
+      attemptNumber: 1,
+      attemptId: "attempt-not-committed",
+      observedAt: proof.observedAt,
+      providerObservationId: proof.providerObservationId,
+      proofId: proof.proofId,
+      decision: { kind: "retry_permitted" },
+    });
+
+    for (const invalid of [
+      { proof: { ...proof, uncertaintyRecordId: "uncertainty-2" } },
+      { proof: { ...proof, providerOperationId: "provider-operation-2" } },
+      { proof, observedAt: "2026-08-06T00:02:00.000Z" },
+      { proof, providerObservationId: "provider-observation-2" },
+      { proof: { ...proof, validUntil: "2026-08-06T00:00:59.000Z" } },
+    ]) {
+      expect(() => reconcilePersistenceUncertainty(createRecord(), {
+        attemptId: "attempt-invalid-proof",
+        observedAt: invalid.observedAt ?? invalid.proof.observedAt,
+        providerObservationId:
+          invalid.providerObservationId ?? invalid.proof.providerObservationId,
+        evidence: { expected, nonCommitProof: invalid.proof },
+      })).toThrow(InvalidPersistenceUncertaintyTransitionError);
+    }
+  });
+
+  it("maps committed and conflict evidence to closed states", () => {
     const committed = reconcilePersistenceUncertainty(createRecord(), {
       attemptId: "attempt-committed",
       observedAt: "2026-08-06T00:01:00.000Z",
@@ -64,26 +119,6 @@ describe("persistence uncertainty lifecycle", () => {
       },
     });
     expect(committed.status).toBe("resolved_committed");
-
-    const retryPermitted = reconcilePersistenceUncertainty(createRecord(), {
-      attemptId: "attempt-not-committed",
-      observedAt: "2026-08-06T00:01:00.000Z",
-      providerObservationId: "provider-observation-1",
-      evidence: {
-        expected,
-        nonCommitProof: {
-          operationId: expected.operationId,
-          executionId: expected.executionId,
-          eventId: expected.eventId,
-          expectedStreamVersion: expected.streamVersion,
-          contentDigest: expected.contentDigest,
-          providerObservationId: "provider-observation-1",
-          observedAt: "2026-08-06T00:01:00.000Z",
-          provenance: "provider_idempotency_lookup",
-        },
-      },
-    });
-    expect(retryPermitted.status).toBe("resolved_not_committed");
 
     const quarantined = reconcilePersistenceUncertainty(createRecord(), {
       attemptId: "attempt-conflict",
@@ -100,7 +135,7 @@ describe("persistence uncertainty lifecycle", () => {
     });
     expect(quarantined.status).toBe("quarantined");
 
-    for (const closed of [committed, retryPermitted, quarantined]) {
+    for (const closed of [committed, quarantined]) {
       expect(() => reconcilePersistenceUncertainty(closed, {
         attemptId: "late-attempt",
         observedAt: "2026-08-06T00:02:00.000Z",
