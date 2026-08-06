@@ -288,6 +288,21 @@ function restoreAtomicSnapshot(value: unknown): {
   });
 }
 
+function requireEntry(
+  state: PersistedUncertaintyState,
+  recordId: string,
+): PersistedUncertaintyEntry {
+  const entry = state.records.find(
+    (candidate) => candidate.record.recordId === recordId,
+  );
+  if (entry === undefined) {
+    throw new InvalidPersistedUncertaintyStateError(
+      "acknowledged persistence state must contain the committed uncertainty record.",
+    );
+  }
+  return entry;
+}
+
 /**
  * Reference repository backed by the provider-neutral atomic snapshot boundary.
  * It proves restart-safe, compare-and-swap persistence semantics without
@@ -320,7 +335,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
   private requireCommittedCandidateAcknowledgement(
     expectedRevision: number,
     candidate: string,
-  ): void {
+  ): PersistedUncertaintyState {
     const acknowledged = restoreAtomicSnapshot(this.storage.load());
     if (
       acknowledged.revision !== expectedRevision + 1
@@ -330,7 +345,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         "storage acknowledged a commit without exposing the exact candidate at the expected successor revision.",
       );
     }
-    restoreState(acknowledged.value);
+    return restoreState(acknowledged.value);
   }
 
   public create(record: PersistenceUncertaintyRecord): PersistenceUncertaintySnapshot {
@@ -354,8 +369,23 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         this.storage.compareAndSwap(revision, candidate),
       );
       if (committed) {
-        this.requireCommittedCandidateAcknowledgement(revision, candidate);
-        return Object.freeze({ version: 1, record: validatedRecord });
+        const acknowledgedState = this.requireCommittedCandidateAcknowledgement(
+          revision,
+          candidate,
+        );
+        const acknowledgedEntry = requireEntry(
+          acknowledgedState,
+          validatedRecord.recordId,
+        );
+        if (acknowledgedEntry.version !== 1) {
+          throw new InvalidPersistedUncertaintyStateError(
+            "acknowledged created uncertainty record must be at version 1.",
+          );
+        }
+        return Object.freeze({
+          version: acknowledgedEntry.version,
+          record: acknowledgedEntry.record,
+        });
       }
     }
 
@@ -428,10 +458,19 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         this.storage.compareAndSwap(revision, candidate),
       );
       if (committed) {
-        this.requireCommittedCandidateAcknowledgement(revision, candidate);
+        const acknowledgedState = this.requireCommittedCandidateAcknowledgement(
+          revision,
+          candidate,
+        );
+        const acknowledgedEntry = requireEntry(acknowledgedState, recordId);
+        if (acknowledgedEntry.version !== nextVersion) {
+          throw new InvalidPersistedUncertaintyStateError(
+            "acknowledged reconciled uncertainty record must be at the expected successor version.",
+          );
+        }
         return Object.freeze({
-          version: nextVersion,
-          record: plan.nextRecord,
+          version: acknowledgedEntry.version,
+          record: acknowledgedEntry.record,
         });
       }
     }
