@@ -7,13 +7,11 @@ import {
   planPersistenceUncertaintyAtomicTransitionWithTrustedClock,
   type TrustedPersistenceUncertaintyAtomicPlanInput,
 } from "@atlantis/contracts/persistence-uncertainty-atomic-plan";
-import {
-  createPersistenceUncertaintyRecord,
-  type PersistenceUncertaintyRecord,
-} from "@atlantis/contracts/persistence-uncertainty";
+import type { PersistenceUncertaintyRecord } from "@atlantis/contracts/persistence-uncertainty";
 import type { TrustedPersistenceClock } from "@atlantis/contracts/trusted-persistence-reconciliation";
 
 import type { AtomicSnapshotStorage } from "./index.js";
+import { restoreExactPersistenceUncertaintyRecord } from "./persistence-uncertainty-restoration-validation.js";
 
 interface PersistedUncertaintyEntry {
   readonly version: number;
@@ -74,112 +72,6 @@ function requirePositiveVersion(value: unknown, field: string): asserts value is
   }
 }
 
-function freezeRecord(record: PersistenceUncertaintyRecord): PersistenceUncertaintyRecord {
-  const expected = Object.freeze({ ...record.expected });
-  const attempts = Object.freeze(
-    record.attempts.map((attempt) => Object.freeze({
-      ...attempt,
-      decision: Object.freeze({ ...attempt.decision }),
-    })),
-  );
-  return Object.freeze({ ...record, expected, attempts });
-}
-
-function restoreRecord(value: unknown): PersistenceUncertaintyRecord {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new InvalidPersistedUncertaintyStateError(
-      "persisted uncertainty record must be an object.",
-    );
-  }
-
-  const candidate = value as PersistenceUncertaintyRecord;
-  const base = createPersistenceUncertaintyRecord({
-    recordId: candidate.recordId,
-    expected: candidate.expected,
-    ...(candidate.providerOperationId === undefined
-      ? {}
-      : { providerOperationId: candidate.providerOperationId }),
-    firstObservedAt: candidate.firstObservedAt,
-  });
-
-  if (!Array.isArray(candidate.attempts)) {
-    throw new InvalidPersistedUncertaintyStateError(
-      "persisted uncertainty attempts must be an array.",
-    );
-  }
-  if (
-    candidate.status !== "pending"
-    && candidate.status !== "quarantined"
-    && candidate.status !== "resolved_committed"
-    && candidate.status !== "resolved_not_committed"
-  ) {
-    throw new InvalidPersistedUncertaintyStateError(
-      "persisted uncertainty status is invalid.",
-    );
-  }
-
-  const attemptIds = new Set<string>();
-  const proofIds = new Set<string>();
-  const attempts = candidate.attempts.map((attempt, index) => {
-    if (attempt === null || typeof attempt !== "object" || Array.isArray(attempt)) {
-      throw new InvalidPersistedUncertaintyStateError(
-        `persisted uncertainty attempt ${index + 1} must be an object.`,
-      );
-    }
-    if (attempt.attemptNumber !== index + 1) {
-      throw new InvalidPersistedUncertaintyStateError(
-        "persisted uncertainty attempt numbers must be contiguous.",
-      );
-    }
-    if (typeof attempt.attemptId !== "string" || attempt.attemptId.trim().length === 0) {
-      throw new InvalidPersistedUncertaintyStateError(
-        "persisted uncertainty attemptId must be non-empty.",
-      );
-    }
-    if (attemptIds.has(attempt.attemptId)) {
-      throw new InvalidPersistedUncertaintyStateError(
-        "persisted uncertainty attemptId must be unique.",
-      );
-    }
-    attemptIds.add(attempt.attemptId);
-    for (const [field, timestamp] of [
-      ["observedAt", attempt.observedAt],
-      ["reconciledAt", attempt.reconciledAt],
-    ] as const) {
-      const parsed = new Date(timestamp);
-      if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== timestamp) {
-        throw new InvalidPersistedUncertaintyStateError(
-          `persisted uncertainty ${field} must be canonical UTC.`,
-        );
-      }
-    }
-    if (attempt.proofId !== undefined) {
-      if (proofIds.has(attempt.proofId)) {
-        throw new InvalidPersistedUncertaintyStateError(
-          "persisted uncertainty proofId must be unique within a record.",
-        );
-      }
-      proofIds.add(attempt.proofId);
-    }
-    return Object.freeze({
-      ...attempt,
-      decision: Object.freeze({ ...attempt.decision }),
-    });
-  });
-
-  if (attempts.length === 0 && candidate.status !== "pending") {
-    throw new InvalidPersistedUncertaintyStateError(
-      "non-pending uncertainty state requires reconciliation evidence.",
-    );
-  }
-
-  return freezeRecord({
-    ...base,
-    status: candidate.status,
-    attempts: Object.freeze(attempts),
-  });
-}
-
 function emptyState(): PersistedUncertaintyState {
   return Object.freeze({
     records: Object.freeze([]),
@@ -221,7 +113,7 @@ function restoreState(value: string | null): PersistedUncertaintyState {
       );
     }
     requirePositiveVersion(entry.version, `records[${index}].version`);
-    const record = restoreRecord(entry.record);
+    const record = restoreExactPersistenceUncertaintyRecord(entry.record);
     if (recordIds.has(record.recordId)) {
       throw new InvalidPersistedUncertaintyStateError(
         "persisted uncertainty recordId must be unique.",
@@ -294,7 +186,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
   }
 
   public create(record: PersistenceUncertaintyRecord): PersistenceUncertaintySnapshot {
-    const validatedRecord = restoreRecord(record);
+    const validatedRecord = restoreExactPersistenceUncertaintyRecord(record);
 
     for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
       const { revision, state } = this.loadState();
