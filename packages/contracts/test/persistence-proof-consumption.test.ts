@@ -4,6 +4,7 @@ import {
   createPersistenceProofConsumptionIndex,
   hasConsumedPersistenceProof,
   InvalidPersistenceProofConsumptionError,
+  restorePersistenceProofConsumptionIndex,
 } from "../src/persistence-proof-consumption.js";
 
 const firstConsumption = {
@@ -27,15 +28,17 @@ describe("persistence proof consumption index", () => {
     expect(Object.isFrozen(next.entries[0])).toBe(true);
   });
 
-  it("rejects proof replay across uncertainty records after restoration", () => {
+  it("validates restored durable state and rejects proof replay globally", () => {
     const persisted = consumePersistenceProof(
       createPersistenceProofConsumptionIndex(),
       firstConsumption,
     );
-    const restored = Object.freeze({
-      entries: Object.freeze([...persisted.entries]),
-    });
+    const restored = restorePersistenceProofConsumptionIndex(
+      JSON.parse(JSON.stringify(persisted)) as unknown,
+    );
 
+    expect(restored).toEqual(persisted);
+    expect(Object.isFrozen(restored.entries[0])).toBe(true);
     expect(() => consumePersistenceProof(restored, {
       ...firstConsumption,
       uncertaintyRecordId: "uncertainty-2",
@@ -60,5 +63,50 @@ describe("persistence proof consumption index", () => {
     expect(() => hasConsumedPersistenceProof(index, " ")).toThrow(
       InvalidPersistenceProofConsumptionError,
     );
+  });
+
+  it("rejects malformed or duplicate restored entries before replay checks", () => {
+    expect(() => restorePersistenceProofConsumptionIndex({
+      entries: [firstConsumption, {
+        ...firstConsumption,
+        uncertaintyRecordId: "uncertainty-2",
+      }],
+    })).toThrowError("proof consumption index contains a duplicate proofId");
+
+    expect(() => restorePersistenceProofConsumptionIndex({
+      entries: [{ ...firstConsumption, providerOperationId: " " }],
+    })).toThrow(InvalidPersistenceProofConsumptionError);
+
+    expect(() => restorePersistenceProofConsumptionIndex({
+      entries: [{ ...firstConsumption, unexpected: true }],
+    })).toThrow(InvalidPersistenceProofConsumptionError);
+  });
+
+  it("rejects sparse, custom, and accessor-backed restored arrays without invoking getters", () => {
+    const sparse = new Array(1);
+    expect(() => restorePersistenceProofConsumptionIndex({ entries: sparse }))
+      .toThrowError("proof consumption index.entries must not contain sparse elements");
+
+    const custom = [firstConsumption];
+    Object.setPrototypeOf(custom, null);
+    expect(() => restorePersistenceProofConsumptionIndex({ entries: custom }))
+      .toThrowError("proof consumption index.entries must be a standard array");
+
+    let getterCalls = 0;
+    const accessorBacked = [firstConsumption];
+    Object.defineProperty(accessorBacked, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return firstConsumption;
+      },
+    });
+    expect(() => restorePersistenceProofConsumptionIndex({
+      entries: accessorBacked,
+    })).toThrowError(
+      "proof consumption index.entries[0] must be an enumerable data property",
+    );
+    expect(getterCalls).toBe(0);
   });
 });
