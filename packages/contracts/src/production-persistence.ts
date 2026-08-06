@@ -62,19 +62,30 @@ export type NonCommitProofProvenance =
   | "provider_idempotency_lookup"
   | "authoritative_post_write_read";
 
+export type NonCommitProofVerificationMethod =
+  | "provider_signed_response"
+  | "authenticated_provider_api"
+  | "transactionally_consistent_read";
+
 /**
  * Provider-neutral proof that one exact append operation did not commit.
  * Every attempted-append identity field is repeated so reconciliation can
- * reject stale, cross-execution, or cross-event proof before authorizing retry.
+ * reject stale, cross-execution, cross-event, or replayed proof before retry.
  */
 export interface PersistenceNonCommitProof {
+  readonly proofId: string;
+  readonly uncertaintyRecordId: string;
   readonly operationId: string;
+  readonly providerOperationId: string;
   readonly executionId: string;
   readonly eventId: string;
   readonly expectedStreamVersion: number;
   readonly contentDigest: string;
   readonly providerObservationId: string;
+  readonly proofIssuer: string;
+  readonly verificationMethod: NonCommitProofVerificationMethod;
   readonly observedAt: string;
+  readonly validUntil: string;
   readonly provenance: NonCommitProofProvenance;
 }
 
@@ -150,7 +161,16 @@ function validateNonCommitProof(
   proof: PersistenceNonCommitProof,
   expected: ExpectedPersistenceEvent,
 ): void {
+  requireNonEmpty(proof.proofId, "nonCommitProof.proofId");
+  requireNonEmpty(
+    proof.uncertaintyRecordId,
+    "nonCommitProof.uncertaintyRecordId",
+  );
   requireNonEmpty(proof.operationId, "nonCommitProof.operationId");
+  requireNonEmpty(
+    proof.providerOperationId,
+    "nonCommitProof.providerOperationId",
+  );
   requireNonEmpty(proof.executionId, "nonCommitProof.executionId");
   requireNonEmpty(proof.eventId, "nonCommitProof.eventId");
   requireStreamVersion(
@@ -162,7 +182,25 @@ function validateNonCommitProof(
     proof.providerObservationId,
     "nonCommitProof.providerObservationId",
   );
+  requireNonEmpty(proof.proofIssuer, "nonCommitProof.proofIssuer");
   requireCanonicalTimestamp(proof.observedAt, "nonCommitProof.observedAt");
+  requireCanonicalTimestamp(proof.validUntil, "nonCommitProof.validUntil");
+
+  if (proof.validUntil < proof.observedAt) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      "nonCommitProof.validUntil cannot precede nonCommitProof.observedAt",
+    );
+  }
+
+  if (![
+    "provider_signed_response",
+    "authenticated_provider_api",
+    "transactionally_consistent_read",
+  ].includes(proof.verificationMethod)) {
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      "nonCommitProof.verificationMethod is not supported",
+    );
+  }
 
   if (![
     "provider_transaction_status",
