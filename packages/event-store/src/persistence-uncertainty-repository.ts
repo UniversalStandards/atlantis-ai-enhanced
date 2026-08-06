@@ -11,6 +11,7 @@ import type { PersistenceUncertaintyRecord } from "@atlantis/contracts/persisten
 import type { TrustedPersistenceClock } from "@atlantis/contracts/trusted-persistence-reconciliation";
 
 import type { AtomicSnapshotStorage } from "./index.js";
+import { createCanonicalJsonCandidate } from "./canonical-json-candidate.js";
 import { restoreExactPersistenceUncertaintyRecord } from "./persistence-uncertainty-restoration-validation.js";
 
 interface PersistedUncertaintyEntry {
@@ -177,20 +178,7 @@ function emptyState(): PersistedUncertaintyState {
   });
 }
 
-function restoreState(value: string | null): PersistedUncertaintyState {
-  if (value === null) {
-    return emptyState();
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new InvalidPersistedUncertaintyStateError(
-      "persisted uncertainty state must be valid JSON.",
-    );
-  }
-
+function restoreParsedState(parsed: unknown): PersistedUncertaintyState {
   const candidate = requireExactDataObject(
     parsed,
     "persisted uncertainty state",
@@ -250,6 +238,29 @@ function restoreState(value: string | null): PersistedUncertaintyState {
     records: Object.freeze(records),
     proofConsumptionIndex,
   });
+}
+
+function restoreState(value: string | null): PersistedUncertaintyState {
+  if (value === null) {
+    return emptyState();
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidPersistedUncertaintyStateError(
+      "persisted uncertainty state must be valid JSON.",
+    );
+  }
+
+  return restoreParsedState(parsed);
+}
+
+function createPersistedStateCandidate(
+  state: PersistedUncertaintyState,
+): string {
+  return createCanonicalJsonCandidate(state, restoreParsedState).serialized;
 }
 
 function restoreAtomicSnapshot(value: unknown): {
@@ -322,8 +333,9 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         records: [...state.records, { version: 1, record: validatedRecord }],
         proofConsumptionIndex: state.proofConsumptionIndex,
       };
+      const candidate = createPersistedStateCandidate(nextState);
       const committed = requireExactBooleanSettlement(
-        this.storage.compareAndSwap(revision, JSON.stringify(nextState)),
+        this.storage.compareAndSwap(revision, candidate),
       );
       if (committed) {
         return Object.freeze({ version: 1, record: validatedRecord });
@@ -394,8 +406,9 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         proofConsumptionIndex: plan.nextProofConsumptionIndex,
       };
 
+      const candidate = createPersistedStateCandidate(nextState);
       const committed = requireExactBooleanSettlement(
-        this.storage.compareAndSwap(revision, JSON.stringify(nextState)),
+        this.storage.compareAndSwap(revision, candidate),
       );
       if (committed) {
         return Object.freeze({
