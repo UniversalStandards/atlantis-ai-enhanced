@@ -109,4 +109,44 @@ describe("persistence uncertainty repository restoration boundary", () => {
     expect(() => repository.get("uncertainty-1"))
       .toThrowError("retry_permitted requires a persisted proofId");
   });
+
+  it("rejects extra outer persisted-state fields", () => {
+    const storage = new SeededAtomicSnapshotStorage(1, JSON.stringify({
+      records: [{ version: 1, record: pendingRecord() }],
+      proofConsumptionIndex: { entries: [] },
+      migrationOverride: "accept",
+    }));
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError(
+        "persisted uncertainty state must contain exactly: records, proofConsumptionIndex",
+      );
+  });
+
+  it("rejects missing outer persisted-state fields", () => {
+    const storage = new SeededAtomicSnapshotStorage(1, JSON.stringify({
+      records: [{ version: 1, record: pendingRecord() }],
+    }));
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError(
+        "persisted uncertainty state must contain exactly: records, proofConsumptionIndex",
+      );
+  });
+
+  it("rejects extra persisted entry fields before restoring the record", () => {
+    const storage = new SeededAtomicSnapshotStorage(1, JSON.stringify({
+      records: [{
+        version: 1,
+        record: pendingRecord(),
+        trusted: true,
+      }],
+      proofConsumptionIndex: { entries: [] },
+    }));
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError(
+        "persisted uncertainty entry 1 must contain exactly: version, record",
+      );
+  });
 });
