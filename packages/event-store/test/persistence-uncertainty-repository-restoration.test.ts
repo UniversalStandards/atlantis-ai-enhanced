@@ -43,6 +43,18 @@ class SeededAtomicSnapshotStorage implements AtomicSnapshotStorage {
   }
 }
 
+class ArbitraryAtomicSnapshotStorage implements AtomicSnapshotStorage {
+  public constructor(private readonly snapshot: unknown) {}
+
+  public load(): AtomicSnapshot {
+    return this.snapshot as AtomicSnapshot;
+  }
+
+  public compareAndSwap(): boolean {
+    return false;
+  }
+}
+
 function persistedState(record: unknown): string {
   return JSON.stringify({
     records: [{ version: 1, record }],
@@ -148,5 +160,42 @@ describe("persistence uncertainty repository restoration boundary", () => {
       .toThrowError(
         "persisted uncertainty entry 1 must contain exactly: version, record",
       );
+  });
+
+  it("rejects extra atomic snapshot fields before parsing persisted state", () => {
+    const storage = new ArbitraryAtomicSnapshotStorage({
+      revision: 1,
+      value: persistedState(pendingRecord()),
+      trustedOverride: true,
+    });
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError("atomic snapshot must contain exactly: revision, value");
+  });
+
+  it("rejects accessor-backed atomic snapshot fields without invoking them", () => {
+    let revisionRead = false;
+    const snapshot = {
+      get revision() {
+        revisionRead = true;
+        return 1;
+      },
+      value: persistedState(pendingRecord()),
+    };
+    const storage = new ArbitraryAtomicSnapshotStorage(snapshot);
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError("atomic snapshot.revision must be an enumerable data property");
+    expect(revisionRead).toBe(false);
+  });
+
+  it("rejects non-string atomic snapshot values before JSON restoration", () => {
+    const storage = new ArbitraryAtomicSnapshotStorage({
+      revision: 1,
+      value: { records: [] },
+    });
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError("storage value must be a string or null");
   });
 });
