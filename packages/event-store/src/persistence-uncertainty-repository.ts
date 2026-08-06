@@ -243,6 +243,31 @@ function restoreState(value: string | null): PersistedUncertaintyState {
   });
 }
 
+function restoreAtomicSnapshot(value: unknown): {
+  readonly revision: number;
+  readonly value: string | null;
+} {
+  const snapshot = requireExactDataObject(
+    value,
+    "atomic snapshot",
+    ["revision", "value"],
+  );
+  if (!Number.isSafeInteger(snapshot.revision) || (snapshot.revision as number) < 0) {
+    throw new InvalidPersistedUncertaintyStateError(
+      "storage revision must be a non-negative safe integer.",
+    );
+  }
+  if (snapshot.value !== null && typeof snapshot.value !== "string") {
+    throw new InvalidPersistedUncertaintyStateError(
+      "storage value must be a string or null.",
+    );
+  }
+  return Object.freeze({
+    revision: snapshot.revision as number,
+    value: snapshot.value as string | null,
+  });
+}
+
 /**
  * Reference repository backed by the provider-neutral atomic snapshot boundary.
  * It proves restart-safe, compare-and-swap persistence semantics without
@@ -265,12 +290,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
     readonly revision: number;
     readonly state: PersistedUncertaintyState;
   } {
-    const snapshot = this.storage.load();
-    if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) {
-      throw new InvalidPersistedUncertaintyStateError(
-        "storage revision must be a non-negative safe integer.",
-      );
-    }
+    const snapshot = restoreAtomicSnapshot(this.storage.load());
     return Object.freeze({
       revision: snapshot.revision,
       state: restoreState(snapshot.value),
