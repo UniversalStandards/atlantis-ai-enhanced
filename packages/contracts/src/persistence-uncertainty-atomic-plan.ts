@@ -9,6 +9,7 @@ import {
   type PersistenceUncertaintyRecord,
   type ReconcilePersistenceUncertaintyInput,
 } from "./persistence-uncertainty.js";
+import type { TrustedPersistenceClock } from "./trusted-persistence-reconciliation.js";
 
 export interface PersistenceUncertaintyAtomicPlan {
   readonly previousRecord: PersistenceUncertaintyRecord;
@@ -17,6 +18,11 @@ export interface PersistenceUncertaintyAtomicPlan {
   readonly nextProofConsumptionIndex: PersistenceProofConsumptionIndex;
   readonly proofConsumption?: PersistenceProofConsumption;
 }
+
+export type TrustedPersistenceUncertaintyAtomicPlanInput = Omit<
+  ReconcilePersistenceUncertaintyInput,
+  "reconciledAt"
+>;
 
 export class InvalidPersistenceUncertaintyAtomicPlanError extends Error {
   public constructor(message: string) {
@@ -88,4 +94,27 @@ export function planPersistenceUncertaintyAtomicTransition(
     nextProofConsumptionIndex,
     proofConsumption,
   });
+}
+
+/**
+ * Production composition boundary for atomic uncertainty transitions. The
+ * reconciliation timestamp is sampled exactly once from the trusted runtime
+ * clock and cannot be supplied or revised by the caller.
+ */
+export function planPersistenceUncertaintyAtomicTransitionWithTrustedClock(
+  record: PersistenceUncertaintyRecord,
+  proofConsumptionIndex: PersistenceProofConsumptionIndex,
+  input: TrustedPersistenceUncertaintyAtomicPlanInput,
+  clock: TrustedPersistenceClock,
+): PersistenceUncertaintyAtomicPlan {
+  const reconciledAt = clock.now();
+
+  return planPersistenceUncertaintyAtomicTransition(
+    record,
+    proofConsumptionIndex,
+    {
+      ...input,
+      reconciledAt,
+    },
+  );
 }
