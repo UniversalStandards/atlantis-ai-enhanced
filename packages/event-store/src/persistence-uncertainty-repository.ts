@@ -72,6 +72,95 @@ function requirePositiveVersion(value: unknown, field: string): asserts value is
   }
 }
 
+function requireExactDataObject(
+  value: unknown,
+  subject: string,
+  fields: readonly string[],
+): Record<string, unknown> {
+  if (
+    value === null
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    throw new InvalidPersistedUncertaintyStateError(
+      `${subject} must be a standard object.`,
+    );
+  }
+
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== fields.length
+    || keys.some((key) => typeof key !== "string" || !fields.includes(key))
+  ) {
+    throw new InvalidPersistedUncertaintyStateError(
+      `${subject} must contain exactly: ${fields.join(", ")}.`,
+    );
+  }
+
+  for (const field of fields) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field);
+    if (
+      descriptor === undefined
+      || descriptor.enumerable !== true
+      || !("value" in descriptor)
+    ) {
+      throw new InvalidPersistedUncertaintyStateError(
+        `${subject}.${field} must be an enumerable data property.`,
+      );
+    }
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function requireDenseStandardArray(
+  value: unknown,
+  subject: string,
+): asserts value is unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new InvalidPersistedUncertaintyStateError(
+      `${subject} must be a standard array.`,
+    );
+  }
+
+  const keys = Reflect.ownKeys(value);
+  for (const key of keys) {
+    if (key === "length") {
+      continue;
+    }
+    if (
+      typeof key !== "string"
+      || !/^(0|[1-9]\d*)$/.test(key)
+      || Number(key) >= value.length
+      || String(Number(key)) !== key
+    ) {
+      throw new InvalidPersistedUncertaintyStateError(
+        `${subject} must not contain non-index fields.`,
+      );
+    }
+  }
+
+  if (keys.length !== value.length + 1) {
+    throw new InvalidPersistedUncertaintyStateError(
+      `${subject} must not contain sparse elements.`,
+    );
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (
+      descriptor === undefined
+      || descriptor.enumerable !== true
+      || !("value" in descriptor)
+    ) {
+      throw new InvalidPersistedUncertaintyStateError(
+        `${subject}[${index}] must be an enumerable data property.`,
+      );
+    }
+  }
+}
+
 function emptyState(): PersistedUncertaintyState {
   return Object.freeze({
     records: Object.freeze([]),
@@ -92,35 +181,38 @@ function restoreState(value: string | null): PersistedUncertaintyState {
       "persisted uncertainty state must be valid JSON.",
     );
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new InvalidPersistedUncertaintyStateError(
-      "persisted uncertainty state must be an object.",
-    );
-  }
 
-  const candidate = parsed as PersistedUncertaintyState;
-  if (!Array.isArray(candidate.records)) {
-    throw new InvalidPersistedUncertaintyStateError(
-      "persisted uncertainty records must be an array.",
-    );
-  }
+  const candidate = requireExactDataObject(
+    parsed,
+    "persisted uncertainty state",
+    ["records", "proofConsumptionIndex"],
+  );
+  requireDenseStandardArray(
+    candidate.records,
+    "persisted uncertainty state.records",
+  );
 
   const recordIds = new Set<string>();
   const records = candidate.records.map((entry, index) => {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new InvalidPersistedUncertaintyStateError(
-        `persisted uncertainty entry ${index + 1} must be an object.`,
-      );
-    }
-    requirePositiveVersion(entry.version, `records[${index}].version`);
-    const record = restoreExactPersistenceUncertaintyRecord(entry.record);
+    const normalizedEntry = requireExactDataObject(
+      entry,
+      `persisted uncertainty entry ${index + 1}`,
+      ["version", "record"],
+    );
+    requirePositiveVersion(
+      normalizedEntry.version,
+      `records[${index}].version`,
+    );
+    const record = restoreExactPersistenceUncertaintyRecord(
+      normalizedEntry.record,
+    );
     if (recordIds.has(record.recordId)) {
       throw new InvalidPersistedUncertaintyStateError(
         "persisted uncertainty recordId must be unique.",
       );
     }
     recordIds.add(record.recordId);
-    return Object.freeze({ version: entry.version, record });
+    return Object.freeze({ version: normalizedEntry.version, record });
   });
 
   const proofConsumptionIndex = restorePersistenceProofConsumptionIndex(
