@@ -9,6 +9,7 @@
     "./execution-event-sink": "./src/execution-event-sink.ts",
     "./external-effect-ownership-evidence-context": "./src/external-effect-ownership-evidence-context.ts",
     "./external-effect-ownership-loss-context": "./src/external-effect-ownership-loss-context.ts",
+    "./persistence-uncertainty-repository": "./src/persistence-uncertainty-repository.ts",
     "./task-entrypoint": "./src/task-entrypoint.ts",
     "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts"
   },
