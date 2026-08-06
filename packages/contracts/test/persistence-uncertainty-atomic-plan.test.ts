@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createPersistenceProofConsumptionIndex,
@@ -6,6 +6,7 @@ import {
 } from "../src/persistence-proof-consumption.js";
 import {
   planPersistenceUncertaintyAtomicTransition,
+  planPersistenceUncertaintyAtomicTransitionWithTrustedClock,
 } from "../src/persistence-uncertainty-atomic-plan.js";
 import {
   createPersistenceUncertaintyRecord,
@@ -75,6 +76,33 @@ describe("persistence uncertainty atomic plan", () => {
     expect(plan.previousProofConsumptionIndex.entries).toHaveLength(0);
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.proofConsumption)).toBe(true);
+  });
+
+  it("samples the trusted clock once and binds proof consumption to it", () => {
+    const proof = createProof();
+    const clock = {
+      now: vi.fn(() => "2026-08-06T00:03:00.000Z"),
+    };
+
+    const plan = planPersistenceUncertaintyAtomicTransitionWithTrustedClock(
+      createRecord(),
+      createPersistenceProofConsumptionIndex(),
+      {
+        attemptId: "attempt-trusted",
+        observedAt: proof.observedAt,
+        providerObservationId: proof.providerObservationId,
+        evidence: { expected, nonCommitProof: proof },
+      },
+      clock,
+    );
+
+    expect(clock.now).toHaveBeenCalledTimes(1);
+    expect(plan.nextRecord.attempts.at(-1)?.reconciledAt).toBe(
+      "2026-08-06T00:03:00.000Z",
+    );
+    expect(plan.proofConsumption?.consumedAt).toBe(
+      "2026-08-06T00:03:00.000Z",
+    );
   });
 
   it("preserves the proof index for outcomes that consume no proof", () => {
