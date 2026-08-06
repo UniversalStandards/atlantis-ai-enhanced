@@ -16,6 +16,7 @@ export interface PersistenceReconciliationAttempt {
   readonly attemptNumber: number;
   readonly attemptId: string;
   readonly observedAt: string;
+  readonly reconciledAt: string;
   readonly decision: PersistenceReconciliationDecision;
   readonly providerObservationId?: string;
   readonly proofId?: string;
@@ -40,6 +41,8 @@ export interface CreatePersistenceUncertaintyRecordInput {
 export interface ReconcilePersistenceUncertaintyInput {
   readonly attemptId: string;
   readonly observedAt: string;
+  /** Authoritative time at which ATLANTIS validated and consumed this evidence. */
+  readonly reconciledAt: string;
   readonly providerObservationId?: string;
   readonly evidence: PersistenceReconciliationEvidence;
 }
@@ -140,6 +143,8 @@ export function createPersistenceUncertaintyRecord(
  * Applies one authoritative reconciliation attempt. Retry-authorizing proof is
  * bound to this exact uncertainty record and provider operation, and the audit
  * observation identity/time must exactly match the proof that authorized it.
+ * Proof validity is enforced against the distinct authoritative consumption
+ * time rather than the provider's own observation timestamp.
  */
 export function reconcilePersistenceUncertainty(
   record: PersistenceUncertaintyRecord,
@@ -153,12 +158,23 @@ export function reconcilePersistenceUncertainty(
 
   requireNonEmpty(input.attemptId, "attemptId");
   requireCanonicalTimestamp(input.observedAt, "observedAt");
+  requireCanonicalTimestamp(input.reconciledAt, "reconciledAt");
   if (input.providerObservationId !== undefined) {
     requireNonEmpty(input.providerObservationId, "providerObservationId");
   }
   if (input.observedAt < record.firstObservedAt) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "observedAt cannot precede firstObservedAt",
+    );
+  }
+  if (input.reconciledAt < record.firstObservedAt) {
+    throw new InvalidPersistenceUncertaintyTransitionError(
+      "reconciledAt cannot precede firstObservedAt",
+    );
+  }
+  if (input.reconciledAt < input.observedAt) {
+    throw new InvalidPersistenceUncertaintyTransitionError(
+      "reconciledAt cannot precede observedAt",
     );
   }
   if (record.attempts.some((attempt) => attempt.attemptId === input.attemptId)) {
@@ -204,9 +220,9 @@ export function reconcilePersistenceUncertainty(
         "nonCommitProof cannot predate the uncertainty record",
       );
     }
-    if (input.observedAt > proof.validUntil) {
+    if (input.reconciledAt > proof.validUntil) {
       throw new InvalidPersistenceUncertaintyTransitionError(
-        "nonCommitProof is expired",
+        "nonCommitProof is expired at reconciliation time",
       );
     }
     if (record.attempts.some((attempt) => attempt.proofId === proof.proofId)) {
@@ -230,6 +246,7 @@ export function reconcilePersistenceUncertainty(
     attemptNumber: record.attempts.length + 1,
     attemptId: input.attemptId,
     observedAt: input.observedAt,
+    reconciledAt: input.reconciledAt,
     decision,
     ...(input.providerObservationId === undefined
       ? {}
