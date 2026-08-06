@@ -303,6 +303,12 @@ function requireEntry(
   return entry;
 }
 
+function createSnapshot(
+  entry: PersistedUncertaintyEntry,
+): PersistenceUncertaintySnapshot {
+  return Object.freeze({ version: entry.version, record: entry.record });
+}
+
 /**
  * Reference repository backed by the provider-neutral atomic snapshot boundary.
  * It proves restart-safe, compare-and-swap persistence semantics without
@@ -382,10 +388,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
             "acknowledged created uncertainty record must be at version 1.",
           );
         }
-        return Object.freeze({
-          version: acknowledgedEntry.version,
-          record: acknowledgedEntry.record,
-        });
+        return createSnapshot(acknowledgedEntry);
       }
     }
 
@@ -405,7 +408,12 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
     if (entry === undefined) {
       throw new PersistenceUncertaintyNotFoundError(recordId);
     }
-    return Object.freeze({ version: entry.version, record: entry.record });
+    return createSnapshot(entry);
+  }
+
+  public list(): readonly PersistenceUncertaintySnapshot[] {
+    const { state } = this.loadState();
+    return Object.freeze(state.records.map(createSnapshot));
   }
 
   public reconcile(
@@ -468,10 +476,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
             "acknowledged reconciled uncertainty record must be at the expected successor version.",
           );
         }
-        return Object.freeze({
-          version: acknowledgedEntry.version,
-          record: acknowledgedEntry.record,
-        });
+        return createSnapshot(acknowledgedEntry);
       }
     }
 
