@@ -161,6 +161,15 @@ function requireDenseStandardArray(
   }
 }
 
+function requireExactBooleanSettlement(value: unknown): boolean {
+  if (value !== true && value !== false) {
+    throw new InvalidPersistedUncertaintyStateError(
+      "storage compareAndSwap result must be a synchronous boolean.",
+    );
+  }
+  return value;
+}
+
 function emptyState(): PersistedUncertaintyState {
   return Object.freeze({
     records: Object.freeze([]),
@@ -313,7 +322,10 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         records: [...state.records, { version: 1, record: validatedRecord }],
         proofConsumptionIndex: state.proofConsumptionIndex,
       };
-      if (this.storage.compareAndSwap(revision, JSON.stringify(nextState))) {
+      const committed = requireExactBooleanSettlement(
+        this.storage.compareAndSwap(revision, JSON.stringify(nextState)),
+      );
+      if (committed) {
         return Object.freeze({ version: 1, record: validatedRecord });
       }
     }
@@ -382,7 +394,10 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
         proofConsumptionIndex: plan.nextProofConsumptionIndex,
       };
 
-      if (this.storage.compareAndSwap(revision, JSON.stringify(nextState))) {
+      const committed = requireExactBooleanSettlement(
+        this.storage.compareAndSwap(revision, JSON.stringify(nextState)),
+      );
+      if (committed) {
         return Object.freeze({
           version: nextVersion,
           record: plan.nextRecord,
