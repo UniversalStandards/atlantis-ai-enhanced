@@ -30,6 +30,10 @@ const nonCommitProof = {
   provenance: "provider_idempotency_lookup",
 } as const;
 
+const validDecisionContext = {
+  decisionAt: "2026-08-05T23:04:00.000Z",
+} as const;
+
 describe("persistence reconciliation", () => {
   it("derives committed only from exact authoritative identity, position, and digest evidence", () => {
     const observed = {
@@ -56,11 +60,11 @@ describe("persistence reconciliation", () => {
     }
   });
 
-  it("permits retry only from authoritative, identity-bound, time-bounded proof", () => {
+  it("permits retry only from authoritative, identity-bound, currently valid proof", () => {
     expect(classifyPersistenceReconciliation({
       expected,
       nonCommitProof,
-    })).toEqual({ kind: "retry_permitted" });
+    }, validDecisionContext)).toEqual({ kind: "retry_permitted" });
 
     for (const mismatchedProof of [
       { ...nonCommitProof, operationId: "append-operation-2" },
@@ -72,13 +76,43 @@ describe("persistence reconciliation", () => {
       expect(() => classifyPersistenceReconciliation({
         expected,
         nonCommitProof: mismatchedProof,
-      })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+      }, validDecisionContext)).toThrow(InvalidPersistenceReconciliationEvidenceError);
     }
 
     expect(classifyPersistenceReconciliation({ expected })).toEqual({
       kind: "uncertain",
       blockFurtherMutation: true,
     });
+  });
+
+  it("fails closed without trusted decision time and after proof expiry", () => {
+    expect(classifyPersistenceReconciliation({
+      expected,
+      nonCommitProof,
+    })).toEqual({ kind: "uncertain", blockFurtherMutation: true });
+
+    expect(classifyPersistenceReconciliation({
+      expected,
+      nonCommitProof,
+    }, {
+      decisionAt: nonCommitProof.validUntil,
+    })).toEqual({ kind: "retry_permitted" });
+
+    expect(classifyPersistenceReconciliation({
+      expected,
+      nonCommitProof,
+    }, {
+      decisionAt: "2026-08-05T23:05:00.001Z",
+    })).toEqual({ kind: "uncertain", blockFurtherMutation: true });
+  });
+
+  it("rejects trusted decision time that predates proof observation", () => {
+    expect(() => classifyPersistenceReconciliation({
+      expected,
+      nonCommitProof,
+    }, {
+      decisionAt: "2026-08-05T22:59:59.999Z",
+    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
   });
 
   it("rejects contradictory, malformed, expired-window, or unsupported proof evidence", () => {
@@ -93,7 +127,7 @@ describe("persistence reconciliation", () => {
       expected,
       observedAtExpectedPosition: observed,
       nonCommitProof,
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+    }, validDecisionContext)).toThrow(InvalidPersistenceReconciliationEvidenceError);
 
     expect(() => classifyPersistenceReconciliation({
       expected,
@@ -120,7 +154,7 @@ describe("persistence reconciliation", () => {
       expect(() => classifyPersistenceReconciliation({
         expected,
         nonCommitProof: malformedProof,
-      })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+      }, validDecisionContext)).toThrow(InvalidPersistenceReconciliationEvidenceError);
     }
   });
 
