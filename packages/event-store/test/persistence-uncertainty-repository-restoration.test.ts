@@ -202,6 +202,28 @@ describe("persistence uncertainty repository restoration boundary", () => {
     expect(revisionRead).toBe(false);
   });
 
+  it("rejects invalid atomic snapshot revisions before parsing persisted state", () => {
+    for (const revision of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const storage = new ArbitraryAtomicSnapshotStorage({
+        revision,
+        value: persistedState(pendingRecord()),
+      });
+
+      expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+        .toThrowError("storage revision must be a non-negative safe integer");
+    }
+  });
+
+  it("rejects malformed persisted JSON before restoration", () => {
+    const storage = new ArbitraryAtomicSnapshotStorage({
+      revision: 1,
+      value: '{"records":',
+    });
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError("persisted uncertainty state must be valid JSON");
+  });
+
   it("rejects non-string atomic snapshot values before JSON restoration", () => {
     const storage = new ArbitraryAtomicSnapshotStorage({
       revision: 1,
