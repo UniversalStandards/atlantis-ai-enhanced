@@ -144,7 +144,9 @@ export function createPersistenceUncertaintyRecord(
  * bound to this exact uncertainty record and provider operation, and the audit
  * observation identity/time must exactly match the proof that authorized it.
  * Proof validity is enforced against the distinct authoritative consumption
- * time rather than the provider's own observation timestamp.
+ * time rather than the provider's own observation timestamp. Authorization-
+ * bearing reconciliation evidence is structurally normalized by the hardened
+ * classifier before this lifecycle reads nested evidence fields.
  */
 export function reconcilePersistenceUncertainty(
   record: PersistenceUncertaintyRecord,
@@ -182,6 +184,19 @@ export function reconcilePersistenceUncertainty(
       "attemptId must be unique within the uncertainty record",
     );
   }
+
+  let decision: PersistenceReconciliationDecision;
+  try {
+    decision = classifyPersistenceReconciliation(input.evidence, {
+      decisionAt: input.reconciledAt,
+    });
+  } catch (error) {
+    if (error instanceof InvalidPersistenceReconciliationEvidenceError) {
+      throw new InvalidPersistenceUncertaintyTransitionError(error.message);
+    }
+    throw error;
+  }
+
   if (!sameExpectedIdentity(record.expected, input.evidence.expected)) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "reconciliation evidence must match the uncertainty record append identity",
@@ -230,18 +245,6 @@ export function reconcilePersistenceUncertainty(
         "nonCommitProof proofId has already been used",
       );
     }
-  }
-
-  let decision: PersistenceReconciliationDecision;
-  try {
-    decision = classifyPersistenceReconciliation(input.evidence, {
-      decisionAt: input.reconciledAt,
-    });
-  } catch (error) {
-    if (error instanceof InvalidPersistenceReconciliationEvidenceError) {
-      throw new InvalidPersistenceUncertaintyTransitionError(error.message);
-    }
-    throw error;
   }
 
   const attempt = Object.freeze({
