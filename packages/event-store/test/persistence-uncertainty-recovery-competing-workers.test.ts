@@ -30,7 +30,7 @@ class MemorySnapshotStorage implements AtomicSnapshotStorage {
 }
 
 const clock = {
-  now: () => "2026-08-07T06:00:00.000Z",
+  now: () => "2026-08-07T06:00:03.000Z",
 };
 
 function recoveryRecord() {
