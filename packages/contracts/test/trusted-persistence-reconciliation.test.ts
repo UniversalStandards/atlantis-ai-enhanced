@@ -62,6 +62,53 @@ describe("trusted persistence reconciliation clock", () => {
     expect(next.attempts[0]?.reconciledAt).toBe("2026-08-06T00:01:30.000Z");
   });
 
+  it("rejects accessor-bearing caller input before invoking the accessor or clock", () => {
+    const getter = vi.fn(() => "attempt-hostile");
+    const now = vi.fn(() => "2026-08-06T00:01:30.000Z");
+    const hostileInput = Object.defineProperty(
+      {
+        observedAt: "2026-08-06T00:01:00.000Z",
+        evidence: { expected },
+      },
+      "attemptId",
+      {
+        enumerable: true,
+        get: getter,
+      },
+    ) as unknown as Parameters<
+      typeof reconcilePersistenceUncertaintyWithTrustedClock
+    >[1];
+
+    expect(() => reconcilePersistenceUncertaintyWithTrustedClock(
+      createRecord(),
+      hostileInput,
+      { now },
+    )).toThrow(InvalidPersistenceUncertaintyTransitionError);
+
+    expect(getter).not.toHaveBeenCalled();
+    expect(now).not.toHaveBeenCalled();
+  });
+
+  it("rejects unexpected caller fields before sampling the clock", () => {
+    const now = vi.fn(() => "2026-08-06T00:01:30.000Z");
+    const hostileInput = {
+      attemptId: "attempt-unexpected",
+      observedAt: "2026-08-06T00:01:00.000Z",
+      evidence: { expected },
+      unexpected: true,
+    } as unknown as Parameters<
+      typeof reconcilePersistenceUncertaintyWithTrustedClock
+    >[1];
+
+    expect(() => reconcilePersistenceUncertaintyWithTrustedClock(
+      createRecord(),
+      hostileInput,
+      { now },
+    )).toThrow(InvalidPersistenceUncertaintyTransitionError);
+
+    expect(now).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the trusted clock returns malformed or stale time", () => {
     for (const reconciledAt of [
       "not-a-timestamp",
