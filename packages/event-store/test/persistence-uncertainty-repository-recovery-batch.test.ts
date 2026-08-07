@@ -156,4 +156,74 @@ describe("persistence uncertainty repository recovery batch", () => {
     expect(authoritative.record.attempts).toHaveLength(1);
     expect(authoritative.record.attempts[0]?.attemptId).toBe("attempt-worker-b");
   });
+
+  it("never reissues terminal records into a recovery batch", () => {
+    const storage = new ObservableMemorySnapshotStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    const pending = repository.create(record(1));
+    repository.create(record(2));
+
+    const expected = pending.record.expected;
+    const resolved = repository.reconcile(
+      pending.record.recordId,
+      pending.version,
+      {
+        attemptId: "attempt-resolved",
+        observedAt: "2026-08-06T03:30:00.000Z",
+        evidence: {
+          expected,
+          observedAtExpectedPosition: {
+            eventId: expected.eventId,
+            executionId: expected.executionId,
+            streamVersion: expected.streamVersion,
+            contentDigest: expected.contentDigest,
+          },
+        },
+      },
+      clock,
+    );
+    expect(resolved.record.status).toBe("resolved_committed");
+
+    const selected = repository.selectRecoveryBatch({
+      statuses: ["pending", "quarantined"],
+      limit: 10,
+    });
+
+    expect(selected.map((entry) => entry.record.recordId)).toEqual([
+      "uncertainty-2",
+    ]);
+  });
+
+  it("returns quarantined records only when quarantine recovery is explicitly requested", () => {
+    const storage = new ObservableMemorySnapshotStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    const candidate = repository.create(record(1));
+    repository.create(record(2));
+
+    const expected = candidate.record.expected;
+    const quarantined = repository.reconcile(
+      candidate.record.recordId,
+      candidate.version,
+      {
+        attemptId: "attempt-conflict",
+        observedAt: "2026-08-06T03:30:00.000Z",
+        evidence: {
+          expected,
+          observedAtExpectedPosition: {
+            eventId: "different-event",
+            executionId: expected.executionId,
+            streamVersion: expected.streamVersion,
+            contentDigest: "sha256:different-content",
+          },
+        },
+      },
+      clock,
+    );
+    expect(quarantined.record.status).toBe("quarantined");
+
+    expect(repository.selectRecoveryBatch({ statuses: ["pending"], limit: 10 })
+      .map((entry) => entry.record.recordId)).toEqual(["uncertainty-2"]);
+    expect(repository.selectRecoveryBatch({ statuses: ["quarantined"], limit: 10 })
+      .map((entry) => entry.record.recordId)).toEqual(["uncertainty-1"]);
+  });
 });
