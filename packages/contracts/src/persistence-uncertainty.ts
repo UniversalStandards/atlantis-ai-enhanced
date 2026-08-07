@@ -234,7 +234,9 @@ export function reconcilePersistenceUncertainty(
 
   let decision: PersistenceReconciliationDecision;
   try {
-    decision = classifyPersistenceReconciliation(input.evidence);
+    decision = classifyPersistenceReconciliation(input.evidence, {
+      decisionAt: input.reconciledAt,
+    });
   } catch (error) {
     if (error instanceof InvalidPersistenceReconciliationEvidenceError) {
       throw new InvalidPersistenceUncertaintyTransitionError(error.message);
