@@ -69,6 +69,59 @@ describe("exact persistence uncertainty restoration", () => {
     expect(getterCalls).toBe(0);
   });
 
+  it("rejects accessor-backed attempt elements without invoking getters", () => {
+    let getterCalls = 0;
+    const attempts: unknown[] = [];
+    Object.defineProperty(attempts, "0", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return retryResolvedRecord().attempts[0];
+      },
+    });
+    attempts.length = 1;
+
+    expect(() => restoreExactPersistenceUncertaintyRecord({
+      ...retryResolvedRecord(),
+      attempts,
+    })).toThrowError("record.attempts[0] must be an enumerable data property");
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects sparse attempt arrays before restoration", () => {
+    const attempts = new Array<unknown>(1);
+
+    expect(() => restoreExactPersistenceUncertaintyRecord({
+      ...pendingRecord(),
+      attempts,
+    })).toThrowError("record.attempts[0] must be an enumerable data property");
+  });
+
+  it("rejects unexpected and symbol properties on attempt arrays", () => {
+    const extraPropertyAttempts: unknown[] = [];
+    Object.defineProperty(extraPropertyAttempts, "unexpected", {
+      enumerable: true,
+      value: true,
+    });
+
+    expect(() => restoreExactPersistenceUncertaintyRecord({
+      ...pendingRecord(),
+      attempts: extraPropertyAttempts,
+    })).toThrowError("record.attempts contains an unexpected property");
+
+    const symbolPropertyAttempts: unknown[] = [];
+    Object.defineProperty(symbolPropertyAttempts, Symbol("unexpected"), {
+      enumerable: true,
+      value: true,
+    });
+
+    expect(() => restoreExactPersistenceUncertaintyRecord({
+      ...pendingRecord(),
+      attempts: symbolPropertyAttempts,
+    })).toThrowError("record.attempts contains an unexpected property");
+  });
+
   it("rejects status/decision contradictions and terminal attempts before the final attempt", () => {
     expect(() => restoreExactPersistenceUncertaintyRecord({
       ...retryResolvedRecord(),
