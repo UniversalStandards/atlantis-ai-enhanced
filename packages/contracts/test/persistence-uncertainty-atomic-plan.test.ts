@@ -5,6 +5,7 @@ import {
   consumePersistenceProof,
 } from "../src/persistence-proof-consumption.js";
 import {
+  InvalidPersistenceUncertaintyAtomicPlanError,
   planPersistenceUncertaintyAtomicTransition,
   planPersistenceUncertaintyAtomicTransitionWithTrustedClock,
 } from "../src/persistence-uncertainty-atomic-plan.js";
@@ -103,6 +104,29 @@ describe("persistence uncertainty atomic plan", () => {
     expect(plan.proofConsumption?.consumedAt).toBe(
       "2026-08-06T00:03:00.000Z",
     );
+  });
+
+  it("rejects accessor-bearing trusted input before invoking the accessor or clock", () => {
+    const getter = vi.fn(() => "attempt-accessor");
+    const clock = {
+      now: vi.fn(() => "2026-08-06T00:03:00.000Z"),
+    };
+    const input = {
+      get attemptId() {
+        return getter();
+      },
+      observedAt: "2026-08-06T00:01:00.000Z",
+      evidence: { expected },
+    };
+
+    expect(() => planPersistenceUncertaintyAtomicTransitionWithTrustedClock(
+      createRecord(),
+      createPersistenceProofConsumptionIndex(),
+      input,
+      clock,
+    )).toThrowError(InvalidPersistenceUncertaintyAtomicPlanError);
+    expect(getter).not.toHaveBeenCalled();
+    expect(clock.now).not.toHaveBeenCalled();
   });
 
   it("preserves the proof index for outcomes that consume no proof", () => {
