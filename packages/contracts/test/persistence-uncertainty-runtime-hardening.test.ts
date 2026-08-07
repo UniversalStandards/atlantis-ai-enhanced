@@ -34,6 +34,40 @@ function reconcileWithUnsafeEvidence(evidence: unknown): void {
 }
 
 describe("persistence uncertainty runtime hardening", () => {
+  it("rejects an accessor-bearing lifecycle input without invoking the accessor", () => {
+    let getterInvocations = 0;
+    const input = {
+      observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
+      evidence: { expected },
+    } as Record<string, unknown>;
+    Object.defineProperty(input, "attemptId", {
+      enumerable: true,
+      get() {
+        getterInvocations += 1;
+        return "attempt-accessor";
+      },
+    });
+
+    expect(() => reconcilePersistenceUncertainty(
+      createRecord(),
+      input as unknown as ReconcilePersistenceUncertaintyInput,
+    )).toThrow(InvalidPersistenceUncertaintyTransitionError);
+    expect(getterInvocations).toBe(0);
+  });
+
+  it("rejects unexpected lifecycle input fields before reconciliation", () => {
+    expect(() => reconcilePersistenceUncertainty(createRecord(), {
+      attemptId: "attempt-unexpected-field",
+      observedAt: "2026-08-06T00:01:00.000Z",
+      reconciledAt: "2026-08-06T00:01:30.000Z",
+      evidence: { expected },
+      privilegedOverride: true,
+    } as ReconcilePersistenceUncertaintyInput & { privilegedOverride: boolean })).toThrow(
+      InvalidPersistenceUncertaintyTransitionError,
+    );
+  });
+
   it("rejects an accessor-bearing evidence envelope without invoking the accessor", () => {
     let getterInvocations = 0;
     const evidence = Object.defineProperty({}, "expected", {
