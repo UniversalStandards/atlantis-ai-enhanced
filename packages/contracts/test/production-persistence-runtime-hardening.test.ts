@@ -108,12 +108,12 @@ describe("persistence reconciliation runtime hardening", () => {
     expect(() => classifyPersistenceReconciliation({
       expected,
       observedAtExpectedPosition: undefined,
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+    } as never)).toThrow(InvalidPersistenceReconciliationEvidenceError);
 
     expect(() => classifyPersistenceReconciliation({
       expected,
       nonCommitProof: undefined,
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+    } as never)).toThrow(InvalidPersistenceReconciliationEvidenceError);
   });
 
   it("preserves valid committed, retry, and uncertain decisions", () => {
