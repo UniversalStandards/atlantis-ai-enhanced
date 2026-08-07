@@ -68,9 +68,17 @@ describe("persistence uncertainty competing recovery workers", () => {
 
     expect(handoffA).toEqual(handoffB);
 
+    const providerOperationIdA = handoffA.record.providerOperationId;
+    const providerOperationIdB = handoffB.record.providerOperationId;
+    expect(providerOperationIdA).toBe("provider-operation-competing-workers");
+    expect(providerOperationIdB).toBe("provider-operation-competing-workers");
+    if (providerOperationIdA === undefined || providerOperationIdB === undefined) {
+      throw new Error("expected both recovery handoffs to retain the provider operation id");
+    }
+
     const externalRecoveryAttempts: string[] = [];
-    externalRecoveryAttempts.push(handoffA.record.providerOperationId);
-    externalRecoveryAttempts.push(handoffB.record.providerOperationId);
+    externalRecoveryAttempts.push(providerOperationIdA);
+    externalRecoveryAttempts.push(providerOperationIdB);
 
     const expected = handoffA.record.expected;
     const winner = workerA.reconcile(
