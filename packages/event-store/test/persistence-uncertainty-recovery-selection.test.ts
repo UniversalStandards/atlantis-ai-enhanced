@@ -93,4 +93,72 @@ describe("persistence uncertainty recovery selection", () => {
       selection as unknown as PersistenceUncertaintyRecoverySelection,
     )).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
   });
+
+  it.each([
+    null,
+    [],
+    new Set(["pending"]),
+    { statuses: ["pending"], limit: 1, extra: true },
+    { statuses: new Set(["pending"]), limit: 1 },
+    { statuses: Object.assign(["pending"], { extra: true }), limit: 1 },
+    { statuses: Object.assign(Object.create(null), { 0: "pending", length: 1 }), limit: 1 },
+  ])("rejects non-canonical runtime selection shapes %#", (selection) => {
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(
+      [],
+      selection as unknown as PersistenceUncertaintyRecoverySelection,
+    )).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+  });
+
+  it("rejects sparse status arrays", () => {
+    const statuses = new Array(2) as PersistenceUncertaintyStatus[];
+    statuses[1] = "pending";
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], {
+      statuses,
+      limit: 1,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+  });
+
+  it("rejects accessor-bearing selections without invoking the accessor", () => {
+    let getterInvoked = false;
+    const selection = Object.defineProperties({}, {
+      statuses: {
+        enumerable: true,
+        get: () => {
+          getterInvoked = true;
+          throw new Error("selection accessor must not execute");
+        },
+      },
+      limit: {
+        enumerable: true,
+        value: 1,
+      },
+    });
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(
+      [],
+      selection as PersistenceUncertaintyRecoverySelection,
+    )).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+    expect(getterInvoked).toBe(false);
+  });
+
+  it("rejects accessor-bearing status elements without invoking the accessor", () => {
+    let getterInvoked = false;
+    const statuses: unknown[] = [];
+    Object.defineProperty(statuses, "0", {
+      enumerable: true,
+      configurable: true,
+      get: () => {
+        getterInvoked = true;
+        throw new Error("status accessor must not execute");
+      },
+    });
+    Object.defineProperty(statuses, "length", { value: 1 });
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], {
+      statuses: statuses as PersistenceUncertaintyStatus[],
+      limit: 1,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+    expect(getterInvoked).toBe(false);
+  });
 });
