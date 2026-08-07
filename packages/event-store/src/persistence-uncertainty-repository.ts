@@ -12,6 +12,10 @@ import type { TrustedPersistenceClock } from "@atlantis/contracts/trusted-persis
 
 import type { AtomicSnapshotStorage } from "./index.js";
 import { createCanonicalJsonCandidate } from "./canonical-json-candidate.js";
+import {
+  selectPersistenceUncertaintyRecoveryBatch,
+  type PersistenceUncertaintyRecoverySelection,
+} from "./persistence-uncertainty-recovery-selection.js";
 import { restoreExactPersistenceUncertaintyRecord } from "./persistence-uncertainty-restoration-validation.js";
 
 interface PersistedUncertaintyEntry {
@@ -414,6 +418,14 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
   public list(): readonly PersistenceUncertaintySnapshot[] {
     const { state } = this.loadState();
     return Object.freeze(state.records.map(createSnapshot));
+  }
+
+  public selectRecoveryBatch(
+    selection: PersistenceUncertaintyRecoverySelection,
+  ): readonly PersistenceUncertaintySnapshot[] {
+    const { state } = this.loadState();
+    const snapshots = Object.freeze(state.records.map(createSnapshot));
+    return selectPersistenceUncertaintyRecoveryBatch(snapshots, selection);
   }
 
   public reconcile(
