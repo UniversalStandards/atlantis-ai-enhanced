@@ -137,7 +137,7 @@ describe("persistence uncertainty recovery selection", () => {
 
     expect(() => selectPersistenceUncertaintyRecoveryBatch(
       [],
-      selection as PersistenceUncertaintyRecoverySelection,
+      selection as unknown as PersistenceUncertaintyRecoverySelection,
     )).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
     expect(getterInvoked).toBe(false);
   });
