@@ -1,4 +1,9 @@
 import {
+  normalizeExactDataRecord,
+  requireExactDataFields,
+  type ExactDataRecord,
+} from "./exact-data-record.js";
+import {
   InvalidPersistenceReconciliationEvidenceError,
   classifyPersistenceReconciliation,
   type ExpectedPersistenceEvent,
@@ -101,6 +106,50 @@ function freezeExpected(
   return Object.freeze({ ...expected });
 }
 
+function normalizeLifecycleRecord(
+  subject: string,
+  value: unknown,
+  allowedFields: readonly string[],
+  requiredFields: readonly string[],
+): ExactDataRecord {
+  try {
+    const record = normalizeExactDataRecord(subject, value, allowedFields);
+    requireExactDataFields(subject, record, requiredFields);
+    return record;
+  } catch (error) {
+    throw new InvalidPersistenceUncertaintyTransitionError(
+      error instanceof Error ? error.message : `${subject} is invalid`,
+    );
+  }
+}
+
+function normalizeReconcileInput(
+  value: unknown,
+): ReconcilePersistenceUncertaintyInput {
+  const input = normalizeLifecycleRecord(
+    "reconciliation input",
+    value,
+    [
+      "attemptId",
+      "observedAt",
+      "reconciledAt",
+      "providerObservationId",
+      "evidence",
+    ],
+    ["attemptId", "observedAt", "reconciledAt", "evidence"],
+  );
+
+  return Object.freeze({
+    attemptId: input.attemptId as string,
+    observedAt: input.observedAt as string,
+    reconciledAt: input.reconciledAt as string,
+    ...(Object.prototype.hasOwnProperty.call(input, "providerObservationId")
+      ? { providerObservationId: input.providerObservationId as string }
+      : {}),
+    evidence: input.evidence as PersistenceReconciliationEvidence,
+  });
+}
+
 function nextStatus(
   decision: PersistenceReconciliationDecision,
 ): PersistenceUncertaintyStatus {
@@ -145,8 +194,9 @@ export function createPersistenceUncertaintyRecord(
  * observation identity/time must exactly match the proof that authorized it.
  * Proof validity is enforced against the distinct authoritative consumption
  * time rather than the provider's own observation timestamp. Authorization-
- * bearing reconciliation evidence is structurally normalized by the hardened
- * classifier before this lifecycle reads nested evidence fields.
+ * bearing reconciliation evidence and the lifecycle input envelope are
+ * structurally normalized before nested or authorization-bearing fields are
+ * read.
  */
 export function reconcilePersistenceUncertainty(
   record: PersistenceUncertaintyRecord,
@@ -158,28 +208,30 @@ export function reconcilePersistenceUncertainty(
     );
   }
 
-  requireNonEmpty(input.attemptId, "attemptId");
-  requireCanonicalTimestamp(input.observedAt, "observedAt");
-  requireCanonicalTimestamp(input.reconciledAt, "reconciledAt");
-  if (input.providerObservationId !== undefined) {
-    requireNonEmpty(input.providerObservationId, "providerObservationId");
+  const normalizedInput = normalizeReconcileInput(input);
+
+  requireNonEmpty(normalizedInput.attemptId, "attemptId");
+  requireCanonicalTimestamp(normalizedInput.observedAt, "observedAt");
+  requireCanonicalTimestamp(normalizedInput.reconciledAt, "reconciledAt");
+  if (normalizedInput.providerObservationId !== undefined) {
+    requireNonEmpty(normalizedInput.providerObservationId, "providerObservationId");
   }
-  if (input.observedAt < record.firstObservedAt) {
+  if (normalizedInput.observedAt < record.firstObservedAt) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "observedAt cannot precede firstObservedAt",
     );
   }
-  if (input.reconciledAt < record.firstObservedAt) {
+  if (normalizedInput.reconciledAt < record.firstObservedAt) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "reconciledAt cannot precede firstObservedAt",
     );
   }
-  if (input.reconciledAt < input.observedAt) {
+  if (normalizedInput.reconciledAt < normalizedInput.observedAt) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "reconciledAt cannot precede observedAt",
     );
   }
-  if (record.attempts.some((attempt) => attempt.attemptId === input.attemptId)) {
+  if (record.attempts.some((attempt) => attempt.attemptId === normalizedInput.attemptId)) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "attemptId must be unique within the uncertainty record",
     );
@@ -187,8 +239,8 @@ export function reconcilePersistenceUncertainty(
 
   let decision: PersistenceReconciliationDecision;
   try {
-    decision = classifyPersistenceReconciliation(input.evidence, {
-      decisionAt: input.reconciledAt,
+    decision = classifyPersistenceReconciliation(normalizedInput.evidence, {
+      decisionAt: normalizedInput.reconciledAt,
     });
   } catch (error) {
     if (error instanceof InvalidPersistenceReconciliationEvidenceError) {
@@ -197,13 +249,13 @@ export function reconcilePersistenceUncertainty(
     throw error;
   }
 
-  if (!sameExpectedIdentity(record.expected, input.evidence.expected)) {
+  if (!sameExpectedIdentity(record.expected, normalizedInput.evidence.expected)) {
     throw new InvalidPersistenceUncertaintyTransitionError(
       "reconciliation evidence must match the uncertainty record append identity",
     );
   }
 
-  const proof = input.evidence.nonCommitProof;
+  const proof = normalizedInput.evidence.nonCommitProof;
   if (proof !== undefined) {
     if (record.providerOperationId === undefined) {
       throw new InvalidPersistenceUncertaintyTransitionError(
@@ -220,12 +272,12 @@ export function reconcilePersistenceUncertainty(
         "nonCommitProof must match the stored provider operation",
       );
     }
-    if (input.providerObservationId !== proof.providerObservationId) {
+    if (normalizedInput.providerObservationId !== proof.providerObservationId) {
       throw new InvalidPersistenceUncertaintyTransitionError(
         "attempt providerObservationId must exactly match nonCommitProof",
       );
     }
-    if (input.observedAt !== proof.observedAt) {
+    if (normalizedInput.observedAt !== proof.observedAt) {
       throw new InvalidPersistenceUncertaintyTransitionError(
         "attempt observedAt must exactly match nonCommitProof",
       );
@@ -235,7 +287,7 @@ export function reconcilePersistenceUncertainty(
         "nonCommitProof cannot predate the uncertainty record",
       );
     }
-    if (input.reconciledAt > proof.validUntil) {
+    if (normalizedInput.reconciledAt > proof.validUntil) {
       throw new InvalidPersistenceUncertaintyTransitionError(
         "nonCommitProof is expired at reconciliation time",
       );
@@ -249,13 +301,13 @@ export function reconcilePersistenceUncertainty(
 
   const attempt = Object.freeze({
     attemptNumber: record.attempts.length + 1,
-    attemptId: input.attemptId,
-    observedAt: input.observedAt,
-    reconciledAt: input.reconciledAt,
+    attemptId: normalizedInput.attemptId,
+    observedAt: normalizedInput.observedAt,
+    reconciledAt: normalizedInput.reconciledAt,
     decision,
-    ...(input.providerObservationId === undefined
+    ...(normalizedInput.providerObservationId === undefined
       ? {}
-      : { providerObservationId: input.providerObservationId }),
+      : { providerObservationId: normalizedInput.providerObservationId }),
     ...(proof === undefined ? {} : { proofId: proof.proofId }),
   });
 
