@@ -7,6 +7,7 @@ import {
 import type { AtomicSnapshot, AtomicSnapshotStorage } from "../src/index.js";
 import {
   DurableSnapshotPersistenceUncertaintyRepository,
+  PersistenceUncertaintyVersionConflictError,
 } from "../src/persistence-uncertainty-repository.js";
 
 class ObservableMemorySnapshotStorage implements AtomicSnapshotStorage {
@@ -47,6 +48,10 @@ function record(index: number) {
     firstObservedAt: `2026-08-06T0${index}:00:00.000Z`,
   });
 }
+
+const clock = {
+  now: () => "2026-08-06T04:00:00.000Z",
+};
 
 describe("persistence uncertainty repository recovery batch", () => {
   it("selects from exactly one authoritative load in durable order", () => {
@@ -107,5 +112,48 @@ describe("persistence uncertainty repository recovery batch", () => {
       "uncertainty-1",
       "uncertainty-2",
     ]);
+  });
+
+  it("rejects a stale recovery-batch handoff after another worker advances the record", () => {
+    const storage = new ObservableMemorySnapshotStorage();
+    const writer = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    writer.create(record(1));
+
+    const workerA = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    const workerB = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    const [handoff] = workerA.selectRecoveryBatch({ statuses: ["pending"], limit: 1 });
+    expect(handoff).toBeDefined();
+    if (handoff === undefined) {
+      throw new Error("expected one recovery handoff");
+    }
+
+    const expected = handoff.record.expected;
+    const advanced = workerB.reconcile(
+      handoff.record.recordId,
+      handoff.version,
+      {
+        attemptId: "attempt-worker-b",
+        observedAt: "2026-08-06T03:30:00.000Z",
+        evidence: { expected },
+      },
+      clock,
+    );
+    expect(advanced.version).toBe(handoff.version + 1);
+
+    expect(() => workerA.reconcile(
+      handoff.record.recordId,
+      handoff.version,
+      {
+        attemptId: "attempt-worker-a-stale",
+        observedAt: "2026-08-06T03:31:00.000Z",
+        evidence: { expected },
+      },
+      clock,
+    )).toThrowError(PersistenceUncertaintyVersionConflictError);
+
+    const authoritative = writer.get(handoff.record.recordId);
+    expect(authoritative).toEqual(advanced);
+    expect(authoritative.record.attempts).toHaveLength(1);
+    expect(authoritative.record.attempts[0]?.attemptId).toBe("attempt-worker-b");
   });
 });
