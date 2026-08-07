@@ -82,6 +82,35 @@ describe("persistence proof consumption index", () => {
     })).toThrow(InvalidPersistenceProofConsumptionError);
   });
 
+  it("rejects accessor-backed index envelopes without invoking getters", () => {
+    let getterCalls = 0;
+    const accessorBackedIndex = {} as Record<string, unknown>;
+    Object.defineProperty(accessorBackedIndex, "entries", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return [firstConsumption];
+      },
+    });
+
+    expect(() => restorePersistenceProofConsumptionIndex(accessorBackedIndex))
+      .toThrow(InvalidPersistenceProofConsumptionError);
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects unexpected and symbol fields on the index envelope", () => {
+    expect(() => restorePersistenceProofConsumptionIndex({
+      entries: [firstConsumption],
+      unexpected: true,
+    })).toThrow(InvalidPersistenceProofConsumptionError);
+
+    const symbolField = { entries: [firstConsumption] } as Record<PropertyKey, unknown>;
+    symbolField[Symbol("unexpected")] = true;
+    expect(() => restorePersistenceProofConsumptionIndex(symbolField))
+      .toThrow(InvalidPersistenceProofConsumptionError);
+  });
+
   it("rejects sparse, custom, and accessor-backed restored arrays without invoking getters", () => {
     const sparse = new Array(1);
     expect(() => restorePersistenceProofConsumptionIndex({ entries: sparse }))
