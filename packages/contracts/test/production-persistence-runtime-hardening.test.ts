@@ -30,6 +30,10 @@ const nonCommitProof = {
   provenance: "provider_idempotency_lookup",
 } as const;
 
+const decisionContext = {
+  decisionAt: "2026-08-05T23:04:00.000Z",
+} as const;
+
 describe("persistence reconciliation runtime hardening", () => {
   it("rejects a top-level accessor without invoking it", () => {
     const getter = vi.fn(() => expected);
@@ -73,7 +77,7 @@ describe("persistence reconciliation runtime hardening", () => {
     expect(() => classifyPersistenceReconciliation({
       expected,
       nonCommitProof: accessorProof as never,
-    })).toThrow(InvalidPersistenceReconciliationEvidenceError);
+    }, decisionContext)).toThrow(InvalidPersistenceReconciliationEvidenceError);
     expect(proofIdGetter).not.toHaveBeenCalled();
   });
 
@@ -116,6 +120,29 @@ describe("persistence reconciliation runtime hardening", () => {
     } as never)).toThrow(InvalidPersistenceReconciliationEvidenceError);
   });
 
+  it("rejects malformed decision-time context without invoking accessors", () => {
+    const decisionAtGetter = vi.fn(() => decisionContext.decisionAt);
+    const accessorContext = {} as Record<string, unknown>;
+    Object.defineProperty(accessorContext, "decisionAt", {
+      enumerable: true,
+      get: decisionAtGetter,
+    });
+
+    for (const malformedContext of [
+      accessorContext,
+      { ...decisionContext, unexpected: true },
+      { decisionAt: "2026-08-05T23:04:00Z" },
+    ]) {
+      expect(() => classifyPersistenceReconciliation({
+        expected,
+        nonCommitProof,
+      }, malformedContext as never)).toThrow(
+        InvalidPersistenceReconciliationEvidenceError,
+      );
+    }
+    expect(decisionAtGetter).not.toHaveBeenCalled();
+  });
+
   it("preserves valid committed, retry, and uncertain decisions", () => {
     expect(classifyPersistenceReconciliation({ expected })).toEqual({
       kind: "uncertain",
@@ -125,7 +152,7 @@ describe("persistence reconciliation runtime hardening", () => {
     expect(classifyPersistenceReconciliation({
       expected,
       nonCommitProof,
-    })).toEqual({ kind: "retry_permitted" });
+    }, decisionContext)).toEqual({ kind: "retry_permitted" });
 
     expect(classifyPersistenceReconciliation({
       expected,
