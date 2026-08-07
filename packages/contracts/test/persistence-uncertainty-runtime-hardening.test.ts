@@ -4,6 +4,7 @@ import {
   InvalidPersistenceUncertaintyTransitionError,
   createPersistenceUncertaintyRecord,
   reconcilePersistenceUncertainty,
+  type CreatePersistenceUncertaintyRecordInput,
   type ReconcilePersistenceUncertaintyInput,
 } from "../src/persistence-uncertainty.js";
 
@@ -34,6 +35,61 @@ function reconcileWithUnsafeEvidence(evidence: unknown): void {
 }
 
 describe("persistence uncertainty runtime hardening", () => {
+  it("rejects an accessor-bearing creation input without invoking the accessor", () => {
+    let getterInvocations = 0;
+    const input = {
+      expected,
+      firstObservedAt: "2026-08-06T00:00:00.000Z",
+    } as Record<string, unknown>;
+    Object.defineProperty(input, "recordId", {
+      enumerable: true,
+      get() {
+        getterInvocations += 1;
+        return "uncertainty-accessor";
+      },
+    });
+
+    expect(() => createPersistenceUncertaintyRecord(
+      input as unknown as CreatePersistenceUncertaintyRecordInput,
+    )).toThrow(InvalidPersistenceUncertaintyTransitionError);
+    expect(getterInvocations).toBe(0);
+  });
+
+  it("rejects an accessor-bearing expected identity during creation without invoking it", () => {
+    let getterInvocations = 0;
+    const unsafeExpected = {
+      operationId: expected.operationId,
+      eventId: expected.eventId,
+      executionId: expected.executionId,
+      streamVersion: expected.streamVersion,
+    } as Record<string, unknown>;
+    Object.defineProperty(unsafeExpected, "contentDigest", {
+      enumerable: true,
+      get() {
+        getterInvocations += 1;
+        return expected.contentDigest;
+      },
+    });
+
+    expect(() => createPersistenceUncertaintyRecord({
+      recordId: "uncertainty-unsafe-expected",
+      expected: unsafeExpected as unknown as typeof expected,
+      firstObservedAt: "2026-08-06T00:00:00.000Z",
+    })).toThrow(InvalidPersistenceUncertaintyTransitionError);
+    expect(getterInvocations).toBe(0);
+  });
+
+  it("rejects unexpected uncertainty creation fields", () => {
+    expect(() => createPersistenceUncertaintyRecord({
+      recordId: "uncertainty-unexpected-field",
+      expected,
+      firstObservedAt: "2026-08-06T00:00:00.000Z",
+      privilegedOverride: true,
+    } as CreatePersistenceUncertaintyRecordInput & { privilegedOverride: boolean })).toThrow(
+      InvalidPersistenceUncertaintyTransitionError,
+    );
+  });
+
   it("rejects an accessor-bearing lifecycle input without invoking the accessor", () => {
     let getterInvocations = 0;
     const input = {
