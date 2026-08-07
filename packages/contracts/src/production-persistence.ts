@@ -103,6 +103,16 @@ export interface PersistenceReconciliationEvidence {
   readonly nonCommitProof?: PersistenceNonCommitProof;
 }
 
+/**
+ * Trusted deterministic time context for an authorization-bearing
+ * reconciliation decision. The composition root must supply this value from a
+ * trusted clock boundary rather than ambient wall-clock reads inside the
+ * classifier.
+ */
+export interface PersistenceReconciliationDecisionContext {
+  readonly decisionAt: string;
+}
+
 export type PersistenceReconciliationDecision =
   | { readonly kind: "committed" }
   | { readonly kind: "conflict"; readonly quarantine: true }
@@ -331,17 +341,33 @@ function normalizeNonCommitProof(
   });
 }
 
+function normalizeDecisionContext(
+  value: unknown,
+): PersistenceReconciliationDecisionContext {
+  const context = normalizeRecord(
+    "decisionContext",
+    value,
+    ["decisionAt"],
+    ["decisionAt"],
+  );
+  requireCanonicalTimestamp(context.decisionAt, "decisionContext.decisionAt");
+  return Object.freeze({ decisionAt: context.decisionAt });
+}
+
 /**
  * Classifies authoritative reconciliation evidence without provider-specific
  * assumptions. A committed decision is derived only from an exact immutable
  * identity, stream-position, and content-digest match. Retry is authorized
- * only by a validated proof envelope bound to the exact append operation.
- * Runtime evidence is normalized as exact data records before any nested field
- * is read, so accessors, unexpected properties, and prototype-bearing objects
- * cannot participate in an authorization-bearing reconciliation decision.
+ * only by a validated proof envelope bound to the exact append operation and
+ * a trusted deterministic decision time within that proof's validity window.
+ * Missing decision-time context fails closed to uncertainty; a trusted clock
+ * that precedes the proof observation is rejected as invalid reconciliation
+ * context. Runtime evidence and decision context are normalized as exact data
+ * records before nested fields are read.
  */
 export function classifyPersistenceReconciliation(
   evidence: PersistenceReconciliationEvidence,
+  decisionContext?: PersistenceReconciliationDecisionContext,
 ): PersistenceReconciliationDecision {
   const root = normalizeRecord(
     "evidence",
@@ -386,6 +412,21 @@ export function classifyPersistenceReconciliation(
   }
 
   if (proof !== undefined) {
+    if (decisionContext === undefined) {
+      return Object.freeze({ kind: "uncertain", blockFurtherMutation: true });
+    }
+
+    const context = normalizeDecisionContext(decisionContext);
+    if (context.decisionAt < proof.observedAt) {
+      throw new InvalidPersistenceReconciliationEvidenceError(
+        "decisionContext.decisionAt cannot precede nonCommitProof.observedAt",
+      );
+    }
+
+    if (context.decisionAt > proof.validUntil) {
+      return Object.freeze({ kind: "uncertain", blockFurtherMutation: true });
+    }
+
     return Object.freeze({ kind: "retry_permitted" });
   }
 
