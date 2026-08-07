@@ -77,18 +77,6 @@ function requireCanonicalTimestamp(value: string, field: string): void {
   }
 }
 
-function requireExpectedIdentity(event: ExpectedPersistenceEvent): void {
-  requireNonEmpty(event.operationId, "expected.operationId");
-  requireNonEmpty(event.executionId, "expected.executionId");
-  requireNonEmpty(event.eventId, "expected.eventId");
-  requireNonEmpty(event.contentDigest, "expected.contentDigest");
-  if (!Number.isSafeInteger(event.streamVersion) || event.streamVersion < 1) {
-    throw new InvalidPersistenceUncertaintyTransitionError(
-      "expected.streamVersion must be a positive safe integer",
-    );
-  }
-}
-
 function sameExpectedIdentity(
   left: ExpectedPersistenceEvent,
   right: ExpectedPersistenceEvent,
@@ -98,12 +86,6 @@ function sameExpectedIdentity(
     && left.eventId === right.eventId
     && left.streamVersion === right.streamVersion
     && left.contentDigest === right.contentDigest;
-}
-
-function freezeExpected(
-  expected: ExpectedPersistenceEvent,
-): ExpectedPersistenceEvent {
-  return Object.freeze({ ...expected });
 }
 
 function normalizeLifecycleRecord(
@@ -121,6 +103,57 @@ function normalizeLifecycleRecord(
       error instanceof Error ? error.message : `${subject} is invalid`,
     );
   }
+}
+
+function normalizeExpectedIdentity(value: unknown): ExpectedPersistenceEvent {
+  const expected = normalizeLifecycleRecord(
+    "expected",
+    value,
+    ["operationId", "eventId", "executionId", "streamVersion", "contentDigest"],
+    ["operationId", "eventId", "executionId", "streamVersion", "contentDigest"],
+  );
+
+  requireNonEmpty(expected.operationId as string, "expected.operationId");
+  requireNonEmpty(expected.executionId as string, "expected.executionId");
+  requireNonEmpty(expected.eventId as string, "expected.eventId");
+  requireNonEmpty(expected.contentDigest as string, "expected.contentDigest");
+  if (
+    typeof expected.streamVersion !== "number"
+    || !Number.isSafeInteger(expected.streamVersion)
+    || expected.streamVersion < 1
+  ) {
+    throw new InvalidPersistenceUncertaintyTransitionError(
+      "expected.streamVersion must be a positive safe integer",
+    );
+  }
+
+  return Object.freeze({
+    operationId: expected.operationId as string,
+    eventId: expected.eventId as string,
+    executionId: expected.executionId as string,
+    streamVersion: expected.streamVersion,
+    contentDigest: expected.contentDigest as string,
+  });
+}
+
+function normalizeCreateInput(
+  value: unknown,
+): CreatePersistenceUncertaintyRecordInput {
+  const input = normalizeLifecycleRecord(
+    "uncertainty creation input",
+    value,
+    ["recordId", "expected", "providerOperationId", "firstObservedAt"],
+    ["recordId", "expected", "firstObservedAt"],
+  );
+
+  return Object.freeze({
+    recordId: input.recordId as string,
+    expected: input.expected as ExpectedPersistenceEvent,
+    ...(Object.prototype.hasOwnProperty.call(input, "providerOperationId")
+      ? { providerOperationId: input.providerOperationId as string }
+      : {}),
+    firstObservedAt: input.firstObservedAt as string,
+  });
 }
 
 function normalizeReconcileInput(
@@ -165,24 +198,30 @@ function nextStatus(
   }
 }
 
-/** Creates an immutable provider-neutral uncertainty record for one exact append. */
+/**
+ * Creates an immutable provider-neutral uncertainty record for one exact append.
+ * Runtime input and nested expected identity are normalized as exact data records
+ * before lifecycle fields are read.
+ */
 export function createPersistenceUncertaintyRecord(
   input: CreatePersistenceUncertaintyRecordInput,
 ): PersistenceUncertaintyRecord {
-  requireNonEmpty(input.recordId, "recordId");
-  requireExpectedIdentity(input.expected);
-  requireCanonicalTimestamp(input.firstObservedAt, "firstObservedAt");
-  if (input.providerOperationId !== undefined) {
-    requireNonEmpty(input.providerOperationId, "providerOperationId");
+  const normalizedInput = normalizeCreateInput(input);
+  const normalizedExpected = normalizeExpectedIdentity(normalizedInput.expected);
+
+  requireNonEmpty(normalizedInput.recordId, "recordId");
+  requireCanonicalTimestamp(normalizedInput.firstObservedAt, "firstObservedAt");
+  if (normalizedInput.providerOperationId !== undefined) {
+    requireNonEmpty(normalizedInput.providerOperationId, "providerOperationId");
   }
 
   return Object.freeze({
-    recordId: input.recordId,
-    expected: freezeExpected(input.expected),
-    ...(input.providerOperationId === undefined
+    recordId: normalizedInput.recordId,
+    expected: normalizedExpected,
+    ...(normalizedInput.providerOperationId === undefined
       ? {}
-      : { providerOperationId: input.providerOperationId }),
-    firstObservedAt: input.firstObservedAt,
+      : { providerOperationId: normalizedInput.providerOperationId }),
+    firstObservedAt: normalizedInput.firstObservedAt,
     status: "pending" as const,
     attempts: Object.freeze([]),
   });
