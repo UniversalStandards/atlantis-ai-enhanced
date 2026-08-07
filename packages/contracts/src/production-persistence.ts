@@ -1,3 +1,9 @@
+import {
+  normalizeExactDataRecord,
+  requireExactDataFields,
+  type ExactDataRecord,
+} from "./exact-data-record.js";
+
 export type ProductionAppendOutcome =
   | ProductionAppendCommitted
   | ProductionAppendConflict
@@ -110,7 +116,7 @@ export class InvalidPersistenceReconciliationEvidenceError extends Error {
   }
 }
 
-function requireNonEmpty(value: string, field: string): void {
+function requireNonEmpty(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new InvalidPersistenceReconciliationEvidenceError(
       `${field} must be a non-empty string`,
@@ -118,15 +124,15 @@ function requireNonEmpty(value: string, field: string): void {
   }
 }
 
-function requireStreamVersion(value: number, field: string): void {
-  if (!Number.isSafeInteger(value) || value < 1) {
+function requireStreamVersion(value: unknown, field: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new InvalidPersistenceReconciliationEvidenceError(
       `${field} must be a positive safe integer`,
     );
   }
 }
 
-function requireCanonicalTimestamp(value: string, field: string): void {
+function requireCanonicalTimestamp(value: unknown, field: string): asserts value is string {
   requireNonEmpty(value, field);
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
@@ -136,15 +142,57 @@ function requireCanonicalTimestamp(value: string, field: string): void {
   }
 }
 
-function validateExpectedEvent(event: ExpectedPersistenceEvent): void {
+function normalizeRecord(
+  subject: string,
+  value: unknown,
+  allowedFields: readonly string[],
+  requiredFields: readonly string[],
+): ExactDataRecord {
+  try {
+    const record = normalizeExactDataRecord(subject, value, allowedFields);
+    requireExactDataFields(subject, record, requiredFields);
+    return record;
+  } catch (error) {
+    if (error instanceof InvalidPersistenceReconciliationEvidenceError) {
+      throw error;
+    }
+    throw new InvalidPersistenceReconciliationEvidenceError(
+      error instanceof Error ? error.message : `${subject} is invalid`,
+    );
+  }
+}
+
+function normalizeExpectedEvent(value: unknown): ExpectedPersistenceEvent {
+  const event = normalizeRecord(
+    "expected",
+    value,
+    ["operationId", "eventId", "executionId", "streamVersion", "contentDigest"],
+    ["operationId", "eventId", "executionId", "streamVersion", "contentDigest"],
+  );
+
   requireNonEmpty(event.operationId, "expected.operationId");
   requireNonEmpty(event.eventId, "expected.eventId");
   requireNonEmpty(event.executionId, "expected.executionId");
   requireStreamVersion(event.streamVersion, "expected.streamVersion");
   requireNonEmpty(event.contentDigest, "expected.contentDigest");
+
+  return Object.freeze({
+    operationId: event.operationId,
+    eventId: event.eventId,
+    executionId: event.executionId,
+    streamVersion: event.streamVersion,
+    contentDigest: event.contentDigest,
+  });
 }
 
-function validateObservedEvent(event: ObservedPersistenceEvent): void {
+function normalizeObservedEvent(value: unknown): ObservedPersistenceEvent {
+  const event = normalizeRecord(
+    "observedAtExpectedPosition",
+    value,
+    ["eventId", "executionId", "streamVersion", "contentDigest"],
+    ["eventId", "executionId", "streamVersion", "contentDigest"],
+  );
+
   requireNonEmpty(event.eventId, "observedAtExpectedPosition.eventId");
   requireNonEmpty(event.executionId, "observedAtExpectedPosition.executionId");
   requireStreamVersion(
@@ -155,22 +203,60 @@ function validateObservedEvent(event: ObservedPersistenceEvent): void {
     event.contentDigest,
     "observedAtExpectedPosition.contentDigest",
   );
+
+  return Object.freeze({
+    eventId: event.eventId,
+    executionId: event.executionId,
+    streamVersion: event.streamVersion,
+    contentDigest: event.contentDigest,
+  });
 }
 
-function validateNonCommitProof(
-  proof: PersistenceNonCommitProof,
+function normalizeNonCommitProof(
+  value: unknown,
   expected: ExpectedPersistenceEvent,
-): void {
+): PersistenceNonCommitProof {
+  const proof = normalizeRecord(
+    "nonCommitProof",
+    value,
+    [
+      "proofId",
+      "uncertaintyRecordId",
+      "operationId",
+      "providerOperationId",
+      "executionId",
+      "eventId",
+      "expectedStreamVersion",
+      "contentDigest",
+      "providerObservationId",
+      "proofIssuer",
+      "verificationMethod",
+      "observedAt",
+      "validUntil",
+      "provenance",
+    ],
+    [
+      "proofId",
+      "uncertaintyRecordId",
+      "operationId",
+      "providerOperationId",
+      "executionId",
+      "eventId",
+      "expectedStreamVersion",
+      "contentDigest",
+      "providerObservationId",
+      "proofIssuer",
+      "verificationMethod",
+      "observedAt",
+      "validUntil",
+      "provenance",
+    ],
+  );
+
   requireNonEmpty(proof.proofId, "nonCommitProof.proofId");
-  requireNonEmpty(
-    proof.uncertaintyRecordId,
-    "nonCommitProof.uncertaintyRecordId",
-  );
+  requireNonEmpty(proof.uncertaintyRecordId, "nonCommitProof.uncertaintyRecordId");
   requireNonEmpty(proof.operationId, "nonCommitProof.operationId");
-  requireNonEmpty(
-    proof.providerOperationId,
-    "nonCommitProof.providerOperationId",
-  );
+  requireNonEmpty(proof.providerOperationId, "nonCommitProof.providerOperationId");
   requireNonEmpty(proof.executionId, "nonCommitProof.executionId");
   requireNonEmpty(proof.eventId, "nonCommitProof.eventId");
   requireStreamVersion(
@@ -185,6 +271,8 @@ function validateNonCommitProof(
   requireNonEmpty(proof.proofIssuer, "nonCommitProof.proofIssuer");
   requireCanonicalTimestamp(proof.observedAt, "nonCommitProof.observedAt");
   requireCanonicalTimestamp(proof.validUntil, "nonCommitProof.validUntil");
+  requireNonEmpty(proof.verificationMethod, "nonCommitProof.verificationMethod");
+  requireNonEmpty(proof.provenance, "nonCommitProof.provenance");
 
   if (proof.validUntil < proof.observedAt) {
     throw new InvalidPersistenceReconciliationEvidenceError(
@@ -224,6 +312,23 @@ function validateNonCommitProof(
       "nonCommitProof must be bound to the exact expected append identity",
     );
   }
+
+  return Object.freeze({
+    proofId: proof.proofId,
+    uncertaintyRecordId: proof.uncertaintyRecordId,
+    operationId: proof.operationId,
+    providerOperationId: proof.providerOperationId,
+    executionId: proof.executionId,
+    eventId: proof.eventId,
+    expectedStreamVersion: proof.expectedStreamVersion,
+    contentDigest: proof.contentDigest,
+    providerObservationId: proof.providerObservationId,
+    proofIssuer: proof.proofIssuer,
+    verificationMethod: proof.verificationMethod as NonCommitProofVerificationMethod,
+    observedAt: proof.observedAt,
+    validUntil: proof.validUntil,
+    provenance: proof.provenance as NonCommitProofProvenance,
+  });
 }
 
 /**
@@ -231,22 +336,34 @@ function validateNonCommitProof(
  * assumptions. A committed decision is derived only from an exact immutable
  * identity, stream-position, and content-digest match. Retry is authorized
  * only by a validated proof envelope bound to the exact append operation.
+ * Runtime evidence is normalized as exact data records before any nested field
+ * is read, so accessors, unexpected properties, and prototype-bearing objects
+ * cannot participate in an authorization-bearing reconciliation decision.
  */
 export function classifyPersistenceReconciliation(
   evidence: PersistenceReconciliationEvidence,
 ): PersistenceReconciliationDecision {
-  validateExpectedEvent(evidence.expected);
+  const root = normalizeRecord(
+    "evidence",
+    evidence,
+    ["expected", "observedAtExpectedPosition", "nonCommitProof"],
+    ["expected"],
+  );
+  const expected = normalizeExpectedEvent(root.expected);
 
-  const proof = evidence.nonCommitProof;
-  if (proof !== undefined) {
-    validateNonCommitProof(proof, evidence.expected);
-  }
+  const proof = Object.prototype.hasOwnProperty.call(root, "nonCommitProof")
+    ? normalizeNonCommitProof(root.nonCommitProof, expected)
+    : undefined;
 
-  const observed = evidence.observedAtExpectedPosition;
+  const observed = Object.prototype.hasOwnProperty.call(
+    root,
+    "observedAtExpectedPosition",
+  )
+    ? normalizeObservedEvent(root.observedAtExpectedPosition)
+    : undefined;
+
   if (observed !== undefined) {
-    validateObservedEvent(observed);
-
-    if (observed.streamVersion !== evidence.expected.streamVersion) {
+    if (observed.streamVersion !== expected.streamVersion) {
       throw new InvalidPersistenceReconciliationEvidenceError(
         "observedAtExpectedPosition.streamVersion must equal expected.streamVersion",
       );
@@ -259,9 +376,9 @@ export function classifyPersistenceReconciliation(
     }
 
     const exactMatch =
-      observed.eventId === evidence.expected.eventId &&
-      observed.executionId === evidence.expected.executionId &&
-      observed.contentDigest === evidence.expected.contentDigest;
+      observed.eventId === expected.eventId &&
+      observed.executionId === expected.executionId &&
+      observed.contentDigest === expected.contentDigest;
 
     return exactMatch
       ? Object.freeze({ kind: "committed" })
