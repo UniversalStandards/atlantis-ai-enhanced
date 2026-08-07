@@ -77,6 +77,14 @@ function requirePositiveVersion(value: unknown, field: string): asserts value is
   }
 }
 
+function requireNonEmptyRecordId(recordId: string): void {
+  if (recordId.trim().length === 0) {
+    throw new InvalidPersistedUncertaintyStateError(
+      "recordId must be non-empty.",
+    );
+  }
+}
+
 function requireExactDataObject(
   value: unknown,
   subject: string,
@@ -402,11 +410,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
   }
 
   public get(recordId: string): PersistenceUncertaintySnapshot {
-    if (recordId.trim().length === 0) {
-      throw new InvalidPersistedUncertaintyStateError(
-        "recordId must be non-empty.",
-      );
-    }
+    requireNonEmptyRecordId(recordId);
     const { state } = this.loadState();
     const entry = state.records.find((candidate) => candidate.record.recordId === recordId);
     if (entry === undefined) {
@@ -434,6 +438,7 @@ export class DurableSnapshotPersistenceUncertaintyRepository {
     input: TrustedPersistenceUncertaintyAtomicPlanInput,
     clock: TrustedPersistenceClock,
   ): PersistenceUncertaintySnapshot {
+    requireNonEmptyRecordId(recordId);
     requirePositiveVersion(expectedVersion, "expectedVersion");
 
     for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
