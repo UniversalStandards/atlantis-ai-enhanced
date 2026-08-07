@@ -49,6 +49,34 @@ function requireExactKeys(
   }
 }
 
+function requireStandardDenseArray(value: unknown, field: string): readonly unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new InvalidPersistedUncertaintyRecordError(`${field} must be a standard array.`);
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new InvalidPersistedUncertaintyRecordError(`${field}[${index}] must be an enumerable data property.`);
+    }
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "length") {
+      continue;
+    }
+    if (typeof key !== "string") {
+      throw new InvalidPersistedUncertaintyRecordError(`${field} contains an unexpected property.`);
+    }
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key || index >= value.length) {
+      throw new InvalidPersistedUncertaintyRecordError(`${field} contains an unexpected property.`);
+    }
+  }
+
+  return value;
+}
+
 function requireNonEmpty(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new InvalidPersistedUncertaintyRecordError(`${field} must be a non-empty string.`);
@@ -178,14 +206,12 @@ export function restoreExactPersistenceUncertaintyRecord(value: unknown): Persis
   if (record.providerOperationId !== undefined) {
     requireNonEmpty(record.providerOperationId, "record.providerOperationId");
   }
-  if (!Array.isArray(record.attempts) || Object.getPrototypeOf(record.attempts) !== Array.prototype) {
-    throw new InvalidPersistedUncertaintyRecordError("record.attempts must be a standard array.");
-  }
+  const persistedAttempts = requireStandardDenseArray(record.attempts, "record.attempts");
   if (!["pending", "quarantined", "resolved_committed", "resolved_not_committed"].includes(String(record.status))) {
     throw new InvalidPersistedUncertaintyRecordError("record.status is invalid.");
   }
 
-  const attempts = record.attempts.map((attempt, index) => restoreAttempt(attempt, index, firstObservedAt));
+  const attempts = persistedAttempts.map((attempt, index) => restoreAttempt(attempt, index, firstObservedAt));
   const attemptIds = new Set<string>();
   const proofIds = new Set<string>();
   for (const attempt of attempts) {
