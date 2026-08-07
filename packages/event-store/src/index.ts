@@ -85,6 +85,15 @@ function assertCursor(value: number, field: string): void {
   }
 }
 
+function requireExactBooleanSettlement(value: unknown): boolean {
+  if (value !== true && value !== false) {
+    throw new InvalidEventError(
+      "storage compareAndSwap result must be a synchronous boolean.",
+    );
+  }
+  return value;
+}
+
 function validateEvent(event: AppendEventInput): void {
   assertNonEmpty(event.streamId, "streamId");
   assertNonEmpty(event.eventId, "eventId");
@@ -354,6 +363,23 @@ export class DurableSnapshotEventStore extends IndexedEventStore {
     return snapshot;
   }
 
+  private requireCommittedCandidateAcknowledgement(
+    expectedRevision: number,
+    candidate: string,
+  ): readonly StoredEvent[] {
+    const acknowledged = this.storage.load();
+    assertCursor(acknowledged.revision, "storage revision");
+    if (
+      acknowledged.revision !== expectedRevision + 1
+      || acknowledged.value !== candidate
+    ) {
+      throw new InvalidEventError(
+        "storage acknowledged a commit without exposing the exact event-store candidate at the expected successor revision.",
+      );
+    }
+    return parsePersistedEvents(acknowledged.value);
+  }
+
   public append<TPayload>(
     event: AppendEventInput<TPayload>,
     expectedVersion: number,
@@ -364,10 +390,30 @@ export class DurableSnapshotEventStore extends IndexedEventStore {
       const snapshot = this.reload();
       const stored = this.createStoredEvent(event, expectedVersion);
       const nextEvents = [...this.events, stored];
+      const candidate = JSON.stringify(nextEvents);
+      const committed = requireExactBooleanSettlement(
+        this.storage.compareAndSwap(snapshot.revision, candidate),
+      );
 
-      if (this.storage.compareAndSwap(snapshot.revision, JSON.stringify(nextEvents))) {
-        this.replaceEvents(nextEvents);
-        return stored;
+      if (committed) {
+        const acknowledgedEvents = this.requireCommittedCandidateAcknowledgement(
+          snapshot.revision,
+          candidate,
+        );
+        this.replaceEvents(acknowledgedEvents);
+        const acknowledgedStored = acknowledgedEvents.find(
+          (candidateEvent) => candidateEvent.eventId === stored.eventId,
+        );
+        if (
+          acknowledgedStored === undefined
+          || acknowledgedStored.sequence !== stored.sequence
+          || acknowledgedStored.streamVersion !== stored.streamVersion
+        ) {
+          throw new InvalidEventError(
+            "acknowledged event-store state must contain the committed event at the expected sequence and stream version.",
+          );
+        }
+        return acknowledgedStored as StoredEvent<TPayload>;
       }
     }
 
