@@ -1,4 +1,8 @@
 import {
+  normalizeExactDataRecord,
+  requireExactDataFields,
+} from "./exact-data-record.js";
+import {
   consumePersistenceProof,
   restorePersistenceProofConsumptionIndex,
   type PersistenceProofConsumption,
@@ -28,6 +32,38 @@ export class InvalidPersistenceUncertaintyAtomicPlanError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "InvalidPersistenceUncertaintyAtomicPlanError";
+  }
+}
+
+function normalizeTrustedAtomicPlanInput(
+  value: unknown,
+): TrustedPersistenceUncertaintyAtomicPlanInput {
+  try {
+    const input = normalizeExactDataRecord(
+      "trusted uncertainty atomic-plan input",
+      value,
+      ["attemptId", "observedAt", "providerObservationId", "evidence"],
+    );
+    requireExactDataFields(
+      "trusted uncertainty atomic-plan input",
+      input,
+      ["attemptId", "observedAt", "evidence"],
+    );
+
+    return Object.freeze({
+      attemptId: input.attemptId as string,
+      observedAt: input.observedAt as string,
+      ...(Object.prototype.hasOwnProperty.call(input, "providerObservationId")
+        ? { providerObservationId: input.providerObservationId as string }
+        : {}),
+      evidence: input.evidence as ReconcilePersistenceUncertaintyInput["evidence"],
+    });
+  } catch (error) {
+    throw new InvalidPersistenceUncertaintyAtomicPlanError(
+      error instanceof Error
+        ? error.message
+        : "trusted uncertainty atomic-plan input is invalid",
+    );
   }
 }
 
@@ -98,8 +134,10 @@ export function planPersistenceUncertaintyAtomicTransition(
 
 /**
  * Production composition boundary for atomic uncertainty transitions. The
- * reconciliation timestamp is sampled exactly once from the trusted runtime
- * clock and cannot be supplied or revised by the caller.
+ * caller envelope is normalized before any fields are read or the trusted
+ * clock is sampled. The reconciliation timestamp is then sampled exactly once
+ * from the trusted runtime clock and cannot be supplied or revised by the
+ * caller.
  */
 export function planPersistenceUncertaintyAtomicTransitionWithTrustedClock(
   record: PersistenceUncertaintyRecord,
@@ -107,13 +145,19 @@ export function planPersistenceUncertaintyAtomicTransitionWithTrustedClock(
   input: TrustedPersistenceUncertaintyAtomicPlanInput,
   clock: TrustedPersistenceClock,
 ): PersistenceUncertaintyAtomicPlan {
+  const normalizedInput = normalizeTrustedAtomicPlanInput(input);
   const reconciledAt = clock.now();
 
   return planPersistenceUncertaintyAtomicTransition(
     record,
     proofConsumptionIndex,
     {
-      ...input,
+      attemptId: normalizedInput.attemptId,
+      observedAt: normalizedInput.observedAt,
+      ...(normalizedInput.providerObservationId === undefined
+        ? {}
+        : { providerObservationId: normalizedInput.providerObservationId }),
+      evidence: normalizedInput.evidence,
       reconciledAt,
     },
   );
