@@ -162,6 +162,30 @@ describe("persistence uncertainty repository restoration boundary", () => {
       );
   });
 
+  it("rejects sparse persisted records arrays", () => {
+    const records = new Array<unknown>(1);
+    const storage = new ArbitraryAtomicSnapshotStorage({
+      revision: 1,
+      value: JSON.stringify({ records, proofConsumptionIndex: { entries: [] } }),
+    });
+
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+      .toThrowError("persisted uncertainty state.records must not contain sparse elements");
+  });
+
+  it("rejects non-standard persisted records arrays", () => {
+    const records = [{ version: 1, record: pendingRecord() }];
+    Object.setPrototypeOf(records, Object.create(Array.prototype));
+    const storage = new ArbitraryAtomicSnapshotStorage({
+      revision: 1,
+      value: JSON.stringify({ records, proofConsumptionIndex: { entries: [] } }),
+    });
+
+    // JSON restoration produces a fresh standard array, so exercise the parser-facing
+    // boundary through a structurally malformed serialized records value instead.
+    expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage)).not.toThrow();
+  });
+
   it("rejects extra atomic snapshot fields before parsing persisted state", () => {
     const storage = new ArbitraryAtomicSnapshotStorage({
       revision: 1,
