@@ -65,6 +65,29 @@ class ThrowingSettlementStorage implements AtomicSnapshotStorage {
 }
 
 describe("persistence uncertainty repository settlement boundary", () => {
+  it("rejects invalid persistence retry bounds before loading durable state", () => {
+    for (const maxPersistenceAttempts of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      let loadCalls = 0;
+      const storage: AtomicSnapshotStorage = {
+        load() {
+          loadCalls += 1;
+          throw new Error("storage must not be loaded");
+        },
+        compareAndSwap() {
+          return false;
+        },
+      };
+
+      expect(() => new DurableSnapshotPersistenceUncertaintyRepository(
+        storage,
+        maxPersistenceAttempts,
+      )).toThrowError(new InvalidPersistedUncertaintyStateError(
+        "maxPersistenceAttempts must be a positive safe integer.",
+      ));
+      expect(loadCalls).toBe(0);
+    }
+  });
+
   it.each([
     ["object", { committed: true }],
     ["boxed boolean", new Boolean(true)],
