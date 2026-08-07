@@ -162,6 +162,18 @@ describe("persistence uncertainty repository restoration boundary", () => {
       );
   });
 
+  it("rejects non-positive or non-integral persisted entry versions", () => {
+    for (const version of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const storage = new SeededAtomicSnapshotStorage(1, JSON.stringify({
+        records: [{ version, record: pendingRecord() }],
+        proofConsumptionIndex: { entries: [] },
+      }));
+
+      expect(() => new DurableSnapshotPersistenceUncertaintyRepository(storage))
+        .toThrowError("records[0].version must be a positive safe integer");
+    }
+  });
+
   it("rejects non-array persisted records before entry restoration", () => {
     const storage = new ArbitraryAtomicSnapshotStorage({
       revision: 1,
