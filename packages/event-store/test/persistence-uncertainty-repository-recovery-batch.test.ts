@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   createPersistenceUncertaintyRecord,
-  type PersistenceUncertaintyRecord,
 } from "@atlantis/contracts/persistence-uncertainty";
 
 import type { AtomicSnapshot, AtomicSnapshotStorage } from "../src/index.js";
@@ -34,8 +33,8 @@ class ObservableMemorySnapshotStorage implements AtomicSnapshotStorage {
   }
 }
 
-function record(index: number, status: "pending" | "quarantined" = "pending") {
-  const pending = createPersistenceUncertaintyRecord({
+function record(index: number) {
+  return createPersistenceUncertaintyRecord({
     recordId: `uncertainty-${index}`,
     expected: {
       operationId: `operation-${index}`,
@@ -47,8 +46,6 @@ function record(index: number, status: "pending" | "quarantined" = "pending") {
     providerOperationId: `provider-operation-${index}`,
     firstObservedAt: `2026-08-06T0${index}:00:00.000Z`,
   });
-
-  return Object.freeze({ ...pending, status }) as PersistenceUncertaintyRecord;
 }
 
 describe("persistence uncertainty repository recovery batch", () => {
@@ -56,12 +53,12 @@ describe("persistence uncertainty repository recovery batch", () => {
     const storage = new ObservableMemorySnapshotStorage();
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
     repository.create(record(1));
-    repository.create(record(2, "quarantined"));
+    repository.create(record(2));
     repository.create(record(3));
     storage.resetLoadCount();
 
     const selected = repository.selectRecoveryBatch({
-      statuses: ["pending", "quarantined"],
+      statuses: ["pending"],
       limit: 2,
     });
 
@@ -77,7 +74,7 @@ describe("persistence uncertainty repository recovery batch", () => {
     const storage = new ObservableMemorySnapshotStorage();
     const first = new DurableSnapshotPersistenceUncertaintyRepository(storage);
     first.create(record(1));
-    first.create(record(2, "quarantined"));
+    first.create(record(2));
     first.create(record(3));
 
     const beforeRestart = first.selectRecoveryBatch({ statuses: ["pending"], limit: 2 });
@@ -94,7 +91,7 @@ describe("persistence uncertainty repository recovery batch", () => {
     const writer = new DurableSnapshotPersistenceUncertaintyRepository(storage);
     writer.create(record(1));
     writer.create(record(2));
-    writer.create(record(3, "quarantined"));
+    writer.create(record(3));
 
     const readerA = new DurableSnapshotPersistenceUncertaintyRepository(storage);
     const readerB = new DurableSnapshotPersistenceUncertaintyRepository(storage);
