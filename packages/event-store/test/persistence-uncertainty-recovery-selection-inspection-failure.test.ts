@@ -62,6 +62,23 @@ describe("persistence uncertainty recovery selection inspection failures", () =>
     })).toThrow("recovery selection statuses could not be inspected safely.");
   });
 
+  it("normalizes hostile status-array descriptor inspection into the domain error", () => {
+    const statuses = new Proxy(["pending"] as PersistenceUncertaintyStatus[], {
+      getOwnPropertyDescriptor: () => {
+        throw new Error("hostile statuses descriptor trap");
+      },
+    });
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], {
+      statuses,
+      limit: 1,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], {
+      statuses,
+      limit: 1,
+    })).toThrow("recovery selection statuses could not be inspected safely.");
+  });
+
   it("normalizes revoked runtime selections instead of leaking a native proxy error", () => {
     const revocable = Proxy.revocable(
       { statuses: ["pending"] as PersistenceUncertaintyStatus[], limit: 1 },
