@@ -46,6 +46,11 @@ describe("persistence uncertainty repository CAS settlement validation", () => {
     ["falsy number", 0],
     ["null", null],
     ["undefined", undefined],
+    ["plain object", Object.freeze({})],
+    ["array", Object.freeze([])],
+    ["function", () => true],
+    ["bigint", 1n],
+    ["symbol", Symbol("true")],
   ])("rejects non-boolean CAS settlement (%s) before acknowledgement", (_label, settlement) => {
     const storage = new NonBooleanSettlementStorage(settlement);
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
