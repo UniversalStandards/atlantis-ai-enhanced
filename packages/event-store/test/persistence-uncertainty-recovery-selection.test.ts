@@ -84,6 +84,10 @@ describe("persistence uncertainty recovery selection", () => {
   it.each([
     { statuses: [], limit: 1 },
     { statuses: ["pending"], limit: 0 },
+    { statuses: ["pending"], limit: -1 },
+    { statuses: ["pending"], limit: 1.5 },
+    { statuses: ["pending"], limit: Number.NaN },
+    { statuses: ["pending"], limit: Number.POSITIVE_INFINITY },
     { statuses: ["pending"], limit: Number.MAX_SAFE_INTEGER + 1 },
     { statuses: ["pending", "pending"], limit: 1 },
     { statuses: ["resolved_committed"], limit: 1 },
@@ -112,6 +116,18 @@ describe("persistence uncertainty recovery selection", () => {
   it("rejects sparse status arrays", () => {
     const statuses = new Array(2) as PersistenceUncertaintyStatus[];
     statuses[1] = "pending";
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], {
+      statuses,
+      limit: 1,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+  });
+
+  it("rejects symbol-bearing status arrays", () => {
+    const statuses = ["pending"] as PersistenceUncertaintyStatus[] & {
+      [key: symbol]: unknown;
+    };
+    statuses[Symbol("unexpected")] = true;
 
     expect(() => selectPersistenceUncertaintyRecoveryBatch([], {
       statuses,
