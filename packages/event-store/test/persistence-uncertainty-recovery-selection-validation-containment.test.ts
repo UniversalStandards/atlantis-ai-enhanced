@@ -1,4 +1,5 @@
 import type { PersistenceUncertaintyStatus } from "@atlantis/contracts/persistence-uncertainty";
+import { describe, expect, it } from "vitest";
 
 import {
   InvalidPersistenceUncertaintyRecoverySelectionError,
