@@ -64,6 +64,25 @@ function pendingRecord(): PersistenceUncertaintyRecord {
 }
 
 describe("persistence uncertainty repository input validation", () => {
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid maxPersistenceAttempts %s before reading durable state",
+    (maxPersistenceAttempts) => {
+      const storage = new CountingStorage();
+
+      expect(() => new DurableSnapshotPersistenceUncertaintyRepository(
+        storage,
+        maxPersistenceAttempts,
+      )).toThrowError(
+        new InvalidPersistedUncertaintyStateError(
+          "maxPersistenceAttempts must be a positive safe integer.",
+        ),
+      );
+
+      expect(storage.loadCalls).toBe(0);
+      expect(storage.compareAndSwapCalls).toBe(0);
+    },
+  );
+
   it("rejects malformed create records before reloading or mutating durable state", () => {
     const storage = new CountingStorage();
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
@@ -129,7 +148,7 @@ describe("persistence uncertainty repository input validation", () => {
     expect(storage.compareAndSwapCalls).toBe(0);
   });
 
-  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
     "rejects invalid reconcile expectedVersion %s before durable reads or clock sampling",
     (expectedVersion) => {
       const storage = new CountingStorage();
