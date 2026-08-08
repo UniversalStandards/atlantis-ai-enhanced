@@ -12,6 +12,8 @@ class NonBooleanSettlementStorage implements AtomicSnapshotStorage {
   public loadCalls = 0;
   public compareAndSwapCalls = 0;
 
+  public constructor(private readonly settlement: unknown) {}
+
   public load(): AtomicSnapshot {
     this.loadCalls += 1;
     return Object.freeze({ revision: 0, value: null });
@@ -19,7 +21,7 @@ class NonBooleanSettlementStorage implements AtomicSnapshotStorage {
 
   public compareAndSwap(): boolean {
     this.compareAndSwapCalls += 1;
-    return "true" as unknown as boolean;
+    return this.settlement as boolean;
   }
 }
 
@@ -39,8 +41,13 @@ function pendingRecord() {
 }
 
 describe("persistence uncertainty repository CAS settlement validation", () => {
-  it("rejects truthy non-boolean CAS settlement instead of acknowledging a commit", () => {
-    const storage = new NonBooleanSettlementStorage();
+  it.each([
+    ["truthy string", "true"],
+    ["falsy number", 0],
+    ["null", null],
+    ["undefined", undefined],
+  ])("rejects non-boolean CAS settlement (%s) before acknowledgement", (_label, settlement) => {
+    const storage = new NonBooleanSettlementStorage(settlement);
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
 
     expect(() => repository.create(pendingRecord())).toThrowError(
@@ -49,6 +56,8 @@ describe("persistence uncertainty repository CAS settlement validation", () => {
       ),
     );
 
+    // One constructor read plus one mutation-attempt read. An invalid settlement
+    // must fail before the post-commit acknowledgement read can occur.
     expect(storage.loadCalls).toBe(2);
     expect(storage.compareAndSwapCalls).toBe(1);
   });
