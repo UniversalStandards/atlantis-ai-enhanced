@@ -25,24 +25,28 @@ class MemorySnapshotStorage implements AtomicSnapshotStorage {
   }
 }
 
+function createRecord(recordId: string) {
+  return createPersistenceUncertaintyRecord({
+    recordId,
+    expected: {
+      operationId: `operation-${recordId}`,
+      eventId: `event-${recordId}`,
+      executionId: `execution-${recordId}`,
+      streamVersion: 1,
+      contentDigest: `sha256:${recordId}`,
+    },
+    providerOperationId: `provider-operation-${recordId}`,
+    firstObservedAt: "2026-08-08T12:00:00.000Z",
+  });
+}
+
 describe("persistence uncertainty recovery handoff integrity", () => {
   it("returns an immutable recovery handoff graph", () => {
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(
       new MemorySnapshotStorage(),
     );
 
-    repository.create(createPersistenceUncertaintyRecord({
-      recordId: "uncertainty-immutable-handoff",
-      expected: {
-        operationId: "operation-immutable-handoff",
-        eventId: "event-immutable-handoff",
-        executionId: "execution-immutable-handoff",
-        streamVersion: 1,
-        contentDigest: "sha256:immutable-handoff",
-      },
-      providerOperationId: "provider-operation-immutable-handoff",
-      firstObservedAt: "2026-08-08T12:00:00.000Z",
-    }));
+    repository.create(createRecord("uncertainty-immutable-handoff"));
 
     const selected = repository.selectRecoveryBatch({
       statuses: ["pending"],
@@ -59,6 +63,46 @@ describe("persistence uncertainty recovery handoff integrity", () => {
     expect(Object.isFrozen(handoff)).toBe(true);
     expect(Object.isFrozen(handoff.record)).toBe(true);
     expect(Object.isFrozen(handoff.record.expected)).toBe(true);
+    expect(Object.isFrozen(handoff.record.attempts)).toBe(true);
+  });
+
+  it("keeps a selected recovery handoff stable after the durable record advances", () => {
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(
+      new MemorySnapshotStorage(),
+    );
+    const record = createRecord("uncertainty-stable-handoff");
+    repository.create(record);
+
+    const selected = repository.selectRecoveryBatch({
+      statuses: ["pending"],
+      limit: 1,
+    });
+    const [handoff] = selected;
+    expect(handoff).toBeDefined();
+    if (handoff === undefined) {
+      throw new Error("expected one recovery handoff");
+    }
+
+    const advanced = repository.reconcile(
+      handoff.record.recordId,
+      handoff.version,
+      {
+        attemptId: "attempt-after-handoff",
+        observedAt: "2026-08-08T12:01:00.000Z",
+        evidence: { expected: record.expected },
+      },
+      { now: () => "2026-08-08T12:02:00.000Z" },
+    );
+
+    expect(advanced.version).toBe(2);
+    expect(advanced.record.attempts).toHaveLength(1);
+    expect(advanced.record).not.toBe(handoff.record);
+
+    expect(handoff.version).toBe(1);
+    expect(handoff.record.status).toBe("pending");
+    expect(handoff.record.attempts).toHaveLength(0);
+    expect(Object.isFrozen(handoff)).toBe(true);
+    expect(Object.isFrozen(handoff.record)).toBe(true);
     expect(Object.isFrozen(handoff.record.attempts)).toBe(true);
   });
 });
