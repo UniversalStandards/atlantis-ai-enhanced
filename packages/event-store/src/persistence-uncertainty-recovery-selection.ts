@@ -29,121 +29,138 @@ interface ValidatedRecoverySelection {
   readonly limit: number;
 }
 
+function rethrowInspectionFailure(error: unknown, field: string): never {
+  if (error instanceof InvalidPersistenceUncertaintyRecoverySelectionError) {
+    throw error;
+  }
+  throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+    `${field} could not be inspected safely.`,
+  );
+}
+
 function requireExactSelectionObject(
   selection: unknown,
 ): CanonicalRecoverySelection {
-  if (
-    selection === null
-    || typeof selection !== "object"
-    || Array.isArray(selection)
-    || Object.getPrototypeOf(selection) !== Object.prototype
-  ) {
-    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-      "recovery selection must be a standard object.",
-    );
-  }
-
-  const fields = ["statuses", "limit"] as const;
-  const keys = Reflect.ownKeys(selection);
-  if (
-    keys.length !== fields.length
-    || keys.some((key) => typeof key !== "string" || !fields.includes(key as typeof fields[number]))
-  ) {
-    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-      "recovery selection must contain exactly: statuses, limit.",
-    );
-  }
-
-  const descriptors = new Map<typeof fields[number], PropertyDescriptor>();
-  for (const field of fields) {
-    const descriptor = Object.getOwnPropertyDescriptor(selection, field);
+  try {
     if (
-      descriptor === undefined
-      || descriptor.enumerable !== true
-      || !("value" in descriptor)
+      selection === null
+      || typeof selection !== "object"
+      || Array.isArray(selection)
+      || Object.getPrototypeOf(selection) !== Object.prototype
     ) {
       throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-        `recovery selection.${field} must be an enumerable data property.`,
+        "recovery selection must be a standard object.",
       );
     }
-    descriptors.set(field, descriptor);
-  }
 
-  const statusesDescriptor = descriptors.get("statuses");
-  const limitDescriptor = descriptors.get("limit");
-  if (statusesDescriptor === undefined || limitDescriptor === undefined) {
-    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-      "recovery selection descriptors could not be normalized.",
-    );
-  }
+    const fields = ["statuses", "limit"] as const;
+    const keys = Reflect.ownKeys(selection);
+    if (
+      keys.length !== fields.length
+      || keys.some((key) => typeof key !== "string" || !fields.includes(key as typeof fields[number]))
+    ) {
+      throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+        "recovery selection must contain exactly: statuses, limit.",
+      );
+    }
 
-  return Object.freeze({
-    statuses: statusesDescriptor.value,
-    limit: limitDescriptor.value,
-  });
+    const descriptors = new Map<typeof fields[number], PropertyDescriptor>();
+    for (const field of fields) {
+      const descriptor = Object.getOwnPropertyDescriptor(selection, field);
+      if (
+        descriptor === undefined
+        || descriptor.enumerable !== true
+        || !("value" in descriptor)
+      ) {
+        throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+          `recovery selection.${field} must be an enumerable data property.`,
+        );
+      }
+      descriptors.set(field, descriptor);
+    }
+
+    const statusesDescriptor = descriptors.get("statuses");
+    const limitDescriptor = descriptors.get("limit");
+    if (statusesDescriptor === undefined || limitDescriptor === undefined) {
+      throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+        "recovery selection descriptors could not be normalized.",
+      );
+    }
+
+    return Object.freeze({
+      statuses: statusesDescriptor.value,
+      limit: limitDescriptor.value,
+    });
+  } catch (error) {
+    rethrowInspectionFailure(error, "recovery selection");
+  }
 }
 
 function requireDenseStandardStatuses(
   value: unknown,
 ): readonly PersistenceUncertaintyStatus[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
-    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-      "recovery selection statuses must be a standard array.",
-    );
-  }
-
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
-  if (
-    lengthDescriptor === undefined
-    || !("value" in lengthDescriptor)
-    || !Number.isSafeInteger(lengthDescriptor.value)
-    || (lengthDescriptor.value as number) < 0
-  ) {
-    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-      "recovery selection statuses must have a canonical array length.",
-    );
-  }
-  const length = lengthDescriptor.value as number;
-
-  const keys = Reflect.ownKeys(value);
-  for (const key of keys) {
-    if (key === "length") {
-      continue;
-    }
-    if (
-      typeof key !== "string"
-      || !/^(0|[1-9]\d*)$/.test(key)
-      || Number(key) >= length
-      || String(Number(key)) !== key
-    ) {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
       throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-        "recovery selection statuses must not contain non-index fields.",
+        "recovery selection statuses must be a standard array.",
       );
     }
-  }
 
-  if (keys.length !== length + 1) {
-    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-      "recovery selection statuses must not contain sparse elements.",
-    );
-  }
-
-  const statuses: PersistenceUncertaintyStatus[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
     if (
-      descriptor === undefined
-      || descriptor.enumerable !== true
-      || !("value" in descriptor)
+      lengthDescriptor === undefined
+      || !("value" in lengthDescriptor)
+      || !Number.isSafeInteger(lengthDescriptor.value)
+      || (lengthDescriptor.value as number) < 0
     ) {
       throw new InvalidPersistenceUncertaintyRecoverySelectionError(
-        `recovery selection statuses[${index}] must be an enumerable data property.`,
+        "recovery selection statuses must have a canonical array length.",
       );
     }
-    statuses.push(descriptor.value as PersistenceUncertaintyStatus);
-  }
+    const length = lengthDescriptor.value as number;
 
-  return Object.freeze(statuses);
+    const keys = Reflect.ownKeys(value);
+    for (const key of keys) {
+      if (key === "length") {
+        continue;
+      }
+      if (
+        typeof key !== "string"
+        || !/^(0|[1-9]\d*)$/.test(key)
+        || Number(key) >= length
+        || String(Number(key)) !== key
+      ) {
+        throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+          "recovery selection statuses must not contain non-index fields.",
+        );
+      }
+    }
+
+    if (keys.length !== length + 1) {
+      throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+        "recovery selection statuses must not contain sparse elements.",
+      );
+    }
+
+    const statuses: PersistenceUncertaintyStatus[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (
+        descriptor === undefined
+        || descriptor.enumerable !== true
+        || !("value" in descriptor)
+      ) {
+        throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+          `recovery selection statuses[${index}] must be an enumerable data property.`,
+        );
+      }
+      statuses.push(descriptor.value as PersistenceUncertaintyStatus);
+    }
+
+    return Object.freeze(statuses);
+  } catch (error) {
+    rethrowInspectionFailure(error, "recovery selection statuses");
+  }
 }
 
 function validateSelection(
