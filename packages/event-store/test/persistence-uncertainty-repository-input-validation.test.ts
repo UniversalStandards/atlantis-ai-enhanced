@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { AtomicSnapshot, AtomicSnapshotStorage } from "../src/index.js";
 import {
+  InvalidPersistenceUncertaintyRecoverySelectionError,
+} from "../src/persistence-uncertainty-recovery-selection.js";
+import {
   DurableSnapshotPersistenceUncertaintyRepository,
   InvalidPersistedUncertaintyStateError,
 } from "../src/persistence-uncertainty-repository.js";
@@ -50,6 +53,20 @@ describe("persistence uncertainty repository input validation", () => {
     expect(() => repository.get("   ")).toThrowError(
       new InvalidPersistedUncertaintyStateError("recordId must be non-empty."),
     );
+
+    expect(storage.loadCalls).toBe(1);
+    expect(storage.compareAndSwapCalls).toBe(0);
+  });
+
+  it("rejects invalid recovery selections before reloading durable state", () => {
+    const storage = new CountingStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    expect(storage.loadCalls).toBe(1);
+
+    expect(() => repository.selectRecoveryBatch({
+      statuses: ["pending"],
+      limit: 0,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
 
     expect(storage.loadCalls).toBe(1);
     expect(storage.compareAndSwapCalls).toBe(0);
