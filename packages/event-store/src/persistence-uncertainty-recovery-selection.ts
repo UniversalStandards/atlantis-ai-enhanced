@@ -19,9 +19,19 @@ const selectableStatuses = new Set<PersistenceUncertaintyStatus>([
   "quarantined",
 ]);
 
+interface CanonicalRecoverySelection {
+  readonly statuses: unknown;
+  readonly limit: unknown;
+}
+
+interface ValidatedRecoverySelection {
+  readonly statuses: ReadonlySet<PersistenceUncertaintyStatus>;
+  readonly limit: number;
+}
+
 function requireExactSelectionObject(
   selection: unknown,
-): Record<"statuses" | "limit", unknown> {
+): CanonicalRecoverySelection {
   if (
     selection === null
     || typeof selection !== "object"
@@ -44,6 +54,7 @@ function requireExactSelectionObject(
     );
   }
 
+  const descriptors = new Map<typeof fields[number], PropertyDescriptor>();
   for (const field of fields) {
     const descriptor = Object.getOwnPropertyDescriptor(selection, field);
     if (
@@ -55,9 +66,21 @@ function requireExactSelectionObject(
         `recovery selection.${field} must be an enumerable data property.`,
       );
     }
+    descriptors.set(field, descriptor);
   }
 
-  return selection as Record<"statuses" | "limit", unknown>;
+  const statusesDescriptor = descriptors.get("statuses");
+  const limitDescriptor = descriptors.get("limit");
+  if (statusesDescriptor === undefined || limitDescriptor === undefined) {
+    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+      "recovery selection descriptors could not be normalized.",
+    );
+  }
+
+  return Object.freeze({
+    statuses: statusesDescriptor.value,
+    limit: limitDescriptor.value,
+  });
 }
 
 function requireDenseStandardStatuses(
@@ -69,6 +92,19 @@ function requireDenseStandardStatuses(
     );
   }
 
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    lengthDescriptor === undefined
+    || !("value" in lengthDescriptor)
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || (lengthDescriptor.value as number) < 0
+  ) {
+    throw new InvalidPersistenceUncertaintyRecoverySelectionError(
+      "recovery selection statuses must have a canonical array length.",
+    );
+  }
+  const length = lengthDescriptor.value as number;
+
   const keys = Reflect.ownKeys(value);
   for (const key of keys) {
     if (key === "length") {
@@ -77,7 +113,7 @@ function requireDenseStandardStatuses(
     if (
       typeof key !== "string"
       || !/^(0|[1-9]\d*)$/.test(key)
-      || Number(key) >= value.length
+      || Number(key) >= length
       || String(Number(key)) !== key
     ) {
       throw new InvalidPersistenceUncertaintyRecoverySelectionError(
@@ -86,13 +122,14 @@ function requireDenseStandardStatuses(
     }
   }
 
-  if (keys.length !== value.length + 1) {
+  if (keys.length !== length + 1) {
     throw new InvalidPersistenceUncertaintyRecoverySelectionError(
       "recovery selection statuses must not contain sparse elements.",
     );
   }
 
-  for (let index = 0; index < value.length; index += 1) {
+  const statuses: PersistenceUncertaintyStatus[] = [];
+  for (let index = 0; index < length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (
       descriptor === undefined
@@ -103,14 +140,15 @@ function requireDenseStandardStatuses(
         `recovery selection statuses[${index}] must be an enumerable data property.`,
       );
     }
+    statuses.push(descriptor.value as PersistenceUncertaintyStatus);
   }
 
-  return value as PersistenceUncertaintyStatus[];
+  return Object.freeze(statuses);
 }
 
 function validateSelection(
   selection: PersistenceUncertaintyRecoverySelection,
-): ReadonlySet<PersistenceUncertaintyStatus> {
+): ValidatedRecoverySelection {
   const candidate = requireExactSelectionObject(selection);
   if (!Number.isSafeInteger(candidate.limit) || (candidate.limit as number) < 1) {
     throw new InvalidPersistenceUncertaintyRecoverySelectionError(
@@ -139,7 +177,11 @@ function validateSelection(
     }
     statuses.add(status);
   }
-  return statuses;
+
+  return Object.freeze({
+    statuses,
+    limit: candidate.limit as number,
+  });
 }
 
 export function assertValidPersistenceUncertaintyRecoverySelection(
@@ -157,13 +199,13 @@ export function selectPersistenceUncertaintyRecoveryBatch(
   snapshots: readonly PersistenceUncertaintySnapshot[],
   selection: PersistenceUncertaintyRecoverySelection,
 ): readonly PersistenceUncertaintySnapshot[] {
-  const statuses = validateSelection(selection);
+  const validated = validateSelection(selection);
   const selected: PersistenceUncertaintySnapshot[] = [];
 
   for (const snapshot of snapshots) {
-    if (statuses.has(snapshot.record.status)) {
+    if (validated.statuses.has(snapshot.record.status)) {
       selected.push(snapshot);
-      if (selected.length === selection.limit) {
+      if (selected.length === validated.limit) {
         break;
       }
     }
