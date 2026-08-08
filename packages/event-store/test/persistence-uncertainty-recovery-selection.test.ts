@@ -177,4 +177,30 @@ describe("persistence uncertainty recovery selection", () => {
     })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
     expect(getterInvoked).toBe(false);
   });
+
+  it("normalizes descriptor values without invoking proxy get traps", () => {
+    let getTrapInvocations = 0;
+    const statuses = new Proxy(["pending"] as PersistenceUncertaintyStatus[], {
+      get: () => {
+        getTrapInvocations += 1;
+        throw new Error("status proxy get trap must not execute");
+      },
+    });
+    const selection = new Proxy({ statuses, limit: 1 }, {
+      get: () => {
+        getTrapInvocations += 1;
+        throw new Error("selection proxy get trap must not execute");
+      },
+    });
+
+    const selected = selectPersistenceUncertaintyRecoveryBatch(
+      [snapshot(1), snapshot(2)],
+      selection,
+    );
+
+    expect(selected.map((entry) => entry.record.recordId)).toEqual([
+      "uncertainty-1",
+    ]);
+    expect(getTrapInvocations).toBe(0);
+  });
 });
