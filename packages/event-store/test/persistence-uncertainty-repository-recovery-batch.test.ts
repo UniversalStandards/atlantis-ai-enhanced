@@ -77,6 +77,22 @@ describe("persistence uncertainty repository recovery batch", () => {
     expect(Object.isFrozen(selected)).toBe(true);
   });
 
+  it("rejects invalid recovery selection before durable reads or writes", () => {
+    const storage = new ObservableMemorySnapshotStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    repository.create(record(1));
+    storage.resetLoadCount();
+    const compareAndSwapCountBeforeSelection = storage.compareAndSwapCount;
+
+    expect(() => repository.selectRecoveryBatch({
+      statuses: [],
+      limit: 1,
+    })).toThrowError("recovery selection must include at least one status");
+
+    expect(storage.loadCount).toBe(0);
+    expect(storage.compareAndSwapCount).toBe(compareAndSwapCountBeforeSelection);
+  });
+
   it("is restart-stable for the same authoritative snapshot", () => {
     const storage = new ObservableMemorySnapshotStorage();
     const first = new DurableSnapshotPersistenceUncertaintyRepository(storage);
