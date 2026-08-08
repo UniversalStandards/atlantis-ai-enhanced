@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  createPersistenceUncertaintyRecord,
+  type PersistenceUncertaintyRecord,
+} from "@atlantis/contracts/persistence-uncertainty";
+
 import type { AtomicSnapshot, AtomicSnapshotStorage } from "../src/index.js";
 import {
   InvalidPersistenceUncertaintyRecoverySelectionError,
@@ -8,6 +13,9 @@ import {
   DurableSnapshotPersistenceUncertaintyRepository,
   InvalidPersistedUncertaintyStateError,
 } from "../src/persistence-uncertainty-repository.js";
+import {
+  InvalidPersistedUncertaintyRecordError,
+} from "../src/persistence-uncertainty-restoration-validation.js";
 
 class CountingStorage implements AtomicSnapshotStorage {
   public loadCalls = 0;
@@ -30,21 +38,52 @@ const clock = {
   },
 };
 
+const expected = {
+  operationId: "append-operation-1",
+  eventId: "event-1",
+  executionId: "execution-1",
+  streamVersion: 4,
+  contentDigest: "sha256:expected",
+} as const;
+
 const reconciliationInput = {
   attemptId: "attempt-input-validation",
   observedAt: "2026-08-07T00:00:00.000Z",
   evidence: {
-    expected: {
-      operationId: "append-operation-1",
-      eventId: "event-1",
-      executionId: "execution-1",
-      streamVersion: 4,
-      contentDigest: "sha256:expected",
-    },
+    expected,
   },
 } as const;
 
+function pendingRecord(): PersistenceUncertaintyRecord {
+  return createPersistenceUncertaintyRecord({
+    recordId: "uncertainty-1",
+    expected,
+    providerOperationId: "provider-operation-1",
+    firstObservedAt: "2026-08-07T00:00:00.000Z",
+  });
+}
+
 describe("persistence uncertainty repository input validation", () => {
+  it("rejects malformed create records before reloading or mutating durable state", () => {
+    const storage = new CountingStorage();
+    const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
+    expect(storage.loadCalls).toBe(1);
+
+    const malformedRecord = {
+      ...pendingRecord(),
+      recordId: "   ",
+    } as PersistenceUncertaintyRecord;
+
+    expect(() => repository.create(malformedRecord)).toThrowError(
+      new InvalidPersistedUncertaintyRecordError(
+        "record.recordId must be a non-empty string.",
+      ),
+    );
+
+    expect(storage.loadCalls).toBe(1);
+    expect(storage.compareAndSwapCalls).toBe(0);
+  });
+
   it("rejects blank get record identities before reloading durable state", () => {
     const storage = new CountingStorage();
     const repository = new DurableSnapshotPersistenceUncertaintyRepository(storage);
