@@ -29,8 +29,16 @@ interface ValidatedRecoverySelection {
   readonly limit: number;
 }
 
+function isRecoverySelectionDomainError(error: unknown): boolean {
+  try {
+    return error instanceof InvalidPersistenceUncertaintyRecoverySelectionError;
+  } catch {
+    return false;
+  }
+}
+
 function rethrowInspectionFailure(error: unknown, field: string): never {
-  if (error instanceof InvalidPersistenceUncertaintyRecoverySelectionError) {
+  if (isRecoverySelectionDomainError(error)) {
     throw error;
   }
   throw new InvalidPersistenceUncertaintyRecoverySelectionError(
