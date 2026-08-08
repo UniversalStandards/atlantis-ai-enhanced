@@ -142,6 +142,12 @@ function validateSelection(
   return statuses;
 }
 
+export function assertValidPersistenceUncertaintyRecoverySelection(
+  selection: PersistenceUncertaintyRecoverySelection,
+): void {
+  validateSelection(selection);
+}
+
 /**
  * Selects a bounded recovery batch from one authoritative repository
  * enumeration. Durable order is preserved so repeated workers make the same
