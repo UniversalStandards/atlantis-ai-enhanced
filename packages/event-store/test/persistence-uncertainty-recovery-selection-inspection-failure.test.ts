@@ -27,6 +27,24 @@ describe("persistence uncertainty recovery selection inspection failures", () =>
     );
   });
 
+  it("normalizes hostile selection descriptor inspection into the domain error", () => {
+    const selection = new Proxy(
+      { statuses: ["pending"] as PersistenceUncertaintyStatus[], limit: 1 },
+      {
+        getOwnPropertyDescriptor: () => {
+          throw new Error("hostile selection descriptor trap");
+        },
+      },
+    );
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], selection)).toThrow(
+      InvalidPersistenceUncertaintyRecoverySelectionError,
+    );
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], selection)).toThrow(
+      "recovery selection could not be inspected safely.",
+    );
+  });
+
   it("normalizes hostile status-array enumeration into the domain error", () => {
     const statuses = new Proxy(["pending"] as PersistenceUncertaintyStatus[], {
       ownKeys: () => {
