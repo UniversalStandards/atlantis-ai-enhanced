@@ -14,6 +14,7 @@ class ObservableMemorySnapshotStorage implements AtomicSnapshotStorage {
   private revision = 0;
   private value: string | null = null;
   public loadCount = 0;
+  public compareAndSwapCount = 0;
 
   public load(): AtomicSnapshot {
     this.loadCount += 1;
@@ -21,6 +22,7 @@ class ObservableMemorySnapshotStorage implements AtomicSnapshotStorage {
   }
 
   public compareAndSwap(expectedRevision: number, nextValue: string): boolean {
+    this.compareAndSwapCount += 1;
     if (expectedRevision !== this.revision) {
       return false;
     }
@@ -101,12 +103,14 @@ describe("persistence uncertainty repository recovery batch", () => {
     const readerA = new DurableSnapshotPersistenceUncertaintyRepository(storage);
     const readerB = new DurableSnapshotPersistenceUncertaintyRepository(storage);
     storage.resetLoadCount();
+    const compareAndSwapCountBeforeSelection = storage.compareAndSwapCount;
 
     const selection = { statuses: ["pending"] as const, limit: 2 };
     const batchA = readerA.selectRecoveryBatch(selection);
     const batchB = readerB.selectRecoveryBatch(selection);
 
     expect(storage.loadCount).toBe(2);
+    expect(storage.compareAndSwapCount).toBe(compareAndSwapCountBeforeSelection);
     expect(batchA).toEqual(batchB);
     expect(batchA.map((entry) => entry.record.recordId)).toEqual([
       "uncertainty-1",
