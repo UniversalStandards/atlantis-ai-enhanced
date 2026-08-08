@@ -56,4 +56,24 @@ describe("persistence uncertainty recovery selection inspection failures", () =>
       revocable.proxy as PersistenceUncertaintyRecoverySelection,
     )).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
   });
+
+  it("normalizes an uninspectable thrown value instead of leaking instanceof failure", () => {
+    const thrownValue = Proxy.revocable({}, {});
+    thrownValue.revoke();
+    const selection = new Proxy(
+      { statuses: ["pending"] as PersistenceUncertaintyStatus[], limit: 1 },
+      {
+        getPrototypeOf: () => {
+          throw thrownValue.proxy;
+        },
+      },
+    );
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], selection)).toThrow(
+      InvalidPersistenceUncertaintyRecoverySelectionError,
+    );
+    expect(() => selectPersistenceUncertaintyRecoveryBatch([], selection)).toThrow(
+      "recovery selection could not be inspected safely.",
+    );
+  });
 });
