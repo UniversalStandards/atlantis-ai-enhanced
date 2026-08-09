@@ -36,7 +36,7 @@ describe("recovery ownership fence transition evidence", () => {
     expect(verified).not.toBe(evidence);
   });
 
-  it("allows the same owner to enter a newer fencing epoch", () => {
+  it("allows the same owner to enter a newer fencing epoch under a distinct claim", () => {
     expect(verifyRecoveryOwnershipFenceTransitionEvidence(expected, {
       ...evidence,
       nextOwnerId: evidence.previousOwnerId,
@@ -46,7 +46,21 @@ describe("recovery ownership fence transition evidence", () => {
       nextFence: 9,
       previousOwnerId: "worker-1",
       nextOwnerId: "worker-1",
+      previousClaimId: "claim-1",
+      nextClaimId: "claim-2",
     });
+  });
+
+  it("rejects a numerically newer fence that reuses the same ownership claim", () => {
+    expect(() => verifyRecoveryOwnershipFenceTransitionEvidence(expected, {
+      ...evidence,
+      nextClaimId: evidence.previousClaimId,
+      nextFence: 9,
+    })).toThrowError(
+      new InvalidRecoveryOwnershipFenceTransitionEvidenceError(
+        "evidence.nextClaimId must identify a distinct ownership claim",
+      ),
+    );
   });
 
   it("rejects stale or non-advancing fencing epochs", () => {
