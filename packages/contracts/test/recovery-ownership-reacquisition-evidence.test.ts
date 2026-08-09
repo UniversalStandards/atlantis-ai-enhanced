@@ -49,7 +49,7 @@ const transition = {
   nextOwnerId: nextLease.ownerId,
   previousFence: previousLease.fence,
   nextFence: nextLease.fence,
-  observedAtEpochMs: 2050,
+  observedAtEpochMs: 2150,
 } as const;
 
 describe("recovery ownership reacquisition evidence", () => {
@@ -146,5 +146,19 @@ describe("recovery ownership reacquisition evidence", () => {
       { ...nextLease, fence: previousLease.fence },
       { ...transition, nextFence: previousLease.fence },
     )).toThrow("evidence.nextFence must be strictly greater than evidence.previousFence");
+  });
+
+  it("rejects a transition observation that predates the next ownership acquisition", () => {
+    expect(() => verifyRecoveryOwnershipReacquisitionEvidence(
+      previousExpected,
+      previousLease,
+      nextExpected,
+      nextLease,
+      { ...transition, observedAtEpochMs: nextLease.acquiredAtEpochMs - 1 },
+    )).toThrowError(
+      new InvalidRecoveryOwnershipReacquisitionEvidenceError(
+        "transition observation must not precede next ownership acquisition",
+      ),
+    );
   });
 });
