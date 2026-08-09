@@ -63,7 +63,7 @@ describe("recovery ownership reacquisition transition containment", () => {
         nextLease,
         transition as never,
       ),
-    ).toThrow("evidence.recoveryId must be a data property");
+    ).toThrow("evidence.recoveryId must be an enumerable data property");
     expect(accessorExecutions).toBe(0);
   });
 });
