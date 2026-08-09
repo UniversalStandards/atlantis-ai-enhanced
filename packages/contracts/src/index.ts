@@ -12,6 +12,13 @@ export {
 } from "./immutable-writer-commit-evidence.js";
 
 export {
+  InvalidRecoveryOwnershipFenceTransitionEvidenceError,
+  verifyRecoveryOwnershipFenceTransitionEvidence,
+  type ExpectedRecoveryOwnershipFenceTransition,
+  type RecoveryOwnershipFenceTransitionEvidence,
+} from "./recovery-ownership-fence-transition-evidence.js";
+
+export {
   InvalidRecoveryOwnershipLeaseEvidenceError,
   toRecoveryOwnershipDiagnosticEvidence,
   verifyRecoveryOwnershipLeaseEvidence,
