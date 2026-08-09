@@ -53,6 +53,30 @@ describe("persistence uncertainty recovery selection limit containment", () => {
     expect(trailingRecordRead).toBe(false);
   });
 
+  it("does not inspect trailing collection indices after the bounded limit is satisfied", () => {
+    let trailingIndexRead = false;
+    const first = snapshot(1);
+    const second = snapshot(2);
+    const snapshots = [first, second] as PersistenceUncertaintySnapshot[];
+    Object.defineProperty(snapshots, "2", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        trailingIndexRead = true;
+        throw new Error("recovery selection must not inspect collection indices after its limit");
+      },
+    });
+
+    const selected = selectPersistenceUncertaintyRecoveryBatch(
+      snapshots,
+      { statuses: ["pending"], limit: 2 },
+    );
+
+    expect(selected).toEqual([first, second]);
+    expect(Object.isFrozen(selected)).toBe(true);
+    expect(trailingIndexRead).toBe(false);
+  });
+
   it("still inspects later handoffs when earlier entries do not satisfy the selection", () => {
     const terminal = snapshot(1);
     const terminalRecord = Object.freeze({
