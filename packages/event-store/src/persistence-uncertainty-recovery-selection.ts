@@ -243,6 +243,46 @@ function inspectRecoverySnapshotStatus(
   return statusDescriptor.value;
 }
 
+function inspectRecoverySnapshotCollection(
+  snapshots: readonly PersistenceUncertaintySnapshot[],
+): readonly PersistenceUncertaintySnapshot[] {
+  if (!Array.isArray(snapshots)) {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
+  }
+
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(snapshots, "length");
+  if (
+    lengthDescriptor === undefined
+    || !("value" in lengthDescriptor)
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || (lengthDescriptor.value as number) < 0
+  ) {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
+  }
+
+  const length = lengthDescriptor.value as number;
+  const inspected: PersistenceUncertaintySnapshot[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(snapshots, String(index));
+    if (
+      descriptor === undefined
+      || descriptor.enumerable !== true
+      || !("value" in descriptor)
+    ) {
+      throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+        "authoritative recovery snapshots could not be inspected safely.",
+      );
+    }
+    inspected.push(descriptor.value as PersistenceUncertaintySnapshot);
+  }
+
+  return Object.freeze(inspected);
+}
+
 export function assertValidPersistenceUncertaintyRecoverySelection(
   selection: PersistenceUncertaintyRecoverySelection,
 ): void {
@@ -262,7 +302,8 @@ export function selectPersistenceUncertaintyRecoveryBatch(
   const selected: PersistenceUncertaintySnapshot[] = [];
 
   try {
-    for (const snapshot of snapshots) {
+    const inspectedSnapshots = inspectRecoverySnapshotCollection(snapshots);
+    for (const snapshot of inspectedSnapshots) {
       if (validated.statuses.has(inspectRecoverySnapshotStatus(snapshot) as PersistenceUncertaintyStatus)) {
         selected.push(snapshot);
         if (selected.length === validated.limit) {
