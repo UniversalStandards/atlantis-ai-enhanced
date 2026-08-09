@@ -216,6 +216,33 @@ function validateSelection(
   });
 }
 
+function inspectRecoverySnapshotStatus(
+  snapshot: PersistenceUncertaintySnapshot,
+): unknown {
+  const recordDescriptor = Object.getOwnPropertyDescriptor(snapshot, "record");
+  if (recordDescriptor === undefined || !("value" in recordDescriptor)) {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
+  }
+
+  const record = recordDescriptor.value;
+  if (record === null || typeof record !== "object") {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
+  }
+
+  const statusDescriptor = Object.getOwnPropertyDescriptor(record, "status");
+  if (statusDescriptor === undefined || !("value" in statusDescriptor)) {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
+  }
+
+  return statusDescriptor.value;
+}
+
 export function assertValidPersistenceUncertaintyRecoverySelection(
   selection: PersistenceUncertaintyRecoverySelection,
 ): void {
@@ -236,7 +263,7 @@ export function selectPersistenceUncertaintyRecoveryBatch(
 
   try {
     for (const snapshot of snapshots) {
-      if (validated.statuses.has(snapshot.record.status)) {
+      if (validated.statuses.has(inspectRecoverySnapshotStatus(snapshot) as PersistenceUncertaintyStatus)) {
         selected.push(snapshot);
         if (selected.length === validated.limit) {
           break;
