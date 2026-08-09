@@ -6,6 +6,7 @@ import {
   InvalidPersistenceUncertaintyRecoverySelectionError,
   selectPersistenceUncertaintyRecoveryBatch,
 } from "../src/persistence-uncertainty-recovery-selection.js";
+import type { PersistenceUncertaintySnapshot } from "../src/persistence-uncertainty-repository.js";
 
 describe("persistence uncertainty recovery selection limit validation ordering", () => {
   it("rejects an invalid limit before inspecting the statuses array", () => {
@@ -34,5 +35,29 @@ describe("persistence uncertainty recovery selection limit validation ordering",
       limit: 0,
     })).toThrow("recovery selection limit must be a positive safe integer.");
     expect(statusesInspections).toBe(0);
+  });
+
+  it("rejects an invalid limit before inspecting authoritative snapshots", () => {
+    let snapshotInspections = 0;
+    const snapshots = new Proxy([] as PersistenceUncertaintySnapshot[], {
+      getPrototypeOf: () => {
+        snapshotInspections += 1;
+        throw new Error("snapshots must not be inspected after invalid limit");
+      },
+      getOwnPropertyDescriptor: () => {
+        snapshotInspections += 1;
+        throw new Error("snapshot descriptors must not be inspected after invalid limit");
+      },
+    });
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
+      statuses: ["pending"],
+      limit: 0,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySelectionError);
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
+      statuses: ["pending"],
+      limit: 0,
+    })).toThrow("recovery selection limit must be a positive safe integer.");
+    expect(snapshotInspections).toBe(0);
   });
 });
