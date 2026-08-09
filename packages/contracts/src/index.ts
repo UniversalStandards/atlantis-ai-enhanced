@@ -27,6 +27,12 @@ export {
   type RecoveryOwnershipLeaseEvidence,
 } from "./recovery-ownership-lease-evidence.js";
 
+export {
+  InvalidRecoveryOwnershipReacquisitionEvidenceError,
+  verifyRecoveryOwnershipReacquisitionEvidence,
+  type RecoveryOwnershipReacquisitionEvidence,
+} from "./recovery-ownership-reacquisition-evidence.js";
+
 import type { ExecutionEventType } from "./execution-event-types.js";
 
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
