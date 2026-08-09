@@ -102,6 +102,27 @@ describe("persistence uncertainty recovery selection limit containment", () => {
     expect(trailingDescriptorInspection).toBe(false);
   });
 
+  it("does not inspect trailing snapshot field descriptors after the bounded limit is satisfied", () => {
+    let trailingSnapshotInspection = false;
+    const first = snapshot(1);
+    const trailingTarget = snapshot(2);
+    const trailing = new Proxy(trailingTarget, {
+      getOwnPropertyDescriptor(target, property) {
+        trailingSnapshotInspection = true;
+        throw new Error(`recovery selection must not inspect trailing snapshot field ${String(property)} after its limit`);
+      },
+    }) as PersistenceUncertaintySnapshot;
+
+    const selected = selectPersistenceUncertaintyRecoveryBatch(
+      [first, trailing],
+      { statuses: ["pending"], limit: 1 },
+    );
+
+    expect(selected).toEqual([first]);
+    expect(Object.isFrozen(selected)).toBe(true);
+    expect(trailingSnapshotInspection).toBe(false);
+  });
+
   it("still inspects later handoffs when earlier entries do not satisfy the selection", () => {
     const terminal = snapshot(1);
     const terminalRecord = Object.freeze({
