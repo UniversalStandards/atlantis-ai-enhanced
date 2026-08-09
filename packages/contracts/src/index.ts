@@ -11,6 +11,13 @@ export {
   type ImmutableWriterCommitEvidenceMechanism,
 } from "./immutable-writer-commit-evidence.js";
 
+export {
+  InvalidRecoveryOwnershipLeaseEvidenceError,
+  verifyRecoveryOwnershipLeaseEvidence,
+  type ExpectedRecoveryOwnershipIdentity,
+  type RecoveryOwnershipLeaseEvidence,
+} from "./recovery-ownership-lease-evidence.js";
+
 import type { ExecutionEventType } from "./execution-event-types.js";
 
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
