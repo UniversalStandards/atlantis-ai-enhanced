@@ -243,9 +243,9 @@ function inspectRecoverySnapshotStatus(
   return statusDescriptor.value;
 }
 
-function inspectRecoverySnapshotCollection(
+function inspectRecoverySnapshotCollectionLength(
   snapshots: readonly PersistenceUncertaintySnapshot[],
-): readonly PersistenceUncertaintySnapshot[] {
+): number {
   if (!Array.isArray(snapshots)) {
     throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
       "authoritative recovery snapshots could not be inspected safely.",
@@ -264,23 +264,25 @@ function inspectRecoverySnapshotCollection(
     );
   }
 
-  const length = lengthDescriptor.value as number;
-  const inspected: PersistenceUncertaintySnapshot[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(snapshots, String(index));
-    if (
-      descriptor === undefined
-      || descriptor.enumerable !== true
-      || !("value" in descriptor)
-    ) {
-      throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
-        "authoritative recovery snapshots could not be inspected safely.",
-      );
-    }
-    inspected.push(descriptor.value as PersistenceUncertaintySnapshot);
+  return lengthDescriptor.value as number;
+}
+
+function inspectRecoverySnapshotAt(
+  snapshots: readonly PersistenceUncertaintySnapshot[],
+  index: number,
+): PersistenceUncertaintySnapshot {
+  const descriptor = Object.getOwnPropertyDescriptor(snapshots, String(index));
+  if (
+    descriptor === undefined
+    || descriptor.enumerable !== true
+    || !("value" in descriptor)
+  ) {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
   }
 
-  return Object.freeze(inspected);
+  return descriptor.value as PersistenceUncertaintySnapshot;
 }
 
 export function assertValidPersistenceUncertaintyRecoverySelection(
@@ -302,8 +304,9 @@ export function selectPersistenceUncertaintyRecoveryBatch(
   const selected: PersistenceUncertaintySnapshot[] = [];
 
   try {
-    const inspectedSnapshots = inspectRecoverySnapshotCollection(snapshots);
-    for (const snapshot of inspectedSnapshots) {
+    const snapshotCount = inspectRecoverySnapshotCollectionLength(snapshots);
+    for (let index = 0; index < snapshotCount; index += 1) {
+      const snapshot = inspectRecoverySnapshotAt(snapshots, index);
       if (validated.statuses.has(inspectRecoverySnapshotStatus(snapshot) as PersistenceUncertaintyStatus)) {
         selected.push(snapshot);
         if (selected.length === validated.limit) {
