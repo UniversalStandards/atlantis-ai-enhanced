@@ -3,6 +3,14 @@ export {
   type ExecutionEventType,
 } from "./execution-event-types.js";
 
+export {
+  InvalidImmutableWriterCommitEvidenceError,
+  verifyImmutableWriterCommitEvidence,
+  type ExpectedWriterAppendIdentity,
+  type ImmutableWriterCommitEvidence,
+  type ImmutableWriterCommitEvidenceMechanism,
+} from "./immutable-writer-commit-evidence.js";
+
 import type { ExecutionEventType } from "./execution-event-types.js";
 
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
