@@ -65,6 +65,12 @@ export function verifyRecoveryOwnershipReacquisitionEvidence(
     );
   }
 
+  if (next.acquiredAtEpochMs < previous.acquiredAtEpochMs) {
+    throw new InvalidRecoveryOwnershipReacquisitionEvidenceError(
+      "next ownership acquisition must not precede previous ownership acquisition",
+    );
+  }
+
   const transition = verifyRecoveryOwnershipFenceTransitionEvidence(
     {
       recoveryId: previous.recoveryId,
