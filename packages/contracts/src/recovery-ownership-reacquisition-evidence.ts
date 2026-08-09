@@ -86,6 +86,12 @@ export function verifyRecoveryOwnershipReacquisitionEvidence(
     );
   }
 
+  if (transition.observedAtEpochMs < next.acquiredAtEpochMs) {
+    throw new InvalidRecoveryOwnershipReacquisitionEvidenceError(
+      "transition observation must not precede next ownership acquisition",
+    );
+  }
+
   const previousDiagnostic = toRecoveryOwnershipDiagnosticEvidence(
     previousExpected,
     previous,
