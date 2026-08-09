@@ -13,8 +13,10 @@ export {
 
 export {
   InvalidRecoveryOwnershipLeaseEvidenceError,
+  toRecoveryOwnershipDiagnosticEvidence,
   verifyRecoveryOwnershipLeaseEvidence,
   type ExpectedRecoveryOwnershipIdentity,
+  type RecoveryOwnershipDiagnosticEvidence,
   type RecoveryOwnershipLeaseEvidence,
 } from "./recovery-ownership-lease-evidence.js";
 
