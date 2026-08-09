@@ -7,27 +7,28 @@ import {
 import type { PersistenceUncertaintySnapshot } from "../src/persistence-uncertainty-repository.js";
 
 describe("persistence uncertainty recovery snapshot inspection failures", () => {
-  it("normalizes hostile authoritative snapshot iteration into the domain error", () => {
-    const snapshots = new Proxy([] as PersistenceUncertaintySnapshot[], {
-      get(target, property, receiver) {
-        if (property === Symbol.iterator) {
-          throw new Error("authoritative snapshot iterator trap");
-        }
-        return Reflect.get(target, property, receiver);
+  it("rejects hostile authoritative snapshot iterators without executing them", () => {
+    let iteratorReads = 0;
+    const snapshots = Object.defineProperty(
+      [] as PersistenceUncertaintySnapshot[],
+      Symbol.iterator,
+      {
+        configurable: true,
+        get() {
+          iteratorReads += 1;
+          return Array.prototype[Symbol.iterator];
+        },
       },
-    });
+    );
 
-    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
+    expect(selectPersistenceUncertaintyRecoveryBatch(snapshots, {
       statuses: ["pending"],
       limit: 1,
-    })).toThrow(InvalidPersistenceUncertaintyRecoverySnapshotInspectionError);
-    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
-      statuses: ["pending"],
-      limit: 1,
-    })).toThrow("authoritative recovery snapshots could not be inspected safely.");
+    })).toEqual([]);
+    expect(iteratorReads).toBe(0);
   });
 
-  it("normalizes revoked authoritative snapshot iteration into the domain error", () => {
+  it("normalizes revoked authoritative snapshot inspection into the domain error", () => {
     const { proxy: snapshots, revoke } = Proxy.revocable(
       [] as PersistenceUncertaintySnapshot[],
       {},
@@ -44,9 +45,31 @@ describe("persistence uncertainty recovery snapshot inspection failures", () => 
     })).toThrow("authoritative recovery snapshots could not be inspected safely.");
   });
 
+  it("rejects authoritative snapshot index accessors without executing them", () => {
+    let indexAccessorReads = 0;
+    const snapshots = [] as PersistenceUncertaintySnapshot[];
+    Object.defineProperty(snapshots, "0", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        indexAccessorReads += 1;
+        return {
+          version: 1,
+          record: { status: "pending" },
+        } as PersistenceUncertaintySnapshot;
+      },
+    });
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
+      statuses: ["pending"],
+      limit: 1,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySnapshotInspectionError);
+    expect(indexAccessorReads).toBe(0);
+  });
+
   it("normalizes hostile authoritative snapshot field inspection into the domain error", () => {
     const snapshot = new Proxy({} as PersistenceUncertaintySnapshot, {
-      get() {
+      getOwnPropertyDescriptor() {
         throw new Error("authoritative snapshot field trap");
       },
     });
