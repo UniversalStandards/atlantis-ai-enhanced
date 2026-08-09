@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   InvalidRecoveryOwnershipLeaseEvidenceError,
+  toRecoveryOwnershipDiagnosticEvidence,
   verifyRecoveryOwnershipLeaseEvidence,
 } from "../src/recovery-ownership-lease-evidence.js";
 
@@ -29,6 +30,39 @@ describe("recovery ownership lease evidence", () => {
     expect(verified).toEqual(evidence);
     expect(Object.isFrozen(verified)).toBe(true);
     expect(verified).not.toBe(evidence);
+  });
+
+  it("projects verified ownership evidence without authority-bearing token", () => {
+    const diagnostic = toRecoveryOwnershipDiagnosticEvidence(expected, evidence);
+
+    expect(diagnostic).toEqual({
+      claimId: evidence.claimId,
+      recoveryId: evidence.recoveryId,
+      executionId: evidence.executionId,
+      ownerId: evidence.ownerId,
+      fence: evidence.fence,
+      acquiredAtEpochMs: evidence.acquiredAtEpochMs,
+      expiresAtEpochMs: evidence.expiresAtEpochMs,
+    });
+    expect(Object.isFrozen(diagnostic)).toBe(true);
+    expect("ownershipToken" in diagnostic).toBe(false);
+    expect(JSON.stringify(diagnostic)).not.toContain(evidence.ownershipToken);
+  });
+
+  it("re-verifies evidence before producing diagnostic output", () => {
+    const ownershipTokenGetter = vi.fn(() => evidence.ownershipToken);
+    const accessorEvidence = { ...evidence } as Record<string, unknown>;
+
+    Object.defineProperty(accessorEvidence, "ownershipToken", {
+      enumerable: true,
+      get: ownershipTokenGetter,
+    });
+
+    expect(() => toRecoveryOwnershipDiagnosticEvidence(
+      expected,
+      accessorEvidence as never,
+    )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
+    expect(ownershipTokenGetter).not.toHaveBeenCalled();
   });
 
   it("rejects evidence for a different recovery, execution, or owner", () => {
