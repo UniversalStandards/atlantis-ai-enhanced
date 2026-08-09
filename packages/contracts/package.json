@@ -18,6 +18,7 @@
     "./persistence-uncertainty": "./src/persistence-uncertainty.ts",
     "./persistence-uncertainty-atomic-plan": "./src/persistence-uncertainty-atomic-plan.ts",
     "./production-persistence": "./src/production-persistence.ts",
+    "./recovery-ownership-lease-renewal-evidence": "./src/recovery-ownership-lease-renewal-evidence.ts",
     "./trusted-persistence-reconciliation": "./src/trusted-persistence-reconciliation.ts",
     "./validated-external-effect-ownership-store": "./src/validated-external-effect-ownership-store.ts",
     "./sequential-runner": "./src/sequential-runner.ts",
