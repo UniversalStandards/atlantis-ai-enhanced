@@ -27,6 +27,23 @@ describe("persistence uncertainty recovery snapshot inspection failures", () => 
     })).toThrow("authoritative recovery snapshots could not be inspected safely.");
   });
 
+  it("normalizes revoked authoritative snapshot iteration into the domain error", () => {
+    const { proxy: snapshots, revoke } = Proxy.revocable(
+      [] as PersistenceUncertaintySnapshot[],
+      {},
+    );
+    revoke();
+
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
+      statuses: ["pending"],
+      limit: 1,
+    })).toThrow(InvalidPersistenceUncertaintyRecoverySnapshotInspectionError);
+    expect(() => selectPersistenceUncertaintyRecoveryBatch(snapshots, {
+      statuses: ["pending"],
+      limit: 1,
+    })).toThrow("authoritative recovery snapshots could not be inspected safely.");
+  });
+
   it("normalizes hostile authoritative snapshot field inspection into the domain error", () => {
     const snapshot = new Proxy({} as PersistenceUncertaintySnapshot, {
       get() {
