@@ -62,34 +62,38 @@ The adapter MUST prove the receipt could only have been produced if the exact ev
 - A client-generated acknowledgement can be mistaken for provider commit evidence unless the boundary is explicit.
 - Provider-specific receipt verification must remain behind the adapter boundary.
 
-## Option B — Version-addressable immutable committed read
+## Option B — Operation-bound immutable committed read
 
-The adapter exposes an authoritative read by immutable event identity or committed stream position. The returned historical record cannot be replaced by later writes.
+The adapter exposes an authoritative historical read whose immutable record includes the admitted append operation identity together with the immutable event identity or committed stream position. The returned historical record cannot be replaced by later writes, and event/version identity alone is not sufficient writer proof.
 
 Minimum lookup capability:
 
 ```text
 read_committed_event(
+  operation_id,
   execution_id,
   event_id | stream_version
-) -> exact immutable event record | absent
+) -> exact immutable operation-bound event record | absent
 ```
+
+The returned immutable record MUST itself carry, or be authoritatively keyed by, the same `operation_id` used to admit the append. The adapter MUST NOT infer operation binding from timestamps, mutable current state, caller memory, or uniqueness of `event_id` alone.
 
 ### Required guarantee
 
-Once the event is committed, the same immutable event identity or historical stream position MUST continue to resolve to the same canonical record after later stream mutations and after process restart.
+Once the event is committed, the same operation identity plus immutable event identity or historical stream position MUST continue to resolve to the same canonical record after later stream mutations and after process restart. A historical event read that cannot prove the admitted operation identity is containment evidence only and is not sufficient as sole writer-specific commit proof.
 
 ### Strengths
 
-- Provider-neutral and easy to verify with restart tests.
+- Provider-neutral and easy to verify with restart tests when operation identity is durably stored with the event.
 - Historical proof naturally survives current-state advancement.
-- Reuses the canonical event record and digest model.
+- Reuses the canonical event record and digest model while preserving exact writer binding.
 
 ### Risks
 
 - A mutable materialized "current row" is not sufficient.
-- Implementations must prove historical lookup cannot alias a later value.
+- Implementations must prove historical lookup cannot alias a later value or a different admitted operation.
 - Tombstones, compaction, or retention policies cannot destroy proof inside the required operational evidence window.
+- Providers that cannot durably bind the admitted operation identity to the historical event cannot use Option B as sole proof.
 
 ## Option C — Provider operation identity plus immutable historical read
 
@@ -127,21 +131,22 @@ The following MUST NOT be accepted as immutable writer-specific commit proof by 
 6. A provider response that cannot be revalidated after restart.
 7. Wall-clock proximity between a write attempt and an observed event.
 8. A receipt that omits exact operation/event/execution/version/digest binding.
+9. An immutable historical event/version lookup that does not authoritatively bind the admitted append `operation_id`.
 
 These observations may remain useful containment or diagnostic evidence, but they cannot authorize a committed classification when writer identity is ambiguous.
 
 ## Decision matrix
 
-| Criterion | Option A: transaction receipt | Option B: immutable historical read | Option C: operation + historical read |
+| Criterion | Option A: transaction receipt | Option B: operation-bound immutable historical read | Option C: operation + historical read |
 | --- | --- | --- | --- |
-| Exact writer binding | Strong when provider-issued | Requires adapter binding to admitted operation | Strong when correlation is authoritative |
+| Exact writer binding | Strong when provider-issued | Strong only when admitted operation identity is immutable in the historical record/key | Strong when correlation is authoritative |
 | Survives later writes | Required | Required by design | Required |
 | Restart revalidation | Required | Natural acceptance gate | Required |
-| Provider neutrality | Medium | High | Medium |
-| Ambiguous transport reconciliation | Strong if receipt is queryable | Strong when event identity is unique and historical | Strong |
+| Provider neutrality | Medium | High when operation identity can be stored durably | Medium |
+| Ambiguous transport reconciliation | Strong if receipt is queryable | Strong when operation + event/version identity remain historical | Strong |
 | Implementation complexity | Medium | Low-to-medium | High |
-| Risk of mutable-current-state confusion | Low | Medium unless historical semantics are proven | Low-to-medium |
-| Suitable as sole proof | Yes, if transactional and immutable | Yes, if writer binding is proven | Yes, only as combined evidence |
+| Risk of mutable-current-state confusion | Low | Medium unless historical and operation-binding semantics are proven | Low-to-medium |
+| Suitable as sole proof | Yes, if transactional and immutable | Yes, only with immutable admitted-operation binding | Yes, only as combined evidence |
 
 ## Executable acceptance gates
 
@@ -153,31 +158,31 @@ The first production adapter MUST pass all of these tests against the real adapt
 2. Capture A's commit evidence.
 3. Writer B commits event B at stream version N+1.
 4. Revalidate A's evidence.
-5. A MUST still prove event A at version N with the original digest.
+5. A MUST still prove event A at version N with the original digest and A's admitted operation identity.
 
 ### Gate 2 — Competing writer isolation
 
-1. Writers A and B attempt the same expected stream version concurrently.
+1. Writers A and B attempt the same expected stream version concurrently using distinct operation identities.
 2. Exactly one transition commits.
-3. Only the winning writer may obtain valid committed evidence.
-4. The losing writer's evidence MUST classify as conflict, known failure, or uncertain as appropriate; it MUST NOT validate as committed.
+3. Only the winning writer may obtain valid committed evidence bound to its own operation identity.
+4. The losing writer's evidence MUST classify as conflict, known failure, or uncertain as appropriate; it MUST NOT validate as committed, including by reading the winner's historical event.
 
 ### Gate 3 — Post-commit acknowledgement loss
 
 1. The provider commits the append.
 2. Transport is severed before the caller receives the normal acknowledgement.
-3. The caller records or reconstructs uncertainty.
-4. After restart, immutable evidence MUST reconcile the exact append as committed without duplication.
+3. The caller records or reconstructs uncertainty using the durable admitted operation identity.
+4. After restart, immutable evidence MUST reconcile the exact operation-bound append as committed without duplication.
 
 ### Gate 4 — Pre-commit failure
 
 1. The operation fails before durable commit.
-2. No valid committed evidence may exist.
+2. No valid committed evidence may exist for that operation identity.
 3. Historical readback at the expected position MUST not falsely bind the failed writer to a later writer's event.
 
 ### Gate 5 — Process restart
 
-1. Commit an event and persist only adapter-required durable evidence.
+1. Commit an event and persist only adapter-required durable evidence, including the admitted operation identity needed for revalidation.
 2. Terminate the process.
 3. Recreate the adapter from durable state.
 4. Revalidate the evidence without caller-memory assistance.
@@ -199,11 +204,11 @@ Any adapter retention, compaction, projection, or tombstone behavior enabled for
 The provider-neutral integration harness SHOULD expose a fixture equivalent to:
 
 ```text
-attempt_append(expected) -> append_outcome
+attempt_append(expected_with_operation_id) -> append_outcome
 capture_commit_evidence(outcome | operation_id) -> evidence | absent
-revalidate_commit_evidence(expected, evidence) -> committed | invalid | uncertain
+revalidate_commit_evidence(expected_with_operation_id, evidence) -> committed | invalid | uncertain
 restart_adapter()
-read_committed_event(execution_id, event_id | stream_version) -> event | absent
+read_committed_event(operation_id, execution_id, event_id | stream_version) -> operation-bound event | absent
 ```
 
 The harness must not require production credentials in pull-request CI. A production-provider test lane may run only in an explicitly approved protected environment with a documented permission and secret inventory.
