@@ -74,8 +74,10 @@ describe("recovery ownership reacquisition evidence", () => {
     expect(JSON.stringify(verified)).not.toContain("secret-next-token");
   });
 
-  it("rejects a transition that does not bind the exact next claim, owner, and fence", () => {
+  it("rejects a transition that does not bind the exact previous and next claims, owners, and fence", () => {
     for (const mismatchedTransition of [
+      { ...transition, previousClaimId: "claim-0" },
+      { ...transition, previousOwnerId: "worker-0" },
       { ...transition, nextClaimId: "claim-3" },
       { ...transition, nextOwnerId: "worker-3" },
       { ...transition, nextFence: 9 },
