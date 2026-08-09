@@ -9,6 +9,13 @@ export class InvalidPersistenceUncertaintyRecoverySelectionError extends Error {
   }
 }
 
+export class InvalidPersistenceUncertaintyRecoverySnapshotInspectionError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidPersistenceUncertaintyRecoverySnapshotInspectionError";
+  }
+}
+
 export interface PersistenceUncertaintyRecoverySelection {
   readonly statuses: readonly PersistenceUncertaintyStatus[];
   readonly limit: number;
@@ -227,13 +234,19 @@ export function selectPersistenceUncertaintyRecoveryBatch(
   const validated = validateSelection(selection);
   const selected: PersistenceUncertaintySnapshot[] = [];
 
-  for (const snapshot of snapshots) {
-    if (validated.statuses.has(snapshot.record.status)) {
-      selected.push(snapshot);
-      if (selected.length === validated.limit) {
-        break;
+  try {
+    for (const snapshot of snapshots) {
+      if (validated.statuses.has(snapshot.record.status)) {
+        selected.push(snapshot);
+        if (selected.length === validated.limit) {
+          break;
+        }
       }
     }
+  } catch {
+    throw new InvalidPersistenceUncertaintyRecoverySnapshotInspectionError(
+      "authoritative recovery snapshots could not be inspected safely.",
+    );
   }
 
   return Object.freeze(selected);
