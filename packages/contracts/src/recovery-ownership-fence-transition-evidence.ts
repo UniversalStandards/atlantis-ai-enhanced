@@ -111,10 +111,10 @@ function normalizeExpected(
 /**
  * Verifies evidence that one recovery ownership epoch has advanced beyond a
  * known fencing epoch. A successful verification proves exact recovery and
- * execution binding plus strict fence monotonicity only. It does not prove that
- * a lease was atomically acquired, that an old owner has stopped running, or
- * that a provider rejects stale writes; those properties require adapter-level
- * contention and restart tests.
+ * execution binding, a distinct next ownership claim, and strict fence
+ * monotonicity only. It does not prove that a lease was atomically acquired,
+ * that an old owner has stopped running, or that a provider rejects stale
+ * writes; those properties require adapter-level contention and restart tests.
  */
 export function verifyRecoveryOwnershipFenceTransitionEvidence(
   expectedValue: ExpectedRecoveryOwnershipFenceTransition,
@@ -171,6 +171,12 @@ export function verifyRecoveryOwnershipFenceTransitionEvidence(
   ) {
     throw new InvalidRecoveryOwnershipFenceTransitionEvidenceError(
       "evidence must be bound to the exact admitted recovery ownership epoch",
+    );
+  }
+
+  if (evidence.nextClaimId === evidence.previousClaimId) {
+    throw new InvalidRecoveryOwnershipFenceTransitionEvidenceError(
+      "evidence.nextClaimId must identify a distinct ownership claim",
     );
   }
 
