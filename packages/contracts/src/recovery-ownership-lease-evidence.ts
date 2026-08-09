@@ -30,6 +30,20 @@ export interface RecoveryOwnershipLeaseEvidence {
   readonly expiresAtEpochMs: number;
 }
 
+/**
+ * Safe diagnostic projection of verified recovery ownership evidence.
+ * Authority-bearing ownershipToken is deliberately absent.
+ */
+export interface RecoveryOwnershipDiagnosticEvidence {
+  readonly claimId: string;
+  readonly recoveryId: string;
+  readonly executionId: string;
+  readonly ownerId: string;
+  readonly fence: number;
+  readonly acquiredAtEpochMs: number;
+  readonly expiresAtEpochMs: number;
+}
+
 export class InvalidRecoveryOwnershipLeaseEvidenceError extends Error {
   public constructor(message: string) {
     super(message);
@@ -186,5 +200,30 @@ export function verifyRecoveryOwnershipLeaseEvidence(
     fence: evidence.fence,
     acquiredAtEpochMs: evidence.acquiredAtEpochMs,
     expiresAtEpochMs: evidence.expiresAtEpochMs,
+  });
+}
+
+/**
+ * Produces the only general-purpose diagnostic projection of recovery ownership
+ * evidence. The input is fully re-verified first, then copied into a frozen
+ * object that cannot contain the authority-bearing ownershipToken.
+ */
+export function toRecoveryOwnershipDiagnosticEvidence(
+  expectedValue: ExpectedRecoveryOwnershipIdentity,
+  evidenceValue: RecoveryOwnershipLeaseEvidence,
+): Readonly<RecoveryOwnershipDiagnosticEvidence> {
+  const verified = verifyRecoveryOwnershipLeaseEvidence(
+    expectedValue,
+    evidenceValue,
+  );
+
+  return Object.freeze({
+    claimId: verified.claimId,
+    recoveryId: verified.recoveryId,
+    executionId: verified.executionId,
+    ownerId: verified.ownerId,
+    fence: verified.fence,
+    acquiredAtEpochMs: verified.acquiredAtEpochMs,
+    expiresAtEpochMs: verified.expiresAtEpochMs,
   });
 }
