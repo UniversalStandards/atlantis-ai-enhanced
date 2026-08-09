@@ -148,6 +148,26 @@ describe("recovery ownership reacquisition evidence", () => {
     )).toThrow("evidence.nextFence must be strictly greater than evidence.previousFence");
   });
 
+  it("rejects a next ownership acquisition that predates the previous ownership acquisition", () => {
+    const backwardsNextLease = {
+      ...nextLease,
+      acquiredAtEpochMs: previousLease.acquiredAtEpochMs - 1,
+      expiresAtEpochMs: previousLease.expiresAtEpochMs + 1,
+    };
+
+    expect(() => verifyRecoveryOwnershipReacquisitionEvidence(
+      previousExpected,
+      previousLease,
+      nextExpected,
+      backwardsNextLease,
+      transition,
+    )).toThrowError(
+      new InvalidRecoveryOwnershipReacquisitionEvidenceError(
+        "next ownership acquisition must not precede previous ownership acquisition",
+      ),
+    );
+  });
+
   it("rejects a transition observation that predates the next ownership acquisition", () => {
     expect(() => verifyRecoveryOwnershipReacquisitionEvidence(
       previousExpected,
