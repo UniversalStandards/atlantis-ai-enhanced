@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   InvalidRecoveryOwnershipLeaseRenewalEvidenceError,
@@ -86,20 +86,99 @@ describe("recovery ownership lease renewal evidence", () => {
     )).toThrow(InvalidRecoveryOwnershipLeaseRenewalEvidenceError);
   });
 
-  it("rejects accessor-backed authority without executing the accessor", () => {
-    const ownershipTokenGetter = vi.fn(() => previous.ownershipToken);
-    const accessorRenewal = { ...renewed } as Record<string, unknown>;
+  it("rejects accessor-backed fields in either lease snapshot without executing caller code", () => {
+    for (const [snapshotName, snapshot] of [
+      ["previous", previous],
+      ["renewed", renewed],
+    ] as const) {
+      for (const field of Object.keys(snapshot) as Array<keyof typeof snapshot>) {
+        let accessorExecutions = 0;
+        const accessorSnapshot = { ...snapshot } as Record<string, unknown>;
+        delete accessorSnapshot[field];
+        Object.defineProperty(accessorSnapshot, field, {
+          enumerable: true,
+          get() {
+            accessorExecutions += 1;
+            return snapshot[field];
+          },
+        });
 
-    Object.defineProperty(accessorRenewal, "ownershipToken", {
-      enumerable: true,
-      get: ownershipTokenGetter,
-    });
+        expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+          expected,
+          snapshotName === "previous" ? accessorSnapshot as never : previous,
+          snapshotName === "renewed" ? accessorSnapshot as never : renewed,
+        )).toThrow(`${snapshotName === "previous" ? "evidence" : "evidence"}.${field} must be an enumerable data property`);
+        expect(accessorExecutions).toBe(0);
+      }
+    }
+  });
+
+  it("rejects non-enumerable fields in either lease snapshot", () => {
+    for (const [snapshotName, snapshot] of [
+      ["previous", previous],
+      ["renewed", renewed],
+    ] as const) {
+      for (const field of Object.keys(snapshot) as Array<keyof typeof snapshot>) {
+        const nonEnumerableSnapshot = { ...snapshot } as Record<string, unknown>;
+        Object.defineProperty(nonEnumerableSnapshot, field, {
+          configurable: true,
+          enumerable: false,
+          value: snapshot[field],
+          writable: true,
+        });
+
+        expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+          expected,
+          snapshotName === "previous" ? nonEnumerableSnapshot as never : previous,
+          snapshotName === "renewed" ? nonEnumerableSnapshot as never : renewed,
+        )).toThrow(`evidence.${field} must be an enumerable data property`);
+      }
+    }
+  });
+
+  it("rejects symbol-keyed data in either lease snapshot", () => {
+    const symbolBackedPrevious = {
+      ...previous,
+      [Symbol("hidden-authority")]: "unexpected",
+    };
+    const symbolBackedRenewed = {
+      ...renewed,
+      [Symbol("hidden-authority")]: "unexpected",
+    };
+
+    expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+      expected,
+      symbolBackedPrevious as never,
+      renewed,
+    )).toThrow("evidence must not contain symbol fields");
 
     expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
       expected,
       previous,
-      accessorRenewal as never,
-    )).toThrow(InvalidRecoveryOwnershipLeaseRenewalEvidenceError);
-    expect(ownershipTokenGetter).not.toHaveBeenCalled();
+      symbolBackedRenewed as never,
+    )).toThrow("evidence must not contain symbol fields");
+  });
+
+  it("rejects caller-controlled prototypes in either lease snapshot", () => {
+    const inheritedPrevious = Object.assign(
+      Object.create({ inheritedAuthority: "unexpected" }) as Record<string, unknown>,
+      previous,
+    );
+    const inheritedRenewed = Object.assign(
+      Object.create({ inheritedAuthority: "unexpected" }) as Record<string, unknown>,
+      renewed,
+    );
+
+    expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+      expected,
+      inheritedPrevious as never,
+      renewed,
+    )).toThrow("evidence must be a plain data record");
+
+    expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+      expected,
+      previous,
+      inheritedRenewed as never,
+    )).toThrow("evidence must be a plain data record");
   });
 });
