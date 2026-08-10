@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   InvalidRecoveryOwnershipLeaseEvidenceError,
@@ -50,19 +50,22 @@ describe("recovery ownership lease evidence", () => {
   });
 
   it("re-verifies evidence before producing diagnostic output", () => {
-    const ownershipTokenGetter = vi.fn(() => evidence.ownershipToken);
+    let ownershipTokenAccessorExecutions = 0;
     const accessorEvidence = { ...evidence } as Record<string, unknown>;
 
     Object.defineProperty(accessorEvidence, "ownershipToken", {
       enumerable: true,
-      get: ownershipTokenGetter,
+      get() {
+        ownershipTokenAccessorExecutions += 1;
+        return evidence.ownershipToken;
+      },
     });
 
     expect(() => toRecoveryOwnershipDiagnosticEvidence(
       expected,
       accessorEvidence as never,
     )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
-    expect(ownershipTokenGetter).not.toHaveBeenCalled();
+    expect(ownershipTokenAccessorExecutions).toBe(0);
   });
 
   it("rejects evidence for a different recovery, execution, or owner", () => {
@@ -127,19 +130,68 @@ describe("recovery ownership lease evidence", () => {
     )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
   });
 
-  it("rejects accessor-backed authority without executing the accessor", () => {
-    const ownershipTokenGetter = vi.fn(() => "opaque-token-1");
-    const accessorEvidence = { ...evidence } as Record<string, unknown>;
+  it("rejects accessor-backed lease fields without executing caller code", () => {
+    for (const field of Object.keys(evidence) as Array<keyof typeof evidence>) {
+      let accessorExecutions = 0;
+      const accessorEvidence = { ...evidence } as Record<string, unknown>;
+      delete accessorEvidence[field];
+      Object.defineProperty(accessorEvidence, field, {
+        enumerable: true,
+        get() {
+          accessorExecutions += 1;
+          return evidence[field];
+        },
+      });
 
-    Object.defineProperty(accessorEvidence, "ownershipToken", {
-      enumerable: true,
-      get: ownershipTokenGetter,
-    });
+      expect(() => verifyRecoveryOwnershipLeaseEvidence(
+        expected,
+        accessorEvidence as never,
+      )).toThrow(`evidence.${field} must be an enumerable data property`);
+      expect(accessorExecutions).toBe(0);
+    }
+  });
+
+  it("rejects non-enumerable lease fields", () => {
+    for (const field of Object.keys(evidence) as Array<keyof typeof evidence>) {
+      const nonEnumerableEvidence = { ...evidence } as Record<string, unknown>;
+      Object.defineProperty(nonEnumerableEvidence, field, {
+        configurable: true,
+        enumerable: false,
+        value: evidence[field],
+        writable: true,
+      });
+
+      expect(() => verifyRecoveryOwnershipLeaseEvidence(
+        expected,
+        nonEnumerableEvidence as never,
+      )).toThrow(`evidence.${field} must be an enumerable data property`);
+    }
+  });
+
+  it("rejects symbol-keyed lease data", () => {
+    const symbolBackedEvidence = {
+      ...evidence,
+      [Symbol("hidden-authority")]: "unexpected",
+    };
 
     expect(() => verifyRecoveryOwnershipLeaseEvidence(
       expected,
-      accessorEvidence as never,
-    )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
-    expect(ownershipTokenGetter).not.toHaveBeenCalled();
+      symbolBackedEvidence as never,
+    )).toThrow("evidence must not contain symbol fields");
+  });
+
+  it("rejects leases with caller-controlled prototypes", () => {
+    const inheritedEvidence = Object.assign(
+      Object.create({ inheritedAuthority: "unexpected" }) as Record<
+        string,
+        unknown
+      >,
+      evidence,
+    );
+
+    expect(() => verifyRecoveryOwnershipLeaseEvidence(
+      expected,
+      inheritedEvidence as never,
+    )).toThrow("evidence must be a plain data record");
   });
 });
