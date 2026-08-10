@@ -112,4 +112,21 @@ describe("recovery ownership reacquisition transition containment", () => {
       ),
     ).toThrow("evidence must not contain symbol fields");
   });
+
+  it("rejects transition evidence with a caller-controlled prototype", () => {
+    const prototypeBackedTransition = Object.assign(
+      Object.create({ hiddenTransitionAuthority: "must-not-be-inherited" }),
+      transition,
+    );
+
+    expect(() =>
+      verifyRecoveryOwnershipReacquisitionEvidence(
+        previousExpected,
+        previousLease,
+        nextExpected,
+        nextLease,
+        prototypeBackedTransition as never,
+      ),
+    ).toThrow("evidence must be a plain object");
+  });
 });
