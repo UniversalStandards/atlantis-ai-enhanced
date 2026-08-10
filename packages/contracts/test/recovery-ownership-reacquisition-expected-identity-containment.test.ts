@@ -49,6 +49,19 @@ const transition = {
   observedAtEpochMs: 2150,
 } as const;
 
+function verifyWithExpected(
+  side: "previous" | "next",
+  expected: unknown,
+): void {
+  verifyRecoveryOwnershipReacquisitionEvidence(
+    side === "previous" ? (expected as never) : previousExpected,
+    previousLease,
+    side === "next" ? (expected as never) : nextExpected,
+    nextLease,
+    transition,
+  );
+}
+
 describe("recovery ownership reacquisition expected identity containment", () => {
   it("rejects accessor-backed admitted identity fields without executing caller code", () => {
     for (const side of ["previous", "next"] as const) {
@@ -66,17 +79,62 @@ describe("recovery ownership reacquisition expected identity containment", () =>
           },
         });
 
-        expect(() =>
-          verifyRecoveryOwnershipReacquisitionEvidence(
-            side === "previous" ? (accessorBackedExpected as never) : previousExpected,
-            previousLease,
-            side === "next" ? (accessorBackedExpected as never) : nextExpected,
-            nextLease,
-            transition,
-          ),
-        ).toThrow(`expected.${field} must be an enumerable data property`);
+        expect(() => verifyWithExpected(side, accessorBackedExpected)).toThrow(
+          `expected.${field} must be an enumerable data property`,
+        );
         expect(accessorExecutions).toBe(0);
       }
+    }
+  });
+
+  it("rejects non-enumerable admitted identity fields", () => {
+    for (const side of ["previous", "next"] as const) {
+      const expected = side === "previous" ? previousExpected : nextExpected;
+
+      for (const field of Object.keys(expected) as Array<keyof typeof expected>) {
+        const nonEnumerableExpected = { ...expected } as Record<string, unknown>;
+        Object.defineProperty(nonEnumerableExpected, field, {
+          configurable: true,
+          enumerable: false,
+          value: expected[field],
+          writable: true,
+        });
+
+        expect(() => verifyWithExpected(side, nonEnumerableExpected)).toThrow(
+          `expected.${field} must be an enumerable data property`,
+        );
+      }
+    }
+  });
+
+  it("rejects symbol-keyed admitted identity data", () => {
+    for (const side of ["previous", "next"] as const) {
+      const expected = side === "previous" ? previousExpected : nextExpected;
+      const symbolBackedExpected = {
+        ...expected,
+        [Symbol("hidden-identity")]: "unexpected",
+      };
+
+      expect(() => verifyWithExpected(side, symbolBackedExpected)).toThrow(
+        "expected must not contain symbol fields",
+      );
+    }
+  });
+
+  it("rejects admitted identities with caller-controlled prototypes", () => {
+    for (const side of ["previous", "next"] as const) {
+      const expected = side === "previous" ? previousExpected : nextExpected;
+      const inheritedExpected = Object.assign(
+        Object.create({ inheritedIdentity: "unexpected" }) as Record<
+          string,
+          unknown
+        >,
+        expected,
+      );
+
+      expect(() => verifyWithExpected(side, inheritedExpected)).toThrow(
+        "expected must be a plain data record",
+      );
     }
   });
 });
