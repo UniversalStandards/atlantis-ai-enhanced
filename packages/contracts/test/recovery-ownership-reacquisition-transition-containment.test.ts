@@ -97,4 +97,19 @@ describe("recovery ownership reacquisition transition containment", () => {
       ).toThrow(`evidence.${field} must be an enumerable data property`);
     }
   });
+
+  it("rejects symbol-keyed transition fields instead of silently dropping them", () => {
+    const symbolBackedTransition = { ...transition } as Record<PropertyKey, unknown>;
+    symbolBackedTransition[Symbol("hidden-transition-data")] = "must-not-be-ignored";
+
+    expect(() =>
+      verifyRecoveryOwnershipReacquisitionEvidence(
+        previousExpected,
+        previousLease,
+        nextExpected,
+        nextLease,
+        symbolBackedTransition as never,
+      ),
+    ).toThrow("evidence must not contain symbol fields");
+  });
 });
