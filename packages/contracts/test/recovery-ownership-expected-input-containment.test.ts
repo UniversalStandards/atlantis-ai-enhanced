@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   InvalidRecoveryOwnershipFenceTransitionEvidenceError,
@@ -52,53 +52,161 @@ const transitionEvidence = {
   observedAtEpochMs: 3000,
 } as const;
 
+function withAccessor(
+  source: Readonly<Record<string, unknown>>,
+  field: string,
+  onExecute: () => void,
+): Record<string, unknown> {
+  const candidate = { ...source };
+  delete candidate[field];
+  Object.defineProperty(candidate, field, {
+    enumerable: true,
+    get() {
+      onExecute();
+      return source[field];
+    },
+  });
+  return candidate;
+}
+
+function withNonEnumerable(
+  source: Readonly<Record<string, unknown>>,
+  field: string,
+): Record<string, unknown> {
+  const candidate = { ...source };
+  Object.defineProperty(candidate, field, {
+    configurable: true,
+    enumerable: false,
+    value: source[field],
+    writable: true,
+  });
+  return candidate;
+}
+
 describe("recovery ownership expected-input containment", () => {
-  it("rejects accessor-backed expected lease identity without executing it", () => {
-    const recoveryIdGetter = vi.fn(() => identity.recoveryId);
-    const expected = { ...identity } as Record<string, unknown>;
+  it("rejects accessor-backed expected lease identity fields without executing caller code", () => {
+    for (const field of Object.keys(identity)) {
+      let accessorExecutions = 0;
+      const expected = withAccessor(identity, field, () => {
+        accessorExecutions += 1;
+      });
 
-    Object.defineProperty(expected, "recoveryId", {
-      enumerable: true,
-      get: recoveryIdGetter,
-    });
-
-    expect(() => verifyRecoveryOwnershipLeaseEvidence(
-      expected as never,
-      lease,
-    )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
-    expect(recoveryIdGetter).not.toHaveBeenCalled();
+      expect(() => verifyRecoveryOwnershipLeaseEvidence(
+        expected as never,
+        lease,
+      )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
+      expect(accessorExecutions).toBe(0);
+    }
   });
 
-  it("rejects accessor-backed expected renewal identity without executing it", () => {
-    const ownerIdGetter = vi.fn(() => identity.ownerId);
-    const expected = { ...identity } as Record<string, unknown>;
+  it("rejects accessor-backed expected renewal identity fields without executing caller code", () => {
+    for (const field of Object.keys(identity)) {
+      let accessorExecutions = 0;
+      const expected = withAccessor(identity, field, () => {
+        accessorExecutions += 1;
+      });
 
-    Object.defineProperty(expected, "ownerId", {
-      enumerable: true,
-      get: ownerIdGetter,
-    });
+      expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+        expected as never,
+        lease,
+        renewedLease,
+      )).toThrow(InvalidRecoveryOwnershipLeaseRenewalEvidenceError);
+      expect(accessorExecutions).toBe(0);
+    }
+  });
+
+  it("rejects accessor-backed expected transition fields without executing caller code", () => {
+    for (const field of Object.keys(transitionExpected)) {
+      let accessorExecutions = 0;
+      const expected = withAccessor(transitionExpected, field, () => {
+        accessorExecutions += 1;
+      });
+
+      expect(() => verifyRecoveryOwnershipFenceTransitionEvidence(
+        expected as never,
+        transitionEvidence,
+      )).toThrow(InvalidRecoveryOwnershipFenceTransitionEvidenceError);
+      expect(accessorExecutions).toBe(0);
+    }
+  });
+
+  it("rejects non-enumerable required fields across all expected ownership inputs", () => {
+    for (const field of Object.keys(identity)) {
+      const expected = withNonEnumerable(identity, field);
+
+      expect(() => verifyRecoveryOwnershipLeaseEvidence(
+        expected as never,
+        lease,
+      )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
+
+      expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+        expected as never,
+        lease,
+        renewedLease,
+      )).toThrow(InvalidRecoveryOwnershipLeaseRenewalEvidenceError);
+    }
+
+    for (const field of Object.keys(transitionExpected)) {
+      const expected = withNonEnumerable(transitionExpected, field);
+
+      expect(() => verifyRecoveryOwnershipFenceTransitionEvidence(
+        expected as never,
+        transitionEvidence,
+      )).toThrow(InvalidRecoveryOwnershipFenceTransitionEvidenceError);
+    }
+  });
+
+  it("rejects symbol-keyed hidden data across all expected ownership inputs", () => {
+    const symbolBackedIdentity = {
+      ...identity,
+      [Symbol("hidden-authority")]: "unexpected",
+    };
+    const symbolBackedTransitionExpected = {
+      ...transitionExpected,
+      [Symbol("hidden-authority")]: "unexpected",
+    };
+
+    expect(() => verifyRecoveryOwnershipLeaseEvidence(
+      symbolBackedIdentity as never,
+      lease,
+    )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
 
     expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
-      expected as never,
+      symbolBackedIdentity as never,
       lease,
       renewedLease,
     )).toThrow(InvalidRecoveryOwnershipLeaseRenewalEvidenceError);
-    expect(ownerIdGetter).not.toHaveBeenCalled();
-  });
-
-  it("rejects accessor-backed expected fence epoch without executing it", () => {
-    const previousFenceGetter = vi.fn(() => transitionExpected.previousFence);
-    const expected = { ...transitionExpected } as Record<string, unknown>;
-
-    Object.defineProperty(expected, "previousFence", {
-      enumerable: true,
-      get: previousFenceGetter,
-    });
 
     expect(() => verifyRecoveryOwnershipFenceTransitionEvidence(
-      expected as never,
+      symbolBackedTransitionExpected as never,
       transitionEvidence,
     )).toThrow(InvalidRecoveryOwnershipFenceTransitionEvidenceError);
-    expect(previousFenceGetter).not.toHaveBeenCalled();
+  });
+
+  it("rejects caller-controlled prototypes across all expected ownership inputs", () => {
+    const inheritedIdentity = Object.assign(
+      Object.create({ inheritedAuthority: "unexpected" }) as Record<string, unknown>,
+      identity,
+    );
+    const inheritedTransitionExpected = Object.assign(
+      Object.create({ inheritedAuthority: "unexpected" }) as Record<string, unknown>,
+      transitionExpected,
+    );
+
+    expect(() => verifyRecoveryOwnershipLeaseEvidence(
+      inheritedIdentity as never,
+      lease,
+    )).toThrow(InvalidRecoveryOwnershipLeaseEvidenceError);
+
+    expect(() => verifyRecoveryOwnershipLeaseRenewalEvidence(
+      inheritedIdentity as never,
+      lease,
+      renewedLease,
+    )).toThrow(InvalidRecoveryOwnershipLeaseRenewalEvidenceError);
+
+    expect(() => verifyRecoveryOwnershipFenceTransitionEvidence(
+      inheritedTransitionExpected as never,
+      transitionEvidence,
+    )).toThrow(InvalidRecoveryOwnershipFenceTransitionEvidenceError);
   });
 });
