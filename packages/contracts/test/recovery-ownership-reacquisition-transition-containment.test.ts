@@ -75,4 +75,26 @@ describe("recovery ownership reacquisition transition containment", () => {
       expect(accessorExecutions).toBe(0);
     }
   });
+
+  it("rejects every non-enumerable required transition field", () => {
+    for (const field of Object.keys(transition) as Array<keyof typeof transition>) {
+      const nonEnumerableTransition = { ...transition } as Record<string, unknown>;
+      Object.defineProperty(nonEnumerableTransition, field, {
+        configurable: true,
+        enumerable: false,
+        value: transition[field],
+        writable: true,
+      });
+
+      expect(() =>
+        verifyRecoveryOwnershipReacquisitionEvidence(
+          previousExpected,
+          previousLease,
+          nextExpected,
+          nextLease,
+          nonEnumerableTransition as never,
+        ),
+      ).toThrow(`evidence.${field} must be an enumerable data property`);
+    }
+  });
 });
