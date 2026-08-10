@@ -127,6 +127,6 @@ describe("recovery ownership reacquisition transition containment", () => {
         nextLease,
         prototypeBackedTransition as never,
       ),
-    ).toThrow("evidence must be a plain object");
+    ).toThrow("evidence must be a plain data record");
   });
 });
