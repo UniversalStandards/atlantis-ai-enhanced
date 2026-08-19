@@ -1,15 +1,16 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-08-18 — Verified sprint state
+## 2026-08-20 — Verified sprint state
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Last independently verified implementation head before this documentation correction: `53ef77fec6e89478679bf1a0f51c1fcbb767b366`
-- Exact-head GitHub Actions run `31368567169` passed frozen-lockfile installation, TypeScript typechecks, and the full test suite.
-- Verified test evidence at that implementation head: 271/271 contracts tests and 360/360 event-store tests, 631/631 total.
+- Last independently verified runtime implementation head before documentation-only corrections: `53ef77fec6e89478679bf1a0f51c1fcbb767b366`.
+- GitHub Actions run `31368567169` verified that runtime implementation head with frozen-lockfile installation, TypeScript typechecks, and the full test suite: 271/271 contracts tests plus 360/360 event-store tests, 631/631 total.
+- Prior documentation-only sprint head `a5711dae7e8643babb7354a1fe97d9c53335e60e` was associated with successful PR workflow run `32148969476`. That `pull_request` workflow checked out GitHub's synthetic merge commit `a63ce3d8c4143953dee1d833af0f4c91c388d8fe`, so it is recorded as head-associated PR merge CI rather than literal exact-head checkout evidence.
+- Run `32148969476` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, and 271/271 contracts plus 360/360 event-store tests, 631/631 total. Its `GITHUB_TOKEN` permissions were read-only: `contents: read`, `metadata: read`.
 
 ### Implemented and verified foundations
 
