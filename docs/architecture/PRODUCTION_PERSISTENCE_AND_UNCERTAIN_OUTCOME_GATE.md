@@ -168,7 +168,7 @@ The implementation PR must include:
 - schema or durable record definition;
 - migration and rollback plan;
 - failure-mode matrix;
-- exact-head CI evidence;
+- CI evidence that accurately identifies the validated revision, distinguishing head-associated pull-request merge validation from literal branch-head checkout evidence;
 - real-adapter integration-test evidence;
 - restart and failure-injection evidence;
 - permission and secret inventory;
