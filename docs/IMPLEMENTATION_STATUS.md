@@ -9,8 +9,9 @@
 - Primary PR: #10, targeting `main`
 - Last independently verified runtime implementation head before documentation-only corrections: `53ef77fec6e89478679bf1a0f51c1fcbb767b366`.
 - GitHub Actions run `31368567169` verified that runtime implementation head with frozen-lockfile installation, TypeScript typechecks, and the full test suite: 271/271 contracts tests plus 360/360 event-store tests, 631/631 total.
-- Prior documentation-only sprint head `a5711dae7e8643babb7354a1fe97d9c53335e60e` was associated with successful PR workflow run `32148969476`. That `pull_request` workflow checked out GitHub's synthetic merge commit `a63ce3d8c4143953dee1d833af0f4c91c388d8fe`, so it is recorded as head-associated PR merge CI rather than literal exact-head checkout evidence.
-- Run `32148969476` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, and 271/271 contracts plus 360/360 event-store tests, 631/631 total. Its `GITHUB_TOKEN` permissions were read-only: `contents: read`, `metadata: read`.
+- Current documentation-only sprint head before this status refresh: `c498bfede43550b93ede81698b2b96aaf38174d2`.
+- GitHub Actions run `32309129598` is associated with that sprint head and completed successfully. The `pull_request` workflow checked out GitHub's synthetic merge commit `8158480b52742e58b51e88e19a52b4c1ccfc4eeb`, so this is recorded as head-associated PR merge CI rather than literal branch-head checkout evidence.
+- Run `32309129598` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, and 271/271 contracts plus 360/360 event-store tests, 631/631 total. Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
 
 ### Implemented and verified foundations
 
