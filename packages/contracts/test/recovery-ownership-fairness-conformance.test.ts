@@ -67,16 +67,23 @@ class FairnessReferenceStore implements RecoveryOwnershipStore {
       acquiredAtEpochMs + request.leaseDurationMs,
       acquiredAtEpochMs + this.maxContinuousOwnershipMs,
     );
-    const lease = verifyRecoveryOwnershipLeaseEvidence(request, {
-      claimId: `fairness-claim-${this.state.sequence}`,
-      recoveryId: request.recoveryId,
-      executionId: request.executionId,
-      ownerId: request.ownerId,
-      ownershipToken: `fairness-token-${this.state.sequence}`,
-      fence: this.state.fence,
-      acquiredAtEpochMs,
-      expiresAtEpochMs,
-    });
+    const lease = verifyRecoveryOwnershipLeaseEvidence(
+      {
+        recoveryId: request.recoveryId,
+        executionId: request.executionId,
+        ownerId: request.ownerId,
+      },
+      {
+        claimId: `fairness-claim-${this.state.sequence}`,
+        recoveryId: request.recoveryId,
+        executionId: request.executionId,
+        ownerId: request.ownerId,
+        ownershipToken: `fairness-token-${this.state.sequence}`,
+        fence: this.state.fence,
+        acquiredAtEpochMs,
+        expiresAtEpochMs,
+      },
+    );
     this.state.lease = lease;
     return Object.freeze({
       status: "acquired" as const,
