@@ -9,9 +9,10 @@
 - Primary PR: #10, targeting `main`
 - Last independently verified runtime implementation head before documentation-only corrections: `53ef77fec6e89478679bf1a0f51c1fcbb767b366`.
 - GitHub Actions run `31368567169` verified that runtime implementation head with frozen-lockfile installation, TypeScript typechecks, and the full test suite: 271/271 contracts tests plus 360/360 event-store tests, 631/631 total.
-- Current documentation-only sprint head before this status refresh: `c498bfede43550b93ede81698b2b96aaf38174d2`.
-- GitHub Actions run `32309129598` is associated with that sprint head and completed successfully. The `pull_request` workflow checked out GitHub's synthetic merge commit `8158480b52742e58b51e88e19a52b4c1ccfc4eeb`, so this is recorded as head-associated PR merge CI rather than literal branch-head checkout evidence.
-- Run `32309129598` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, and 271/271 contracts plus 360/360 event-store tests, 631/631 total. Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
+- Latest independently verified pre-refresh sprint head: `167262d14b3f47b69fd2d5c9333a3569cca72664`.
+- GitHub Actions run `32313460435` is associated with that sprint head and completed successfully. The `pull_request` workflow checked out GitHub's synthetic merge commit `3b59bbb458d8129463ea5c25b2e6c6830faffd05`, so this is recorded as head-associated PR merge CI rather than literal branch-head checkout evidence.
+- Run `32313460435` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, and 271/271 contracts plus 360/360 event-store tests, 631/631 total. Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
+- This status document intentionally records the latest independently verified pre-refresh revision rather than calling its own documentation commit the validated head; that avoids self-invalidating evidence drift on every documentation-only refresh.
 
 ### Implemented and verified foundations
 
