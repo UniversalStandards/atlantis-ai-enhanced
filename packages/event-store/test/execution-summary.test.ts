@@ -73,6 +73,14 @@ describe("projectExecutionSummary", () => {
     expect(() => projectExecutionSummary(events(), budget, { ...usage, costUsd: Number.NaN })).toThrow(InvalidEventError);
   });
 
+  it("fails closed when finite token components overflow their aggregate", () => {
+    expect(() => projectExecutionSummary(events(), budget, {
+      ...usage,
+      inputTokens: Number.MAX_VALUE,
+      outputTokens: Number.MAX_VALUE,
+    })).toThrow(/finite non-negative totalTokens/);
+  });
+
   it("fails closed when canonical event time moves backwards", () => {
     const reversed = events().map((event, index) => index === 1 ? { ...event, occurredAt: "2026-08-20T23:59:59.000Z" } : event);
     expect(() => projectExecutionSummary(reversed, budget, usage)).toThrow(/must not move backwards/);
