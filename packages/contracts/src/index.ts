@@ -1,4 +1,14 @@
 export {
+  InMemoryRecoveryOwnershipStore,
+  InvalidRecoveryOwnershipStoreRequestError,
+  RecoveryOwnershipConflictError,
+  type InMemoryRecoveryOwnershipStoreOptions,
+  type RecoveryOwnershipAcquireRequest,
+  type RecoveryOwnershipAcquireResult,
+  type RecoveryOwnershipStore,
+} from "./recovery-ownership-store.js";
+
+export {
   executionEventTypes,
   type ExecutionEventType,
 } from "./execution-event-types.js";
