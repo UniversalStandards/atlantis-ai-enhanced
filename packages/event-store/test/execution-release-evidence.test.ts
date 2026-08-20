@@ -95,4 +95,24 @@ describe("execution release evidence", () => {
       }),
     })).toThrow(/same executionId/);
   });
+
+  it("fails closed when replay evidence substitutes governed usage under the same execution", () => {
+    const executionEvents = events("execution-release-4");
+    const substitutedUsage: ExecutionUsage = Object.freeze({
+      ...usage,
+      outputTokens: 201,
+    });
+
+    expect(() => projectExecutionReleaseEvidence({
+      events: executionEvents,
+      budget,
+      usage,
+      replayFixture: Object.freeze({
+        fixtureId: "substituted-usage-release",
+        events: executionEvents,
+        budget,
+        usage: substitutedUsage,
+      }),
+    })).toThrow(/projection diverged/);
+  });
 });
