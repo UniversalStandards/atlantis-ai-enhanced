@@ -1,5 +1,6 @@
 import type { ExecutionBudget, ExecutionEvent, ExecutionUsage } from "@atlantis/contracts";
 
+import { InvalidEventError } from "./index.js";
 import {
   projectExecutionReplayEvidence,
   type ExecutionReplayEvidence,
@@ -34,7 +35,9 @@ export function projectExecutionReleaseEvidence(
     : projectExecutionReplayEvidence(input.replayFixture);
 
   if (replay !== undefined && replay.executionId !== summary.executionId) {
-    throw new Error("release replay evidence must use the same executionId as the governed execution summary.");
+    throw new InvalidEventError(
+      "release replay evidence must use the same executionId as the governed execution summary.",
+    );
   }
 
   return Object.freeze({
