@@ -172,3 +172,9 @@ export function replay<TState>(initialState: TState, events: readonly StoredEven
 
 export { projectExecutionReleaseEvidence } from "./execution-release-evidence.js";
 export type { ExecutionReleaseEvidence, ExecutionReleaseEvidenceInput } from "./execution-release-evidence.js";
+export {
+  ExecutionReplayFixtureRepository,
+  InMemoryExecutionReplayFixtureStorage,
+  serializeExecutionReplayFixture,
+} from "./execution-replay-fixture-store.js";
+export type { ExecutionReplayFixtureStorage } from "./execution-replay-fixture-store.js";
