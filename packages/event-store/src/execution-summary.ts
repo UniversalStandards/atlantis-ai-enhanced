@@ -88,6 +88,7 @@ export function projectExecutionSummary(
   for (const [name, value] of values) assertFiniteNonNegative(name, value);
 
   const totalTokens = usage.inputTokens + usage.outputTokens;
+  assertFiniteNonNegative("totalTokens", totalTokens);
   const elapsedMs = lastObservedAtMs - startedAtMs;
 
   return Object.freeze({
