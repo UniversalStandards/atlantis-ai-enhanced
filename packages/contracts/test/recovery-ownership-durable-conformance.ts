@@ -3,9 +3,9 @@ import { expect, it } from "vitest";
 import {
   RecoveryOwnershipConflictError,
   type RecoveryOwnershipAcquireRequest,
-  type RecoveryOwnershipLease,
   type RecoveryOwnershipStore,
 } from "../src/recovery-ownership-store.js";
+import type { RecoveryOwnershipLeaseEvidence } from "../src/recovery-ownership-lease-evidence.js";
 
 export interface DurableRecoveryOwnershipConformanceClock {
   setNow(value: number): void;
@@ -64,7 +64,7 @@ async function expectRejected(operation: () => unknown | Promise<unknown>) {
 
 async function expectStaleAuthorityRejected(
   store: RecoveryOwnershipStore,
-  lease: RecoveryOwnershipLease,
+  lease: RecoveryOwnershipLeaseEvidence,
 ) {
   await expect(
     Promise.resolve().then(() => store.renew(lease, 100)),
