@@ -11,10 +11,10 @@ const fixture: ExecutionReplayFixture = Object.freeze({
   fixtureId: "day-7-release-fixture",
   events: Object.freeze([
     Object.freeze({
+      id: "event-1",
       executionId: "exec-release-1",
       sequence: 1,
-      eventId: "event-1",
-      type: "execution.started",
+      type: "execution.started" as const,
       actor: "runner",
       occurredAt: "2026-08-20T00:00:00.000Z",
       payload: Object.freeze({}),
@@ -24,8 +24,7 @@ const fixture: ExecutionReplayFixture = Object.freeze({
     maxToolCalls: 10,
     maxRetries: 3,
     maxIterations: 5,
-    maxInputTokens: 1000,
-    maxOutputTokens: 1000,
+    maxTokens: 2000,
     maxDurationMs: 60000,
     maxCostUsd: 1,
   }),
