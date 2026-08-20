@@ -7,27 +7,35 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Last independently verified runtime implementation head before documentation-only corrections: `53ef77fec6e89478679bf1a0f51c1fcbb767b366`.
-- GitHub Actions run `31368567169` verified that runtime implementation head with frozen-lockfile installation, TypeScript typechecks, and the full test suite: 271/271 contracts tests plus 360/360 event-store tests, 631/631 total.
-- Latest independently verified pre-refresh sprint head: `167262d14b3f47b69fd2d5c9333a3569cca72664`.
-- GitHub Actions run `32313460435` is associated with that sprint head and completed successfully. The `pull_request` workflow checked out GitHub's synthetic merge commit `3b59bbb458d8129463ea5c25b2e6c6830faffd05`, so this is recorded as head-associated PR merge CI rather than literal branch-head checkout evidence.
-- Run `32313460435` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, and 271/271 contracts plus 360/360 event-store tests, 631/631 total. Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
-- This status document intentionally records the latest independently verified pre-refresh revision rather than calling its own documentation commit the validated head; that avoids self-invalidating evidence drift on every documentation-only refresh.
+- Latest independently verified implementation head before this documentation refresh: `6232d2c99b4dfbcd46fb4b4f5115c7f3110d6d68`.
+- Head-associated PR merge CI run `32342315188` completed successfully for that sprint head. The `pull_request` workflow checked out GitHub synthetic merge commit `e961acacb99874739ef0b0e8847281be5f16813b`, so this is recorded as head-associated PR merge CI rather than literal branch-head checkout evidence.
+- Run `32342315188` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 280/280 contracts tests across 47 files, and 360/360 event-store tests across 59 files: 640/640 total.
+- Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
+- This status document intentionally records the latest independently verified pre-refresh revision rather than calling its own documentation commit the validated head; that avoids self-invalidating evidence drift on documentation-only refreshes.
 
 ### Implemented and verified foundations
 
-The sprint has progressed substantially beyond the original July 30 bootstrap status. Verified implementation now includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery ownership lease/renewal/fence/reacquisition evidence, adversarial-input containment, restart/recovery validation, and read-only GitHub Actions token permissions.
+Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, adversarial-input containment, restart/recovery validation, and read-only GitHub Actions token permissions.
 
-PR #10 remains draft because release evidence and production-persistence acceptance gates are not yet complete. Do not infer production readiness from unit/integration CI alone.
+The recovery-ownership contract now also has a reusable adapter-neutral conformance harness. Verified conformance behavior includes:
+
+1. same owner cannot reacquire while its authority remains live;
+2. explicit release permits same-owner reacquisition only with fresh claim/token material and a higher fence;
+3. the exact expiry boundary permits reacquisition and advances fencing;
+4. competing owners remain excluded before expiry;
+5. stale authority cannot renew or release a successor's live claim; and
+6. ownership loss cannot let the former owner disturb the successor.
+
+PR #10 remains draft because production-persistence acceptance and release evidence are not complete. Do not infer production readiness from unit/integration CI alone.
 
 ### Current release blockers
 
-1. Implement the provider-neutral atomic/exclusive recovery ownership store/adapter contract with exclusive acquisition before recovery mutation, opaque authority, atomic renewal, monotonically increasing fences across distinct claims, expiry enforcement, stale-owner rejection, bounded continuation/fairness, ownership-loss behavior, and restart/crash recovery.
-2. Prove that contract with deterministic competing-worker, same-owner reacquisition, stale-claim, renewal, expiry, fencing, temporal-order, ownership-loss, and restart acceptance tests, reusing the existing recovery-ownership validators.
-3. Add the first real-adapter acceptance harness around immutable writer evidence and recovery ownership, including competing-writer isolation, acknowledgement loss, pre-commit failure, restart revalidation, replay/identity-substitution rejection, and retention/compaction safety.
-4. Bind production persistence only after both persistence-critical contracts are green.
+1. Define and prove bounded recovery-ownership continuation/fairness under sustained contention without weakening exclusivity or fencing.
+2. Add durable restart/crash semantics for recovery ownership so claim/fence state survives process loss rather than depending on process-local memory.
+3. Run the reusable recovery-ownership conformance suite through the first durable real-adapter acceptance harness, including cross-process atomicity, competing-writer isolation, acknowledgement loss, pre-commit failure, restart revalidation, replay/identity-substitution rejection, retention/compaction safety, and durable ownership-loss integration.
+4. Bind production persistence only after the durable recovery-ownership and immutable-writer evidence acceptance gates are green.
 5. Close the remaining Day-7 evidence gaps: Issue #5 execution graph/topology, latency/token/cost totals, deterministic fixture replay and OpenTelemetry export; Issue #7 review-gated improvement flow; deployment/rollback reproducibility; adversarial security validation; operator runbook; and burn-in.
 
 ### Integration rule
 
-Do not repeat completed implementation work unless a verified defect or regression requires correction. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed acquisition, renewal, release, expiry, stale-authority, same-owner reacquisition, temporal-boundary, or ownership-loss tests unless a verified defect or regression requires correction. Nothing is complete without build, test, execution, and trace evidence.
