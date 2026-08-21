@@ -195,3 +195,12 @@ export {
   serializeExecutionReplayFixture,
 } from "./execution-replay-fixture-store.js";
 export type { ExecutionReplayFixtureStorage } from "./execution-replay-fixture-store.js";
+export {
+  exportExecutionReleaseTelemetry,
+  projectExecutionReleaseTelemetry,
+} from "./execution-release-telemetry.js";
+export type {
+  ExecutionReleaseTelemetryExporter,
+  ExecutionReleaseTelemetryRecord,
+  ExecutionReleaseTelemetryResult,
+} from "./execution-release-telemetry.js";
