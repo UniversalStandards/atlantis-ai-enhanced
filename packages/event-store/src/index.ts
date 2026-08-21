@@ -212,3 +212,13 @@ export type {
   RepositoryImprovementRequest,
   RepositoryImprovementTool,
 } from "./repository-improvement-tool.js";
+export {
+  ApprovalGatedGitHubRepositoryImprovementTool,
+  InvalidRepositoryImprovementApprovalError,
+} from "./github-repository-improvement-adapter.js";
+export type {
+  ApprovedRepositoryImprovementRequest,
+  GitHubRepositoryImprovementExecution,
+  GitHubRepositoryImprovementPort,
+  RepositoryImprovementApprovalVerifier,
+} from "./github-repository-improvement-adapter.js";
