@@ -13,42 +13,10 @@ interface DurableArtifactFixture {
 }
 
 function evidence(executionId: string): ExecutionReleaseEvidence {
-  return {
+  return Object.freeze({
     executionId,
-    summary: {
-      executionId,
-      eventCount: 1,
-      startedAtEpochMs: 1,
-      completedAtEpochMs: 2,
-      elapsedMs: 1,
-      usage: {
-        toolCalls: 0,
-        retries: 0,
-        iterations: 1,
-        inputTokens: 1,
-        outputTokens: 1,
-        durationMs: 1,
-        costUsd: 0,
-      },
-      totalTokens: 2,
-      budget: {
-        toolCalls: { limit: 1, observed: 0, remaining: 1, exceeded: false },
-        retries: { limit: 1, observed: 0, remaining: 1, exceeded: false },
-        iterations: { limit: 1, observed: 1, remaining: 0, exceeded: false },
-        inputTokens: { limit: 2, observed: 1, remaining: 1, exceeded: false },
-        outputTokens: { limit: 2, observed: 1, remaining: 1, exceeded: false },
-        durationMs: { limit: 2, observed: 1, remaining: 1, exceeded: false },
-        costUsd: { limit: 1, observed: 0, remaining: 1, exceeded: false },
-      },
-      topology: {
-        executionId,
-        roots: ["event-1"],
-        nodes: [{ eventId: "event-1", sequence: 1, parentEventId: null, type: "execution.completed", actor: "runner", occurredAtEpochMs: 2 }],
-        edges: [],
-      },
-    },
-    replay: null,
-  };
+    summary: Object.freeze({}),
+  }) as unknown as ExecutionReleaseEvidence;
 }
 
 /**
@@ -90,3 +58,44 @@ export function registerExecutionReleaseArtifactDurableConformance(
     });
   });
 }
+
+class SharedStateDurableArtifactFixture implements DurableArtifactFixture {
+  readonly #artifacts = new Map<string, string>();
+  #failBeforeCommit = false;
+  #loseAcknowledgement = false;
+
+  public createStorage(): ExecutionReleaseArtifactStorage {
+    return {
+      put: (artifactId, serializedEvidence) => {
+        if (this.#failBeforeCommit) {
+          this.#failBeforeCommit = false;
+          return false;
+        }
+        this.#artifacts.set(artifactId, serializedEvidence);
+        if (this.#loseAcknowledgement) {
+          this.#loseAcknowledgement = false;
+          return false;
+        }
+        return true;
+      },
+      get: (artifactId) => this.#artifacts.get(artifactId) ?? null,
+    };
+  }
+
+  public restart(): void {
+    // Adapter instances are replaced by createStorage(); shared state is retained.
+  }
+
+  public failNextPutBeforeCommit(): void {
+    this.#failBeforeCommit = true;
+  }
+
+  public loseNextPutAcknowledgement(): void {
+    this.#loseAcknowledgement = true;
+  }
+}
+
+registerExecutionReleaseArtifactDurableConformance(
+  "shared-state reference fixture",
+  () => new SharedStateDurableArtifactFixture(),
+);
