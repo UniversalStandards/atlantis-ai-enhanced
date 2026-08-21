@@ -87,7 +87,15 @@ describe("governed release workflow", () => {
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("expected completion");
     expect(result.publication.evidence.executionId).toBe("execution-1");
-    expect(result.publication.evidence.summary.usage).toEqual(usage);
+    expect(result.publication.evidence.summary).toMatchObject({
+      toolCalls: usage.toolCalls,
+      retries: usage.retries,
+      iterations: usage.iterations,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      costUsd: usage.costUsd,
+    });
+    expect(result.publication.evidence.summary.budget.durationMs.observed).toBe(usage.durationMs);
     expect(storage.get("day-7/execution-1.json")).toBe(result.publication.serializedEvidence);
   });
 
@@ -114,7 +122,7 @@ describe("governed release workflow", () => {
 
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("expected completion");
-    expect(result.publication.evidence.summary.usage.costUsd).toBe(usage.costUsd);
+    expect(result.publication.evidence.summary.costUsd).toBe(usage.costUsd);
     expect(result.publication.evidence.summary.budget.costUsd.limit).toBe(budget.maxCostUsd);
   });
 
