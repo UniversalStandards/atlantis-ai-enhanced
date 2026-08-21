@@ -222,3 +222,11 @@ export type {
   GitHubRepositoryImprovementPort,
   RepositoryImprovementApprovalVerifier,
 } from "./github-repository-improvement-adapter.js";
+export {
+  InvalidSelfImprovementProposalError,
+  createSelfImprovementProposal,
+} from "./self-improvement-proposal.js";
+export type {
+  SelfImprovementProposal,
+  SelfImprovementProposalInput,
+} from "./self-improvement-proposal.js";
