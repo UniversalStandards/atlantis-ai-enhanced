@@ -230,3 +230,13 @@ export type {
   SelfImprovementProposal,
   SelfImprovementProposalInput,
 } from "./self-improvement-proposal.js";
+export {
+  InvalidSelfImprovementPatchEvidenceError,
+  SelfImprovementEvaluationDidNotFailError,
+  proposeSelfImprovementFromFailedEvaluation,
+} from "./self-improvement-development-workflow.js";
+export type {
+  SelfImprovementPatchEvidence,
+  SelfImprovementPatchGenerator,
+  SelfImprovementPatchRequest,
+} from "./self-improvement-development-workflow.js";
