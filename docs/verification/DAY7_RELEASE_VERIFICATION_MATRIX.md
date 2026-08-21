@@ -10,7 +10,7 @@ A gate is **green** only when the listed evidence exists from the same applicabl
 
 | Gate | Required evidence | Current verified state | Release rule |
 | --- | --- | --- | --- |
-| Regression suite | Frozen-lockfile install, contracts typecheck/tests, event-store typecheck/tests | Green at branch head `ada541591471cd30699f0e7b930922d7e4038f9d`: Contracts run `32514045157`; 283/283 contracts + 448/448 event-store = 731/731 | Must remain 100% green on the release candidate |
+| Regression suite | Frozen-lockfile install, contracts typecheck/tests, event-store typecheck/tests | Latest independently verified pre-refresh sprint head `75ec4c1cda7f7d978c94cfc58e9666c623c538c2`: head-associated PR-merge run `32521307831` validated synthetic merge `3693ced01b659f82cf892ef2a640c5e7ab8ba66a`; 283/283 contracts + 448/448 event-store = 731/731 | Must remain 100% green on the release candidate |
 | Unauthorized protected actions | Approval and policy tests plus adversarial attempts demonstrating no protected mutation without authorization | Existing fail-closed approval/policy foundations are green; final adversarial release-candidate campaign remains open | Zero unauthorized protected actions |
 | Repository-improvement reference workflow | One execution: request → authorization → normalization → planning → routing → durable execution → tool use → independent verification → memory/evidence → response | Controlled/provider-neutral composition exists; live operational run remains open | One complete same-execution trace and release artifact required |
 | Self-improvement review gate | Failing evaluation → isolated patch → tests → follow-up evaluation → security review → immutable proposal → human-review stop | Orchestration and 9 focused generator tests are green; real operational adapters/execution remain open | Must stop at `awaiting-human-review`; no merge/deploy/production mutation capability |
@@ -40,7 +40,7 @@ A gate is **green** only when the listed evidence exists from the same applicabl
 
 Before PR #10 can be considered ready for release review, the sprint record should identify one candidate commit and link or record:
 
-1. exact-head CI run and test totals;
+1. literal branch-head CI or head-associated PR-merge CI, with the tested commit/synthetic merge commit and test totals identified explicitly;
 2. complete governed Day-7 reference-workflow trace;
 3. runner-bound budget/usage/cost summary;
 4. deterministic replay evidence;
