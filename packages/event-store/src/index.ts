@@ -179,6 +179,11 @@ export {
 export type { ExecutionReleaseRequest } from "./execution-release-service.js";
 export { ExecutionReleasePublisher } from "./execution-release-publisher.js";
 export type { ExecutionReleasePublication } from "./execution-release-publisher.js";
+export { GovernedReleaseWorkflow } from "./governed-release-workflow.js";
+export type {
+  GovernedReleaseWorkflowRequest,
+  GovernedReleaseWorkflowResult,
+} from "./governed-release-workflow.js";
 export {
   ExecutionReleaseArtifactRepository,
   InMemoryExecutionReleaseArtifactStorage,
