@@ -35,6 +35,24 @@ export class ExecutionReleaseArtifactRepository {
     return serializedEvidence;
   }
 
+  /**
+   * Explicit settlement path for an uncertain save outcome. This never retries
+   * the write: it accepts the artifact only when authoritative readback already
+   * contains the exact governed bytes expected for this artifact identity.
+   */
+  public reconcile(artifactId: string, evidence: ExecutionReleaseEvidence): string {
+    assertArtifactId(artifactId);
+    const serializedEvidence = serializeExecutionReleaseEvidence(evidence);
+    const authoritative = this.storage.get(artifactId);
+    if (authoritative === null) {
+      throw new InvalidEventError("release artifact reconciliation found no authoritative artifact.");
+    }
+    if (authoritative !== serializedEvidence) {
+      throw new InvalidEventError("release artifact reconciliation found divergent authoritative bytes.");
+    }
+    return authoritative;
+  }
+
   public load(artifactId: string): string | null {
     assertArtifactId(artifactId);
     return this.storage.get(artifactId);
