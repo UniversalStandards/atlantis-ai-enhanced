@@ -1,5 +1,3 @@
-import type { ExecutionBudget, ExecutionUsage } from "@atlantis/contracts";
-
 import {
   GovernedResumableTaskEntrypoint,
   type ResumableTaskResult,
@@ -12,8 +10,6 @@ import {
 export interface GovernedReleaseWorkflowRequest {
   readonly task: unknown;
   readonly artifactId: string;
-  readonly budget: ExecutionBudget;
-  readonly usage: ExecutionUsage;
   readonly replayFixtureId?: string;
 }
 
@@ -30,8 +26,9 @@ export type GovernedReleaseWorkflowResult<O = unknown> =
 
 /**
  * Provider-neutral Day-7 composition boundary. A governed resumable execution
- * must complete before its authoritative trace can be projected and persisted
- * as release evidence. Approval waits never publish partial evidence.
+ * must complete before its authoritative trace and runner-bound accounting can
+ * be projected and persisted as release evidence. Approval waits never publish
+ * partial evidence, and callers cannot substitute release accounting.
  */
 export class GovernedReleaseWorkflow {
   public constructor(
@@ -49,8 +46,8 @@ export class GovernedReleaseWorkflow {
 
     const publication = this.releases.publish(request.artifactId, {
       events: task.trace,
-      budget: request.budget,
-      usage: request.usage,
+      budget: task.accounting.budget,
+      usage: task.accounting.usage,
       ...(request.replayFixtureId === undefined
         ? {}
         : { replayFixtureId: request.replayFixtureId }),
