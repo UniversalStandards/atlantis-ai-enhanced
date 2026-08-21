@@ -47,7 +47,7 @@ function referenceTrace(executionId: string): readonly ExecutionEvent[] {
       id: "authorization",
       executionId,
       sequence: 2,
-      type: "step.completed",
+      type: "workflow.step.completed",
       occurredAt: "2026-08-21T00:00:01.000Z",
       actor: "policy",
       parentEventId: "request",
@@ -57,7 +57,7 @@ function referenceTrace(executionId: string): readonly ExecutionEvent[] {
       id: "normalize-plan-route",
       executionId,
       sequence: 3,
-      type: "step.completed",
+      type: "workflow.step.completed",
       occurredAt: "2026-08-21T00:00:03.000Z",
       actor: "runner",
       parentEventId: "authorization",
@@ -77,7 +77,7 @@ function referenceTrace(executionId: string): readonly ExecutionEvent[] {
       id: "independent-verification",
       executionId,
       sequence: 5,
-      type: "step.completed",
+      type: "workflow.step.completed",
       occurredAt: "2026-08-21T00:00:09.000Z",
       actor: "verifier",
       parentEventId: "github-tool",
@@ -140,8 +140,8 @@ describe("Day-7 governed repository-improvement reference workflow", () => {
     expect(result.publication.evidence.summary.toolCalls).toBe(usage.toolCalls);
     expect(result.publication.evidence.summary.costUsd).toBe(usage.costUsd);
     expect(result.publication.evidence.summary.budget.costUsd.limit).toBe(budget.maxCostUsd);
-    expect(result.publication.evidence.topology.nodes).toHaveLength(6);
-    expect(result.publication.evidence.topology.edges).toHaveLength(5);
+    expect(result.publication.evidence.summary.topology.nodes).toHaveLength(6);
+    expect(result.publication.evidence.summary.topology.edges).toHaveLength(5);
     expect(storage.get(`day-7/${executionId}.json`)).toBe(result.publication.serializedEvidence);
   });
 
