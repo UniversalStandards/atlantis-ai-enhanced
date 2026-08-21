@@ -7,56 +7,45 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior independently verified documentation head: `ae2bad479ab6923967da806973f67d44f12e0b60`.
-- The incoming release-artifact persistence slice advanced three implementation commits to `9dbd01305c27353204a9704de2a2cdb79303e0e3`: `25ca39e4837d83823bdea6c5a8544d2be7baaf7c` adds the provider-neutral `ExecutionReleaseArtifactRepository`, `f5d9086ae7d5994fcab0182995cfa9ff80a318c9` adds focused persistence-acknowledgement tests, and `9dbd01305c27353204a9704de2a2cdb79303e0e3` exports the boundary publicly.
-- `ExecutionReleaseArtifactRepository` serializes already-governed `ExecutionReleaseEvidence`, requires an exact positive storage acknowledgement, and then requires authoritative readback to equal the exact governed bytes before persistence is accepted.
-- Head-associated PR merge CI run `32431296274` completed successfully for implementation head `9dbd01305c27353204a9704de2a2cdb79303e0e3`, validating GitHub synthetic merge commit `4970caec166f47e3ccae814b6002643dd602a496` rather than a literal branch-head checkout.
-- Run `32431296274` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 283/283 contracts tests across 48 files, and 391/391 event-store tests across 66 files: 674/674 total.
-- Release artifact repository: 4/4 tests passed. Governed release-evidence service: 4/4. Persisted replay fixture repository: 4/4. Execution release evidence: 4/4. Execution replay evidence: 4/4. Execution summary: 5/5. Execution topology: 6/6.
+- Prior independently verified documentation head: `99285fc1ca06d192835682ccbc150a8b30e56d98`.
+- The incoming release-publication slice advanced three commits to `b4b7c20a1acbaf1aff52dc4c8c22ce4ec46ff7fb`, adding `ExecutionReleasePublisher`, focused publication tests, and the public export.
+- `ExecutionReleasePublisher` composes the existing governed `ExecutionReleaseEvidenceService` with `ExecutionReleaseArtifactRepository`: evidence is projected first, then the exact serialized governed bytes are persisted behind the provider-neutral artifact-storage boundary and returned as one immutable publication result.
+- Head-associated PR merge CI run `32434838824` completed successfully for implementation head `b4b7c20a1acbaf1aff52dc4c8c22ce4ec46ff7fb`, validating GitHub synthetic merge commit `dd3b8b5fa663319bee11fd27d98623262a309854` rather than a literal branch-head checkout.
+- Run `32434838824` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 283/283 contracts tests across 48 files, and 394/394 event-store tests across 67 files: 677/677 total.
+- Release publisher: 3/3 tests passed. Release artifact repository: 4/4. Governed release-evidence service: 4/4. Persisted replay fixture repository: 4/4. Execution release evidence: 4/4. Execution replay evidence: 4/4. Execution summary: 5/5. Execution topology: 6/6.
 - Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
 - This status document records the latest independently verified implementation revision rather than treating its own documentation-only refresh as new runtime evidence.
 
 ### Implemented and verified foundations
 
-Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, adversarial-input containment, restart/recovery validation, read-only GitHub Actions token permissions, deterministic execution-topology projection, governed execution-summary evidence, deterministic replay-evidence projection, provider-neutral execution release-evidence composition, a provider-neutral persisted replay-fixture repository boundary, an operational governed release-evidence service with canonical JSON serialization, and a provider-neutral release-artifact repository boundary with exact authoritative byte-for-byte readback acknowledgement.
+Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, adversarial-input containment, restart/recovery validation, read-only GitHub Actions token permissions, deterministic execution-topology projection, governed execution-summary evidence, deterministic replay-evidence projection, provider-neutral execution release-evidence composition, a provider-neutral persisted replay-fixture repository boundary, an operational governed release-evidence service with canonical serialization, a provider-neutral release-artifact repository with exact authoritative byte-for-byte readback acknowledgement, and a provider-neutral release-publication composition boundary joining those two release components without selecting a storage or telemetry provider.
 
-The recovery-ownership path includes:
+The recovery-ownership path includes a provider-neutral `RecoveryOwnershipStore`, process-local reference implementation, baseline/durability/retention/fairness conformance definitions, executable process-local fairness evidence, candidate comparison and durable-adapter design, and an all-gates registration surface. No real durable adapter is registered yet, so current CI is not cross-process/restart production-ownership evidence.
 
-1. provider-neutral `RecoveryOwnershipStore` contract;
-2. deterministic process-local reference implementation;
-3. reusable baseline adapter-neutral conformance harness;
-4. durability acceptance gate and reusable durable-adapter conformance harness;
-5. acknowledgement-loss, pre-commit-failure, replay/identity-substitution scenarios;
-6. retention/compaction fencing conformance scenarios;
-7. bounded-continuation fairness decision gate;
-8. reusable fairness conformance harness covering renewal-budget enforcement, no-mutation denial, restart-preserved continuation budget, deterministic contender handoff, higher fencing, and stale-predecessor rejection; and
-9. all-gates durable-adapter registration infrastructure requiring baseline, durability/failure-injection, and fairness factories, with retention/compaction required when the adapter exposes destructive or rewriting maintenance.
+The execution-observability/release-evidence path now includes:
 
-The process-local fairness fixture is executed and green, but the durable, retention, and fairness conformance modules have not yet been registered against a real durable adapter. Current CI therefore does not constitute cross-process/restart durable-adapter evidence.
+1. `projectExecutionTopology` with fail-closed identity, sequence, and causation validation;
+2. governed `projectExecutionSummary` for explicit latency/token/cost/tool/retry/iteration evidence and budget headroom;
+3. deterministic replay projection and equality enforcement;
+4. governed release-evidence composition bound to the exact canonical replay projection;
+5. provider-neutral persisted replay-fixture save/load with authoritative readback and identity validation;
+6. `ExecutionReleaseEvidenceService` as the operational projection/serialization boundary;
+7. `ExecutionReleaseArtifactRepository` as the provider-neutral exact-readback persistence boundary; and
+8. `ExecutionReleasePublisher`, which composes projection and persistence into one operational publication boundary.
 
-The execution-observability/release-evidence path includes:
-
-1. deterministic `projectExecutionTopology`, which rejects empty streams, mixed execution identities, sequence gaps, duplicate event identities, and missing or forward parent references;
-2. governed `projectExecutionSummary`, which composes topology with explicit budget/usage evidence and reports elapsed time, token/cost totals, tool calls, retries, iterations, and budget headroom while failing closed on invalid or overflowing numeric evidence;
-3. deterministic `projectExecutionReplayEvidence` plus `assertDeterministicExecutionReplay`, which project the same topology/summary path into a canonical provider-neutral representation and fail closed on fixture identity, execution identity, or canonical projection divergence;
-4. `projectExecutionReleaseEvidence`, which composes the governed summary with optional deterministic replay evidence and requires the replay fixture's canonical governed projection to match the release execution exactly, preventing same-execution substitution of events, budget, or usage;
-5. `ExecutionReplayFixtureRepository`, which persists and restores replay fixtures through a provider-neutral storage interface, requires exact authoritative readback after save, rejects requested/persisted fixture identity substitution, and routes restored fixtures through the governed replay projection before returning them;
-6. `ExecutionReleaseEvidenceService`, which is the operational release boundary for authoritative events/budget/usage, optionally loads a governed persisted replay fixture, projects release evidence through the existing validated composition path, and serializes the governed result without making telemetry authoritative for correctness; and
-7. `ExecutionReleaseArtifactRepository`, which places the serialized governed projection behind a provider-neutral storage interface and accepts persistence only after an exact authoritative readback of the bytes that were written.
-
-The in-memory replay-fixture and release-artifact storage implementations are explicitly process-local reference fixtures and are not production durability evidence. The release-artifact repository closes the provider-neutral repository/acknowledgement boundary, but no approved durable external artifact-storage adapter is bound yet and OpenTelemetry export remains outstanding.
+The publisher is not yet wired into the complete governed reference workflow, and the bundled in-memory replay-fixture and release-artifact storage implementations remain process-local reference fixtures rather than durable external storage evidence. OpenTelemetry export remains non-authoritative and outstanding.
 
 PR #10 remains draft because production-persistence acceptance and Day-7 release evidence are not complete. Do not infer production readiness from unit/integration CI alone.
 
 ### Current release blockers
 
-1. Integrate `ExecutionReleaseEvidenceService` and `ExecutionReleaseArtifactRepository` into the complete governed reference workflow, then bind the artifact repository to an approved provider-neutral durable external storage adapter with restart/failure evidence.
-2. Add OpenTelemetry export around the provider-neutral release evidence without making OpenTelemetry authoritative for correctness.
-3. Approve and implement the first durable `RecoveryOwnershipStore` adapter behind the provider-neutral boundary.
-4. Register the baseline, durability, retention/compaction, and fairness conformance suites against that durable adapter; prove exactly-one-winner cross-process acquisition, restart-surviving ownership, continuation-budget preservation across restart, higher fencing after handoff, stale-authority rejection, acknowledgement-loss reconciliation, pre-commit failure isolation, replay/identity-substitution rejection, ownership-loss integration, and maintenance/retention safety.
-5. Prove the selected atomicity/reconciliation boundary between durable recovery ownership and immutable writer/event evidence, then bind production persistence only after both gates are green.
+1. Wire `ExecutionReleasePublisher` into the complete governed reference workflow so one reference execution produces the governed release artifact through the same production-facing composition path.
+2. Implement an approved provider-neutral durable external artifact-storage adapter and prove exact authoritative readback, acknowledgement-loss handling, and restart/failure behavior against `ExecutionReleaseArtifactRepository`/`ExecutionReleasePublisher`.
+3. Add OpenTelemetry export around provider-neutral release evidence without making telemetry authoritative for correctness.
+4. Approve and implement the first durable `RecoveryOwnershipStore` adapter behind the provider-neutral boundary, then register baseline, durability/failure-injection, fairness, and applicable retention/compaction conformance and prove cross-process/restart semantics.
+5. Prove the selected atomicity/reconciliation boundary between durable recovery ownership and immutable writer/event evidence before production persistence binding.
 6. Close the remaining Day-7 evidence gaps: Issue #7 review-gated improvement flow; deployment/rollback reproducibility; adversarial security validation; operator runbook; and burn-in.
 
 ### Integration rule
 
-Do not repeat completed acquisition, renewal, release, expiry, stale-authority, same-owner reacquisition, temporal-boundary, ownership-loss, durability-harness, retention-harness, fairness-harness, durable-adapter-registration, execution-topology, execution-summary, deterministic replay-evidence, execution release-evidence composition, persisted replay-fixture repository, governed release-evidence service, release serialization, or provider-neutral release-artifact repository work unless a verified defect or regression requires correction. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed recovery-ownership conformance, topology projection, execution-summary, deterministic replay-evidence, release-evidence composition, persisted replay-fixture repository, governed release-evidence service, release serialization, provider-neutral release-artifact repository, or release-publication composition work unless a verified defect or regression requires correction. Nothing is complete without build, test, execution, and trace evidence.
