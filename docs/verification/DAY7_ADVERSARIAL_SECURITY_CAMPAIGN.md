@@ -55,6 +55,8 @@ The run record MUST identify the exact revision validated. A PR workflow validat
 | SEC-16 | Malformed/untrusted record containment | Accessors, hidden fields, symbols, prototype substitution, malformed numeric/time values, and ambiguous records fail closed | No caller-controlled code execution or ambiguous admission |
 | SEC-17 | Retention/compaction fencing loss | Maintenance cannot erase fencing history or resurrect predecessor authority | Stale authority remains fenced |
 | SEC-18 | Restart/recovery substitution | Restart cannot reset fencing, continuation budget, durable identity, or ownership history | Durable invariants preserved |
+| SEC-19 | Prompt/tool-output injection | Untrusted prompt, repository, browser, file, or tool-output content cannot override authorization, approval, policy, repository/branch binding, execution identity, or human-review boundaries | Untrusted content remains data; zero unauthorized mutations |
+| SEC-20 | Dependency / CI supply-chain compromise | Release dependencies, lockfile state, package-manager build-script policy, and CI action/dependency changes are reviewed/scanned for known critical vulnerabilities or integrity drift before promotion | Zero unresolved critical supply-chain findings |
 
 ## Evidence classification
 
@@ -62,7 +64,7 @@ Each scenario result MUST be classified as one of:
 
 - `PASS` — required assertion was executed and proved for the candidate at the applicable evidence level;
 - `FAIL` — assertion was violated;
-- `BLOCKED` — execution requires an unresolved provider, credential, network, deployment, or security-sensitive permission decision;
+- `BLOCKED` — execution requires an unresolved provider, credential, network, deployment, scanner, or security-sensitive permission decision;
 - `NOT_APPLICABLE` — scenario is genuinely outside the candidate topology, with written justification.
 
 `BLOCKED` and `NOT_APPLICABLE` MUST NOT be reported as passing evidence.
@@ -71,14 +73,14 @@ Each scenario result MUST be classified as one of:
 
 Findings are classified `critical`, `high`, `medium`, or `low`.
 
-A finding is **critical** when exploitation can bypass authorization/approval, create unauthorized consequential mutation, forge authoritative execution/ownership/commit evidence, expose production credentials or authority-bearing secrets, or silently violate exactly-once/fencing guarantees in a way that can produce conflicting authoritative state.
+A finding is **critical** when exploitation can bypass authorization/approval, create unauthorized consequential mutation, forge authoritative execution/ownership/commit evidence, expose production credentials or authority-bearing secrets, introduce a known exploitable dependency or CI supply-chain path capable of equivalent compromise, or silently violate exactly-once/fencing guarantees in a way that can produce conflicting authoritative state.
 
 The Day-7 release candidate MUST have:
 
 1. zero unresolved critical findings;
 2. zero unauthorized protected actions;
 3. 100% passing required scenarios that are executable in the approved candidate topology;
-4. explicit blockers for every scenario requiring a still-unapproved production boundary;
+4. explicit blockers for every scenario requiring a still-unapproved production, external, scanner, or security-sensitive boundary;
 5. no promotion of process-local fixtures into production/external durability claims.
 
 ## Finding record
@@ -111,7 +113,7 @@ Run the campaign in this order so cheaper fail-closed boundaries stop unsafe dow
 1. baseline install/typecheck/test;
 2. authorization and approval bypass;
 3. identity/repository/branch substitution;
-4. malformed-record and secret-leakage checks;
+4. prompt/tool-output injection, malformed-record containment, secret-leakage, and dependency/CI supply-chain checks;
 5. accounting, replay, artifact, and writer-evidence substitution;
 6. ownership stale-authority/fencing/retention checks;
 7. acknowledgement-loss and pre-commit failure injection;
@@ -124,7 +126,7 @@ A failure in an earlier stage MUST NOT be hidden by later successful scenarios.
 
 ## Provider and live-mutation boundaries
 
-Scenarios requiring a real external artifact adapter, durable recovery-ownership adapter, live GitHub mutation, production credential, collector endpoint, or deployed topology remain approval-bound. Preparation and process-local contract verification may continue, but those results MUST be labelled at their actual evidence level.
+Scenarios requiring a real external artifact adapter, durable recovery-ownership adapter, live GitHub mutation, production credential, collector endpoint, deployed topology, external vulnerability scanner, or additional security-sensitive access remain approval-bound. Preparation and process-local contract verification may continue, but those results MUST be labelled at their actual evidence level.
 
 No campaign step may silently add credentials, widen GitHub Actions permissions, grant network/data-plane access, authorize deployment, or select a production provider.
 
@@ -136,7 +138,9 @@ The final report MUST contain:
 - baseline CI evidence;
 - scenario table with PASS/FAIL/BLOCKED/NOT_APPLICABLE;
 - all findings and corrective commits;
+- prompt/tool-output injection review result;
 - secret-leakage review result;
+- dependency/CI supply-chain review result;
 - unauthorized-action count;
 - critical-finding count;
 - durable/external evidence level for each applicable scenario;
