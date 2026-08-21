@@ -1,6 +1,7 @@
 import type {
   ExecutionBudget,
   ExecutionEvent,
+  ExecutionUsage,
   WorkflowContext,
 } from "@atlantis/contracts";
 import {
@@ -32,6 +33,11 @@ export interface ResumableTaskRequest<I = unknown> extends TaskRequest<I> {
   readonly approvalResolution?: ApprovalResolution;
 }
 
+export interface AuthoritativeExecutionAccounting {
+  readonly budget: Readonly<ExecutionBudget>;
+  readonly usage: Readonly<ExecutionUsage>;
+}
+
 export type ResumableTaskResult<O = unknown> =
   | Readonly<{
       status: "waiting_for_approval";
@@ -44,6 +50,7 @@ export type ResumableTaskResult<O = unknown> =
       executionId: string;
       output: O;
       trace: readonly ExecutionEvent[];
+      accounting: AuthoritativeExecutionAccounting;
     }>;
 
 export type TerminalExecutionOutcome =
@@ -160,6 +167,13 @@ function createContext<I, O>(
   };
 }
 
+function authoritativeAccounting(context: WorkflowContext): AuthoritativeExecutionAccounting {
+  return Object.freeze({
+    budget: Object.freeze({ ...context.budget }),
+    usage: Object.freeze({ ...context.usage }),
+  });
+}
+
 export class ResumableTaskEntrypoint {
   public constructor(private readonly options: ResumableTaskEntrypointOptions) {}
 
@@ -202,6 +216,7 @@ export class ResumableTaskEntrypoint {
         executionId,
         output,
         trace: this.options.eventSink.readExecution(executionId),
+        accounting: authoritativeAccounting(context),
       });
     } catch (error) {
       if (error instanceof ApprovalRequiredError) {
