@@ -92,20 +92,38 @@ export function registerExecutionReleaseArtifactDurableConformance(
       expect(new ExecutionReleaseArtifactRepository(fixture.createStorage()).load(artifactId)).toBeNull();
     });
 
-    it("reconciles acknowledgement loss by authoritative readback without divergent bytes", () => {
+    it("settles acknowledgement loss by exact authoritative readback without rewriting", () => {
       const fixture = createFixture();
       const artifactId = "release/execution-3";
+      const expected = evidence("execution-3");
+      fixture.loseNextPutAcknowledgement();
+      expect(() =>
+        new ExecutionReleaseArtifactRepository(fixture.createStorage()).save(artifactId, expected),
+      ).toThrow();
+      fixture.restart();
+      const repository = new ExecutionReleaseArtifactRepository(fixture.createStorage());
+      const settled = repository.reconcile(artifactId, expected);
+      expect(repository.load(artifactId)).toBe(settled);
+      expect(JSON.parse(settled)).toMatchObject({ executionId: "execution-3" });
+    });
+
+    it("rejects acknowledgement-loss settlement when authoritative bytes diverge", () => {
+      const fixture = createFixture();
+      const artifactId = "release/execution-4";
       fixture.loseNextPutAcknowledgement();
       expect(() =>
         new ExecutionReleaseArtifactRepository(fixture.createStorage()).save(
           artifactId,
-          evidence("execution-3"),
+          evidence("execution-4"),
         ),
       ).toThrow();
       fixture.restart();
-      const persisted = new ExecutionReleaseArtifactRepository(fixture.createStorage()).load(artifactId);
-      expect(persisted).not.toBeNull();
-      expect(JSON.parse(persisted!)).toMatchObject({ executionId: "execution-3" });
+      expect(() =>
+        new ExecutionReleaseArtifactRepository(fixture.createStorage()).reconcile(
+          artifactId,
+          evidence("different-execution"),
+        ),
+      ).toThrow(/divergent authoritative bytes/);
     });
   });
 }
