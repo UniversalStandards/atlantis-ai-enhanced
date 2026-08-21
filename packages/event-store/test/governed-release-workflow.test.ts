@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { ApprovalRequiredError } from "@atlantis/contracts/approval-control";
 import type { ExecutionEvent } from "@atlantis/contracts";
 
 import { GovernedReleaseWorkflow } from "../src/governed-release-workflow.js";
@@ -67,7 +66,7 @@ function publisher(storage: InMemoryExecutionReleaseArtifactStorage): ExecutionR
 }
 
 describe("governed release workflow", () => {
-  it("publishes the completed governed execution trace through the release boundary", async () => {
+  it("publishes runner-bound accounting with the completed governed trace", async () => {
     const storage = new InMemoryExecutionReleaseArtifactStorage();
     const tasks = {
       submit: async () => Object.freeze({
@@ -75,6 +74,7 @@ describe("governed release workflow", () => {
         executionId: "execution-1",
         output: "published",
         trace: trace("execution-1"),
+        accounting: Object.freeze({ budget, usage }),
       }),
     };
     const workflow = new GovernedReleaseWorkflow(tasks as never, publisher(storage));
@@ -82,14 +82,40 @@ describe("governed release workflow", () => {
     const result = await workflow.execute({
       task: { workflowId: "reference" },
       artifactId: "day-7/execution-1.json",
-      budget,
-      usage,
     });
 
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("expected completion");
     expect(result.publication.evidence.executionId).toBe("execution-1");
+    expect(result.publication.evidence.summary.usage).toEqual(usage);
     expect(storage.get("day-7/execution-1.json")).toBe(result.publication.serializedEvidence);
+  });
+
+  it("does not accept caller-supplied accounting substitution", async () => {
+    const storage = new InMemoryExecutionReleaseArtifactStorage();
+    const tasks = {
+      submit: async () => Object.freeze({
+        status: "completed" as const,
+        executionId: "execution-1",
+        output: "published",
+        trace: trace("execution-1"),
+        accounting: Object.freeze({ budget, usage }),
+      }),
+    };
+    const workflow = new GovernedReleaseWorkflow(tasks as never, publisher(storage));
+
+    const substituted = {
+      task: { workflowId: "reference" },
+      artifactId: "day-7/execution-1.json",
+      budget: { ...budget, maxCostUsd: 999 },
+      usage: { ...usage, costUsd: 999 },
+    };
+    const result = await workflow.execute(substituted);
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("expected completion");
+    expect(result.publication.evidence.summary.usage.costUsd).toBe(usage.costUsd);
+    expect(result.publication.evidence.summary.budget.costUsd.limit).toBe(budget.maxCostUsd);
   });
 
   it("does not publish partial release evidence while execution waits for approval", async () => {
@@ -117,8 +143,6 @@ describe("governed release workflow", () => {
     const result = await workflow.execute({
       task: { workflowId: "reference" },
       artifactId: "day-7/execution-2.json",
-      budget,
-      usage,
     });
 
     expect(result.status).toBe("waiting_for_approval");
