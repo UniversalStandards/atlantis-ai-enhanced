@@ -177,6 +177,8 @@ export {
   serializeExecutionReleaseEvidence,
 } from "./execution-release-service.js";
 export type { ExecutionReleaseRequest } from "./execution-release-service.js";
+export { ExecutionReleasePublisher } from "./execution-release-publisher.js";
+export type { ExecutionReleasePublication } from "./execution-release-publisher.js";
 export {
   ExecutionReleaseArtifactRepository,
   InMemoryExecutionReleaseArtifactStorage,
