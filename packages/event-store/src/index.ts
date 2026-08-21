@@ -178,6 +178,11 @@ export {
 } from "./execution-release-service.js";
 export type { ExecutionReleaseRequest } from "./execution-release-service.js";
 export {
+  ExecutionReleaseArtifactRepository,
+  InMemoryExecutionReleaseArtifactStorage,
+} from "./execution-release-artifact-store.js";
+export type { ExecutionReleaseArtifactStorage } from "./execution-release-artifact-store.js";
+export {
   ExecutionReplayFixtureRepository,
   InMemoryExecutionReplayFixtureStorage,
   serializeExecutionReplayFixture,
