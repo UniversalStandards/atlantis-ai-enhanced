@@ -13,6 +13,7 @@ export const DAY7_REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "telemetry-binding",
   "adversarial-security",
   "browser-runtime",
+  "operator-runbook",
 ] as const);
 
 export type Day7RequiredReleaseGateId = typeof DAY7_REQUIRED_RELEASE_GATE_IDS[number];
