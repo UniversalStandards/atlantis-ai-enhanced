@@ -111,6 +111,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
       candidateIdentity,
       disposition: "PASS" as const,
       evidenceIds: [`${gateId}-evidence`],
+      blockerReason: null,
     })),
     disposition: "PASS",
     blockingGateIds: [],
