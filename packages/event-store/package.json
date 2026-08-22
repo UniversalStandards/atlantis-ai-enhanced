@@ -16,7 +16,8 @@
     "./persistence-uncertainty-repository": "./src/persistence-uncertainty-repository.ts",
     "./self-improvement-patch-generator": "./src/self-improvement-patch-generator.ts",
     "./task-entrypoint": "./src/task-entrypoint.ts",
-    "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts"
+    "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts",
+    "./untrusted-browser-content": "./src/untrusted-browser-content.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
