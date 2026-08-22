@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./abortable-execution-writer": "./src/abortable-execution-writer.ts",
     "./browser-content-observer": "./src/browser-content-observer.ts",
+    "./browser-content-observer-conformance": "./src/browser-content-observer-conformance.ts",
     "./execution-event-sink": "./src/execution-event-sink.ts",
     "./execution-replay-evidence": "./src/execution-replay-evidence.ts",
     "./execution-summary": "./src/execution-summary.ts",
