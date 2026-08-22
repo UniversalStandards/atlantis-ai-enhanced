@@ -23,6 +23,8 @@ export {
   type RecoveryOwnershipMutationKind,
 } from "./recovery-ownership-durable-adapter.js";
 
+export { validateRecoveryOwnershipDurableAdapterHarness } from "./recovery-ownership-durable-harness-validation.js";
+
 export {
   executionEventTypes,
   type ExecutionEventType,
