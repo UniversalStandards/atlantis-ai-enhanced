@@ -66,6 +66,7 @@ export function validateRecoveryOwnershipDurableAdapterHarness(
   }
   const failurePoints = new Set<unknown>(capabilities.failureInjection);
   if (
+    capabilities.failureInjection.length !== requiredFailurePoints.length ||
     failurePoints.size !== requiredFailurePoints.length ||
     requiredFailurePoints.some((point) => !failurePoints.has(point))
   ) {
