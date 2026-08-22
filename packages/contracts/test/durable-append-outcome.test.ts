@@ -93,4 +93,11 @@ describe("durable append uncertainty", () => {
       quarantineReason: "not allowed",
     })).toThrow(InvalidDurableAppendEvidenceError);
   });
+
+  it("rejects unsupported reconciliation states at the runtime boundary", () => {
+    expect(() => validateDurableAppendUncertaintyRecord({
+      ...base(),
+      reconciliationState: "settled" as DurableAppendUncertaintyRecord["reconciliationState"],
+    })).toThrow(InvalidDurableAppendEvidenceError);
+  });
 });
