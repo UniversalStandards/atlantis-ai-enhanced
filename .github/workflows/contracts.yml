@@ -24,7 +24,7 @@ on:
       - ".github/workflows/contracts.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -32,8 +32,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: sprint/7-day-operational-alpha
 
       - uses: pnpm/action-setup@v6
         with:
@@ -44,20 +42,7 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Apply targeted nanoid remediation
-        run: |
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const path = 'pnpm-workspace.yaml';
-          let text = fs.readFileSync(path, 'utf8').replace(/\n+$/, '');
-          if (!text.includes('nanoid@<3.3.18')) {
-            text += '\n\noverrides:\n  "nanoid@<3.3.18": "3.3.18"';
-          }
-          fs.writeFileSync(path, text + '\n');
-          NODE
-          pnpm install --no-frozen-lockfile
-          pnpm install --frozen-lockfile
-
+      - run: pnpm install --frozen-lockfile
       - name: SEC-20 lockfile integrity and source gate
         run: node scripts/sec20-supply-chain-gate.mjs
       - name: SEC-20 structured vulnerability audit
@@ -70,15 +55,3 @@ jobs:
           node -e 'const fs=require("node:fs"); const inventory=JSON.parse(fs.readFileSync("sec20-dependency-inventory.json","utf8")); if (!Array.isArray(inventory) || inventory.length === 0) process.exit(1); console.log(`SEC-20 dependency inventory generated for ${inventory.length} workspace root(s).`);'
       - run: pnpm typecheck
       - run: pnpm test
-
-      - name: Commit exact remediation inputs
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- pnpm-workspace.yaml pnpm-lock.yaml
-          if git diff --cached --quiet; then
-            echo "No remediation diff to commit."
-          else
-            git commit -m "security: remediate nanoid advisory for SEC-20"
-            git push origin HEAD:sprint/7-day-operational-alpha
-          fi
