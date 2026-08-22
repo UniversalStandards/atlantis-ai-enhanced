@@ -45,8 +45,20 @@ function nonEmpty(value: string, field: string): string {
   return value;
 }
 
+function sameCandidate(expected: Day7CandidateIdentity, actual: Day7CandidateIdentity): boolean {
+  return expected.candidateHeadSha === actual.candidateHeadSha
+    && expected.candidateMergeSha === actual.candidateMergeSha
+    && expected.workflowRunId === actual.workflowRunId
+    && expected.verificationMatrixRevision === actual.verificationMatrixRevision
+    && expected.operatorRunbookRevision === actual.operatorRunbookRevision
+    && expected.dependencyLockDigest === actual.dependencyLockDigest
+    && expected.configurationSchemaVersion === actual.configurationSchemaVersion
+    && expected.deploymentIdentity === actual.deploymentIdentity
+    && expected.recordedAtEpochMs === actual.recordedAtEpochMs;
+}
+
 function assertSameCandidate(expected: Day7CandidateIdentity, actual: Day7CandidateIdentity, field: string): void {
-  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+  if (!sameCandidate(expected, actual)) {
     invalid(`${field} must be bound to the exact release candidate identity.`);
   }
 }
