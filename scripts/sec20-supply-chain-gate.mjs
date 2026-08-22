@@ -43,7 +43,7 @@ if (packagesStart < 0) {
   };
 
   for (const line of lines) {
-    const header = /^  (.+):$/.exec(line);
+    const header = /^  (\S.*):$/.exec(line);
     if (header) {
       settle();
       packageKey = header[1];
