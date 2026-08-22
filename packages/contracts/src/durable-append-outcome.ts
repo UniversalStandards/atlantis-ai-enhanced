@@ -102,10 +102,10 @@ export function validateDurableAppendUncertaintyRecord(
     throw new InvalidDurableAppendEvidenceError("quarantineReason is valid only for quarantined uncertainty");
   }
   return Object.freeze({
-    ...record,
     identity,
     firstAttemptEpochMs,
     lastAttemptEpochMs,
+    reconciliationState: record.reconciliationState,
     retryCount,
     lastObservedEvidenceId,
     ...(providerOperationId === undefined ? {} : { providerOperationId }),
@@ -157,9 +157,13 @@ export function reconcileDurableAppendUncertainty(
   }
 
   return Object.freeze({
-    ...current,
+    identity: current.identity,
+    firstAttemptEpochMs: current.firstAttemptEpochMs,
+    lastAttemptEpochMs: current.lastAttemptEpochMs,
     reconciliationState,
+    retryCount: current.retryCount,
     lastObservedEvidenceId: evidenceId,
-    ...(quarantineReason === undefined ? { quarantineReason: undefined } : { quarantineReason }),
+    ...(current.providerOperationId === undefined ? {} : { providerOperationId: current.providerOperationId }),
+    ...(quarantineReason === undefined ? {} : { quarantineReason }),
   });
 }
