@@ -7,23 +7,27 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Current independently verified implementation head before this documentation refresh: `e527c346cbee01bdbddfc173c68220eadece3183`.
-- Delta from prior verified documentation head `3d08c7fe9bc4b9f3d053d3671be7f516a2c18ec2`: two implementation commits / zero behind, adding `sec19-release-artifact-storage-injection.test.ts` and `sec19-release-artifact-ingestion.test.ts`.
-- Head-associated PR merge CI run `32542161123` completed successfully for implementation head `e527c346cbee01bdbddfc173c68220eadece3183`, validating GitHub synthetic merge commit `e8d22b91d26b375b8e6d4701fe20787bc953a68d` rather than a literal branch-head checkout.
-- Run `32542161123` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 283/283 contracts tests across 48 files, and 464/464 event-store tests across 85 files: **747/747 total**.
+- Prior verified documentation head: `12e7d34195d03f3fd0fb17ac9f3440147b8ed7c1`.
+- SEC-19 browser-content implementation landed at `d03479ee5d1bcdd87f0e573bcf66176bf5685a24`, with its executable four-scenario fixture at `c7600a057ed5be2d9594e419f58b5e2365e807b4`.
+- Independent review found the new browser-content boundary was not available through a supported `@atlantis/event-store` package export. `9a1d61e6c38268e5889e15a056270d53a7bc76d2` corrected that integration boundary by adding `@atlantis/event-store/untrusted-browser-content`.
+- An attempted self-import smoke test at `910de705e6d5f1f931bf47f8a2ea52e68354e4d1` exposed TypeScript `TS2209` ambiguous project-root resolution during package self-import. The test was removed at `1aad6484c1d1d4af753188b63b9cc4f7449d2367`; compiler settings and dependencies were not weakened to accommodate the smoke test.
+- Current independently verified implementation head before this documentation refresh: `1aad6484c1d1d4af753188b63b9cc4f7449d2367`.
+- Head-associated PR merge CI run `32549183930` completed successfully for that head, validating GitHub synthetic merge commit `6fd5c2532e0ba5802924da8869fb0abac0885b1a` rather than a literal branch-head checkout.
+- Run `32549183930` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 283/283 contracts tests across 48 files, and 468/468 event-store tests across 86 files: **751/751 total**.
 - SEC-19 repository/tool fixture: 4/4 green.
 - SEC-19 artifact-shaped mock fixture: 4/4 green.
 - SEC-19 `ExecutionReleaseArtifactStorage` fixture: 4/4 green.
 - SEC-19 release-artifact ingestion/reconciliation fixture: 4/4 green.
+- SEC-19 browser-content admission fixture: 4/4 green.
 - Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
 
 ### Implemented and verified foundations
 
-Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, deterministic topology/summary/replay projection, governed release evidence and publication, runner-bound accounting, release telemetry/OpenTelemetry-shaped export, approval-gated repository improvement, review-gated self-improvement orchestration, durable/external artifact conformance definitions, Day-7 verification/security matrices, and executable SEC-19 repository/tool plus artifact-boundary fixtures.
+Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, deterministic topology/summary/replay projection, governed release evidence and publication, runner-bound accounting, release telemetry/OpenTelemetry-shaped export, approval-gated repository improvement, review-gated self-improvement orchestration, durable/external artifact conformance definitions, Day-7 verification/security matrices, executable SEC-19 repository/tool and artifact-boundary fixtures, and a fail-closed untrusted browser-content admission boundary.
 
-SEC-19 is materially stronger than in the prior cycle. Hostile bytes are now loaded through the actual `ExecutionReleaseArtifactStorage` interface and exercised through the release-artifact repository’s save/reconcile/readback boundary. The tests prove that hostile persisted bytes remain data, cannot become approval, cannot substitute governed repository/branch/execution identity, cannot satisfy a false persistence acknowledgement, and cannot reconcile as committed evidence unless the authoritative bytes exactly match governed release evidence.
+The browser-content boundary admits only plain, enumerable, data-property observations with an absolute HTTP(S) URL, supported content kind, and canonical UTC timestamp. Prompt-injection-shaped browser content is preserved as inert untrusted data; authority-bearing extra fields, accessor-backed fields, symbol-keyed data, caller-controlled prototypes, invalid schemes, and malformed observations fail closed. The supported package export is `@atlantis/event-store/untrusted-browser-content`.
 
-This is still **component/process-local boundary evidence**, not proof of an external durable artifact adapter, browser-content containment, or full operational Day-7 execution. SEC-19 therefore remains `BLOCKED` at candidate level until hostile browser content is exercised and the campaign either obtains external artifact-path evidence or explicitly limits the release claim to the verified storage/repository boundary.
+This is still **component-level browser-content admission evidence**, not proof of a live browser driver, browser session, navigation stack, or rendered-page ingestion path. Likewise, artifact evidence remains process-local/component evidence rather than external durable-adapter proof. SEC-19 therefore remains `BLOCKED` at release level until hostile content is exercised through the actual browser integration used by the release candidate and the resulting authorization/approval/identity/evidence boundaries remain intact.
 
 The self-improvement proposal boundary still terminates at `awaiting-human-review` and exposes no merge, deployment, credential, infrastructure, policy, or production mutation capability. Issue #7 remains open because its workspace, test-runner, follow-up evaluator, and security-review ports are not yet operationally proven.
 
@@ -33,7 +37,7 @@ PR #10 remains draft because production-persistence acceptance and real Day-7 re
 
 ### Current release blockers
 
-1. Complete SEC-19 with hostile browser-content coverage and preserve the distinction between process-local artifact-boundary evidence and external durable-adapter proof.
+1. Execute SEC-19 through the actual browser driver/session boundary and prove hostile rendered/browser content remains non-authoritative while authorization, approval, execution identity, branch isolation, evidence integrity, and human-review controls remain fail closed.
 2. Execute SEC-20 through an approved dependency/SBOM/integrity scanning path and prove zero unresolved critical supply-chain findings.
 3. Complete Issue #7 operationally with real isolated workspace, patch testing, follow-up evaluation, and security-review adapters, preserving the mandatory human-review stop.
 4. Explicitly approve and implement the first external `ExecutionReleaseArtifactStorage` adapter; run durable/external conformance across genuinely independent clients and restart state.
@@ -45,4 +49,4 @@ PR #10 remains draft because production-persistence acceptance and real Day-7 re
 
 ### Integration rule
 
-Do not repeat completed implementation work unless a verified defect or regression requires correction. Do not treat process-local storage evidence as cross-process, restart, external-durability, or production proof. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed implementation work unless a verified defect or regression requires correction. Do not treat component browser-content admission as live-browser evidence, and do not treat process-local storage evidence as cross-process, restart, external-durability, or production proof. Nothing is complete without build, test, execution, and trace evidence.
