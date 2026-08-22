@@ -121,7 +121,7 @@ describe("Day-7 operational evidence conformance", () => {
     expect(() => validateRollbackRehearsalEvidence({
       ...rollback(),
       uncertainOperations: [{
-        ...rollback().uncertainOperations[0],
+        ...rollback().uncertainOperations[0]!,
         reconciliationDisposition: "BLOCKED" as const,
       }],
     })).toThrow("rollback rehearsal PASS requires every uncertain operation to reconcile successfully");
