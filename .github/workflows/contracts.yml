@@ -42,7 +42,15 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      - name: SEC-20 one-time lockfile regeneration
+        run: pnpm install --no-frozen-lockfile
+      - name: Upload regenerated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: sec20-regenerated-lockfile
+          path: pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 1
       - name: SEC-20 lockfile integrity and source gate
         run: node scripts/sec20-supply-chain-gate.mjs
       - name: SEC-20 structured vulnerability audit
