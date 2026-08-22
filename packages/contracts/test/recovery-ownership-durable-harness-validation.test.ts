@@ -65,6 +65,22 @@ describe("durable recovery ownership harness validation", () => {
     ).toThrow("must contain exactly pre-commit and post-commit-pre-ack");
   });
 
+  it("rejects duplicate failure-injection declarations", () => {
+    const harness = validHarness() as unknown as {
+      capabilities: { failureInjection: string[] };
+    };
+    harness.capabilities.failureInjection = [
+      "pre-commit",
+      "post-commit-pre-ack",
+      "pre-commit",
+    ];
+    expect(() =>
+      validateRecoveryOwnershipDurableAdapterHarness(
+        harness as unknown as RecoveryOwnershipDurableAdapterHarness,
+      ),
+    ).toThrow("must contain exactly pre-commit and post-commit-pre-ack");
+  });
+
   it("rejects non-callable independent-client or restart factories", () => {
     const missingClient = { ...validHarness(), createClient: null } as unknown as RecoveryOwnershipDurableAdapterHarness;
     expect(() => validateRecoveryOwnershipDurableAdapterHarness(missingClient)).toThrow(
