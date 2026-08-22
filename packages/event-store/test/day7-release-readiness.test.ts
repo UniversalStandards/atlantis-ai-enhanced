@@ -36,6 +36,11 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: incomplete })).toThrow("missing required Day-7 release gates: browser-runtime");
   });
 
+  it("fails closed when operator-runbook evidence is omitted", () => {
+    const incomplete = gates().filter((gate) => gate.gateId !== "operator-runbook");
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: incomplete })).toThrow("missing required Day-7 release gates: operator-runbook");
+  });
+
   it("fails closed on unknown or duplicate release gate identities", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: [...gates(), { gateId: "unknown-gate", disposition: "PASS", evidenceIds: ["unknown-1"], blockerReason: null }] })).toThrow("unknown Day-7 release gates: unknown-gate");
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: [...gates(), gates()[0]!] })).toThrow("Day-7 release gate identifiers must be unique");
