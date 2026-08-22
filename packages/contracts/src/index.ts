@@ -26,6 +26,18 @@ export {
 export { validateRecoveryOwnershipDurableAdapterHarness } from "./recovery-ownership-durable-harness-validation.js";
 
 export {
+  InvalidDurableAppendEvidenceError,
+  reconcileDurableAppendUncertainty,
+  validateDurableAppendUncertaintyRecord,
+  type DurableAppendAuthoritativeReadback,
+  type DurableAppendIdentity,
+  type DurableAppendOutcome,
+  type DurableAppendOutcomeKind,
+  type DurableAppendReconciliationState,
+  type DurableAppendUncertaintyRecord,
+} from "./durable-append-outcome.js";
+
+export {
   executionEventTypes,
   type ExecutionEventType,
 } from "./execution-event-types.js";
