@@ -34,20 +34,140 @@ const check = {
   evidenceId: "check-evidence-1",
 };
 
-describe("Day-7 operational evidence runtime dispositions", () => {
+const deployment = () => ({
+  deploymentRehearsalId: "deploy-1",
+  candidateIdentity: candidate,
+  immutableArtifactIdentities: ["artifact-1"],
+  environmentClass: "release-candidate",
+  configurationDigest: "config-digest",
+  migrationPrerequisiteEvidence: ["migration-1"],
+  startedAtEpochMs: 1,
+  completedAtEpochMs: 2,
+  steps: [step],
+  postDeployChecks: [check],
+  releaseEvidenceArtifactId: "release-1",
+  result: "PASS" as const,
+  failureReason: null,
+});
+
+const rollback = () => ({
+  rollbackRehearsalId: "rollback-1",
+  candidateIdentity: candidate,
+  fromDeploymentIdentity: "deployment-1",
+  targetKnownGoodIdentity: "deployment-0",
+  compatibilityEvidence: ["compat-1"],
+  preservedAuthorityEvidence: ["authority-1"],
+  startedAtEpochMs: 3,
+  completedAtEpochMs: 4,
+  steps: [step],
+  postRollbackChecks: [check],
+  uncertainOperations: [{
+    operationId: "operation-1",
+    uncertaintySource: "acknowledgement-loss",
+    authoritativeReadbackId: "readback-1",
+    reconciliationDisposition: "PASS" as const,
+    evidenceId: "operation-evidence-1",
+  }],
+  result: "PASS" as const,
+  failureReason: null,
+});
+
+const burnIn = () => ({
+  burnInId: "burn-1",
+  candidateIdentity: candidate,
+  plannedDurationMs: 100,
+  startedAtEpochMs: 10,
+  endedAtEpochMs: 110,
+  executionCounts: { attempted: 2, completed: 1, failed: 0, waitingApproval: 1 },
+  approvalOutcomes: ["approval-1"],
+  injectedFailures: ["failure-injection-1"],
+  ownershipEvents: ["ownership-1"],
+  persistenceUncertaintyEvents: ["persistence-1"],
+  telemetryFailures: [],
+  securityFindings: [],
+  regressionEvidence: ["regression-1"],
+  traceCompletenessEvidence: ["trace-1"],
+  incidents: [],
+  finalDisposition: "PASS" as const,
+});
+
+describe("Day-7 operational evidence conformance", () => {
+  it("accepts complete deployment, rollback, and burn-in PASS evidence as immutable snapshots", () => {
+    const validatedDeployment = validateDeploymentRehearsalEvidence(deployment());
+    const validatedRollback = validateRollbackRehearsalEvidence(rollback());
+    const validatedBurnIn = validateBurnInEvidence(burnIn());
+
+    expect(validatedDeployment.result).toBe("PASS");
+    expect(validatedRollback.result).toBe("PASS");
+    expect(validatedBurnIn.finalDisposition).toBe("PASS");
+    expect(Object.isFrozen(validatedDeployment)).toBe(true);
+    expect(Object.isFrozen(validatedRollback)).toBe(true);
+    expect(Object.isFrozen(validatedBurnIn)).toBe(true);
+  });
+
+  it("rejects deployment PASS when any required step or post-deploy check is not PASS", () => {
+    expect(() => validateDeploymentRehearsalEvidence({
+      ...deployment(),
+      steps: [{ ...step, result: "BLOCKED" as const }],
+    })).toThrow("deployment rehearsal PASS requires every step and check to pass");
+
+    expect(() => validateDeploymentRehearsalEvidence({
+      ...deployment(),
+      postDeployChecks: [{ ...check, result: "FAIL" as const }],
+    })).toThrow("deployment rehearsal PASS requires every step and check to pass");
+  });
+
+  it("rejects rollback PASS when uncertain outcomes are not authoritatively reconciled", () => {
+    expect(() => validateRollbackRehearsalEvidence({
+      ...rollback(),
+      uncertainOperations: [{
+        ...rollback().uncertainOperations[0],
+        reconciliationDisposition: "BLOCKED" as const,
+      }],
+    })).toThrow("rollback rehearsal PASS requires every uncertain operation to reconcile successfully");
+  });
+
+  it("rejects burn-in PASS before planned duration completes or with unresolved security/incidents", () => {
+    expect(() => validateBurnInEvidence({ ...burnIn(), endedAtEpochMs: 109 })).toThrow(
+      "burn-in PASS requires the planned duration to complete",
+    );
+    expect(() => validateBurnInEvidence({ ...burnIn(), securityFindings: ["security-1"] })).toThrow(
+      "burn-in PASS requires zero unresolved security findings and incidents",
+    );
+    expect(() => validateBurnInEvidence({ ...burnIn(), incidents: ["incident-1"] })).toThrow(
+      "burn-in PASS requires zero unresolved security findings and incidents",
+    );
+  });
+
+  it("preserves an in-progress burn-in only while it has no terminal timestamp", () => {
+    const inProgress = validateBurnInEvidence({
+      ...burnIn(),
+      endedAtEpochMs: null,
+      finalDisposition: "IN_PROGRESS" as const,
+    });
+    expect(inProgress.finalDisposition).toBe("IN_PROGRESS");
+
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      finalDisposition: "IN_PROGRESS" as const,
+    })).toThrow("IN_PROGRESS burn-in must not have endedAtEpochMs");
+  });
+
+  it("rejects impossible execution accounting and duplicate evidence identities", () => {
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      executionCounts: { attempted: 1, completed: 1, failed: 1, waitingApproval: 0 },
+    })).toThrow("burn-in execution outcomes cannot exceed attempted executions");
+
+    expect(() => validateDeploymentRehearsalEvidence({
+      ...deployment(),
+      immutableArtifactIdentities: ["artifact-1", "artifact-1"],
+    })).toThrow("immutableArtifactIdentities must not contain duplicate evidence identities");
+  });
+
   it("rejects an unknown deployment disposition supplied at runtime", () => {
     expect(() => validateDeploymentRehearsalEvidence({
-      deploymentRehearsalId: "deploy-1",
-      candidateIdentity: candidate,
-      immutableArtifactIdentities: ["artifact-1"],
-      environmentClass: "release-candidate",
-      configurationDigest: "config-digest",
-      migrationPrerequisiteEvidence: [],
-      startedAtEpochMs: 1,
-      completedAtEpochMs: 2,
-      steps: [step],
-      postDeployChecks: [check],
-      releaseEvidenceArtifactId: "release-1",
+      ...deployment(),
       result: "UNKNOWN",
       failureReason: "not a canonical disposition",
     } as never)).toThrow("deployment rehearsal result must be PASS, FAIL, or BLOCKED");
@@ -55,15 +175,7 @@ describe("Day-7 operational evidence runtime dispositions", () => {
 
   it("rejects unknown nested step and check dispositions", () => {
     const base = {
-      deploymentRehearsalId: "deploy-1",
-      candidateIdentity: candidate,
-      immutableArtifactIdentities: ["artifact-1"],
-      environmentClass: "release-candidate",
-      configurationDigest: "config-digest",
-      migrationPrerequisiteEvidence: [],
-      startedAtEpochMs: 1,
-      completedAtEpochMs: 2,
-      releaseEvidenceArtifactId: null,
+      ...deployment(),
       result: "FAIL" as const,
       failureReason: "expected test failure",
     };
@@ -71,34 +183,20 @@ describe("Day-7 operational evidence runtime dispositions", () => {
     expect(() => validateDeploymentRehearsalEvidence({
       ...base,
       steps: [{ ...step, result: "UNKNOWN" }],
-      postDeployChecks: [check],
     } as never)).toThrow("steps[0].result must be PASS, FAIL, or BLOCKED");
 
     expect(() => validateDeploymentRehearsalEvidence({
       ...base,
-      steps: [step],
       postDeployChecks: [{ ...check, result: "UNKNOWN" }],
     } as never)).toThrow("postDeployChecks[0].result must be PASS, FAIL, or BLOCKED");
   });
 
   it("rejects an unknown uncertain-operation reconciliation disposition", () => {
     expect(() => validateRollbackRehearsalEvidence({
-      rollbackRehearsalId: "rollback-1",
-      candidateIdentity: candidate,
-      fromDeploymentIdentity: "deployment-1",
-      targetKnownGoodIdentity: "deployment-0",
-      compatibilityEvidence: ["compat-1"],
-      preservedAuthorityEvidence: ["authority-1"],
-      startedAtEpochMs: 1,
-      completedAtEpochMs: 2,
-      steps: [step],
-      postRollbackChecks: [check],
+      ...rollback(),
       uncertainOperations: [{
-        operationId: "operation-1",
-        uncertaintySource: "acknowledgement-loss",
-        authoritativeReadbackId: "readback-1",
+        ...rollback().uncertainOperations[0],
         reconciliationDisposition: "UNKNOWN",
-        evidenceId: "operation-evidence-1",
       }],
       result: "FAIL",
       failureReason: "expected test failure",
@@ -107,21 +205,7 @@ describe("Day-7 operational evidence runtime dispositions", () => {
 
   it("rejects an unknown burn-in final disposition", () => {
     expect(() => validateBurnInEvidence({
-      burnInId: "burn-1",
-      candidateIdentity: candidate,
-      plannedDurationMs: 100,
-      startedAtEpochMs: 1,
-      endedAtEpochMs: 101,
-      executionCounts: { attempted: 1, completed: 1, failed: 0, waitingApproval: 0 },
-      approvalOutcomes: [],
-      injectedFailures: [],
-      ownershipEvents: [],
-      persistenceUncertaintyEvents: [],
-      telemetryFailures: [],
-      securityFindings: [],
-      regressionEvidence: ["regression-1"],
-      traceCompletenessEvidence: ["trace-1"],
-      incidents: [],
+      ...burnIn(),
       finalDisposition: "UNKNOWN",
     } as never)).toThrow("finalDisposition must be PASS, FAIL, or BLOCKED");
   });
