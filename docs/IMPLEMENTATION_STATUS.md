@@ -7,22 +7,25 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Current independently verified implementation head before this documentation refresh: `fe06b96d02ef6b6b9024cdd44a84f276f54f2580`.
-- Delta from prior verified documentation head `ea520dc0c8b75b43f3f8a220b814adc650c7e8ff`: exactly one implementation commit / zero behind, adding `packages/event-store/test/sec19-file-artifact-injection.test.ts`.
-- The new SEC-19 fixture adds four tests proving that hostile artifact-shaped content cannot become approval, repository/branch substitution is rejected, execution-identity substitution is rejected, and approval remains mandatory at the governed repository-improvement boundary.
-- Head-associated PR merge CI run `32538803324` completed successfully for implementation head `fe06b96d02ef6b6b9024cdd44a84f276f54f2580`, validating GitHub synthetic merge commit `55617a9617fed9537f640209af6db402b28c2e7d` rather than a literal branch-head checkout.
-- Run `32538803324` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 283/283 contracts tests across 48 files, and 456/456 event-store tests across 83 files: **739/739 total**.
-- `sec19-prompt-tool-output-injection.test.ts` remains 4/4 green and `sec19-file-artifact-injection.test.ts` is 4/4 green.
+- Current independently verified implementation head before this documentation refresh: `e527c346cbee01bdbddfc173c68220eadece3183`.
+- Delta from prior verified documentation head `3d08c7fe9bc4b9f3d053d3671be7f516a2c18ec2`: two implementation commits / zero behind, adding `sec19-release-artifact-storage-injection.test.ts` and `sec19-release-artifact-ingestion.test.ts`.
+- Head-associated PR merge CI run `32542161123` completed successfully for implementation head `e527c346cbee01bdbddfc173c68220eadece3183`, validating GitHub synthetic merge commit `e8d22b91d26b375b8e6d4701fe20787bc953a68d` rather than a literal branch-head checkout.
+- Run `32542161123` passed `pnpm install --frozen-lockfile`, both TypeScript workspace typechecks, 283/283 contracts tests across 48 files, and 464/464 event-store tests across 85 files: **747/747 total**.
+- SEC-19 repository/tool fixture: 4/4 green.
+- SEC-19 artifact-shaped mock fixture: 4/4 green.
+- SEC-19 `ExecutionReleaseArtifactStorage` fixture: 4/4 green.
+- SEC-19 release-artifact ingestion/reconciliation fixture: 4/4 green.
 - Workflow token permissions remain read-only: `contents: read`, `metadata: read`.
-- PR #10 has no unresolved inline review threads.
 
 ### Implemented and verified foundations
 
-Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, adversarial-input containment, restart/recovery validation, deterministic execution-topology projection, governed execution-summary evidence, deterministic replay-evidence projection, provider-neutral execution release-evidence composition, persisted replay-fixture boundaries, governed release-evidence service and serialization, release-artifact exact-readback/reconciliation boundaries, release-publication composition, governed release workflow, runner-bound authoritative accounting, provider-neutral release telemetry, an OpenTelemetry-shaped exporter, `RepositoryImprovementTask`, governed repository-improvement composition fixtures, the approval-gated GitHub repository-improvement adapter, the immutable self-improvement proposal/review artifact, the failing-evaluation development-workflow composition, the concrete evidence-backed self-improvement patch-generator orchestration, the Day-7 verification matrix, the SEC-01 through SEC-20 adversarial campaign definition, the normalized candidate evidence map, and executable SEC-19 repository/tool and artifact-shaped-content fixtures.
+Verified implementation includes provider-neutral contracts, fail-closed budgets and approvals, canonical durable event-store behavior, deterministic/resumable execution controls, durable approval recovery, governed external-effect ownership and reconciliation, persistence-uncertainty containment, immutable writer-specific commit evidence, recovery-ownership lease/renewal/fence/reacquisition evidence, deterministic topology/summary/replay projection, governed release evidence and publication, runner-bound accounting, release telemetry/OpenTelemetry-shaped export, approval-gated repository improvement, review-gated self-improvement orchestration, durable/external artifact conformance definitions, Day-7 verification/security matrices, and executable SEC-19 repository/tool plus artifact-boundary fixtures.
 
-The SEC-19 fixtures are **partial campaign evidence, not full SEC-19 closure**. The repository/tool fixture exercises hostile objective content and hostile/substituted tool output at the governed GitHub repository-improvement boundary. The new file/artifact fixture strengthens that boundary by passing hostile artifact-shaped text through mocked repository-tool evidence and proving that it cannot become approval or substitute governed repository, branch, or execution identity. It does **not** load hostile bytes through an actual file/artifact ingestion or `ExecutionReleaseArtifactStorage` boundary, and no browser-content boundary is exercised. SEC-19 therefore remains `BLOCKED` at the Day-7 candidate level until those operational paths are exercised or explicitly shown not applicable by the campaign contract.
+SEC-19 is materially stronger than in the prior cycle. Hostile bytes are now loaded through the actual `ExecutionReleaseArtifactStorage` interface and exercised through the release-artifact repository’s save/reconcile/readback boundary. The tests prove that hostile persisted bytes remain data, cannot become approval, cannot substitute governed repository/branch/execution identity, cannot satisfy a false persistence acknowledgement, and cannot reconcile as committed evidence unless the authoritative bytes exactly match governed release evidence.
 
-The self-improvement proposal boundary still terminates at `awaiting-human-review` and exposes no merge, deployment, credential, infrastructure, policy, or production mutation capability. Issue #7 remains open because its workspace, test-runner, follow-up evaluator, and security-review ports are still injected rather than operationally proven.
+This is still **component/process-local boundary evidence**, not proof of an external durable artifact adapter, browser-content containment, or full operational Day-7 execution. SEC-19 therefore remains `BLOCKED` at candidate level until hostile browser content is exercised and the campaign either obtains external artifact-path evidence or explicitly limits the release claim to the verified storage/repository boundary.
+
+The self-improvement proposal boundary still terminates at `awaiting-human-review` and exposes no merge, deployment, credential, infrastructure, policy, or production mutation capability. Issue #7 remains open because its workspace, test-runner, follow-up evaluator, and security-review ports are not yet operationally proven.
 
 The recovery-ownership path still has no real durable adapter registered across process/restart boundaries. The release-artifact path still has no approved external durable adapter registered against its durable/external conformance suites. Green unit/integration CI must not be promoted to production durability evidence.
 
@@ -30,7 +33,7 @@ PR #10 remains draft because production-persistence acceptance and real Day-7 re
 
 ### Current release blockers
 
-1. Complete SEC-19 operational coverage across hostile browser content and an actual file/artifact ingestion/storage boundary while preserving authorization, approval, execution identity, branch isolation, evidence integrity, and human-review boundaries. Treat the current repository/tool and artifact-shaped mock fixtures as partial evidence only.
+1. Complete SEC-19 with hostile browser-content coverage and preserve the distinction between process-local artifact-boundary evidence and external durable-adapter proof.
 2. Execute SEC-20 through an approved dependency/SBOM/integrity scanning path and prove zero unresolved critical supply-chain findings.
 3. Complete Issue #7 operationally with real isolated workspace, patch testing, follow-up evaluation, and security-review adapters, preserving the mandatory human-review stop.
 4. Explicitly approve and implement the first external `ExecutionReleaseArtifactStorage` adapter; run durable/external conformance across genuinely independent clients and restart state.
@@ -42,4 +45,4 @@ PR #10 remains draft because production-persistence acceptance and real Day-7 re
 
 ### Integration rule
 
-Do not repeat completed implementation work unless a verified defect or regression requires correction. Do not treat mocked artifact-shaped data as operational file/artifact-boundary evidence, and do not treat component/process-local evidence as cross-process, restart, external-durability, or production proof. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed implementation work unless a verified defect or regression requires correction. Do not treat process-local storage evidence as cross-process, restart, external-durability, or production proof. Nothing is complete without build, test, execution, and trace evidence.
