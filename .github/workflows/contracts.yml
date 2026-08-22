@@ -8,6 +8,7 @@ on:
       - "pnpm-workspace.yaml"
       - "packages/contracts/**"
       - "packages/event-store/**"
+      - "scripts/sec20-supply-chain-gate.mjs"
       - ".github/workflows/contracts.yml"
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "pnpm-workspace.yaml"
       - "packages/contracts/**"
       - "packages/event-store/**"
+      - "scripts/sec20-supply-chain-gate.mjs"
       - ".github/workflows/contracts.yml"
 
 permissions:
@@ -39,5 +41,13 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+      - name: SEC-20 lockfile integrity and source gate
+        run: node scripts/sec20-supply-chain-gate.mjs
+      - name: SEC-20 critical vulnerability audit
+        run: pnpm audit --audit-level=critical
+      - name: SEC-20 dependency inventory validation
+        run: |
+          pnpm list --json --depth Infinity > sec20-dependency-inventory.json
+          node -e 'const fs=require("node:fs"); const inventory=JSON.parse(fs.readFileSync("sec20-dependency-inventory.json","utf8")); if (!Array.isArray(inventory) || inventory.length === 0) process.exit(1); console.log(`SEC-20 dependency inventory generated for ${inventory.length} workspace root(s).`);'
       - run: pnpm typecheck
       - run: pnpm test
