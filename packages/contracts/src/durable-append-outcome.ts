@@ -68,6 +68,19 @@ function safeNonNegativeInteger(value: unknown, field: string): number {
   return value as number;
 }
 
+function reconciliationState(value: unknown): DurableAppendReconciliationState {
+  switch (value) {
+    case "pending":
+    case "committed":
+    case "known-failure":
+    case "conflict":
+    case "quarantined":
+      return value;
+    default:
+      throw new InvalidDurableAppendEvidenceError("reconciliationState must be a supported value");
+  }
+}
+
 function validateIdentity(identity: DurableAppendIdentity): Readonly<DurableAppendIdentity> {
   return Object.freeze({
     operationId: nonBlank(identity.operationId, "operationId"),
@@ -87,6 +100,7 @@ export function validateDurableAppendUncertaintyRecord(
   if (lastAttemptEpochMs < firstAttemptEpochMs) {
     throw new InvalidDurableAppendEvidenceError("lastAttemptEpochMs must not precede firstAttemptEpochMs");
   }
+  const validatedReconciliationState = reconciliationState(record.reconciliationState);
   const retryCount = safeNonNegativeInteger(record.retryCount, "retryCount");
   const lastObservedEvidenceId = nonBlank(record.lastObservedEvidenceId, "lastObservedEvidenceId");
   const providerOperationId = record.providerOperationId === undefined
@@ -95,17 +109,17 @@ export function validateDurableAppendUncertaintyRecord(
   const quarantineReason = record.quarantineReason === undefined
     ? undefined
     : nonBlank(record.quarantineReason, "quarantineReason");
-  if (record.reconciliationState === "quarantined" && quarantineReason === undefined) {
+  if (validatedReconciliationState === "quarantined" && quarantineReason === undefined) {
     throw new InvalidDurableAppendEvidenceError("quarantined uncertainty requires quarantineReason");
   }
-  if (record.reconciliationState !== "quarantined" && quarantineReason !== undefined) {
+  if (validatedReconciliationState !== "quarantined" && quarantineReason !== undefined) {
     throw new InvalidDurableAppendEvidenceError("quarantineReason is valid only for quarantined uncertainty");
   }
   return Object.freeze({
     identity,
     firstAttemptEpochMs,
     lastAttemptEpochMs,
-    reconciliationState: record.reconciliationState,
+    reconciliationState: validatedReconciliationState,
     retryCount,
     lastObservedEvidenceId,
     ...(providerOperationId === undefined ? {} : { providerOperationId }),
