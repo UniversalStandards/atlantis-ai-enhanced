@@ -9,6 +9,21 @@ export {
 } from "./recovery-ownership-store.js";
 
 export {
+  InvalidRecoveryOwnershipDurableAdapterRegistrationError,
+  observeRecoveryOwnershipDurably,
+  validateRecoveryOwnershipDurableAdapterRegistration,
+  type DurableRecoveryOwnershipAcquireRequest,
+  type DurableRecoveryOwnershipLeaseEvidence,
+  type RecoveryOwnershipDurableAdapterCapabilities,
+  type RecoveryOwnershipDurableAdapterHarness,
+  type RecoveryOwnershipDurableAdapterRegistration,
+  type RecoveryOwnershipDurableObservation,
+  type RecoveryOwnershipFailureInjectionController,
+  type RecoveryOwnershipFailurePoint,
+  type RecoveryOwnershipMutationKind,
+} from "./recovery-ownership-durable-adapter.js";
+
+export {
   executionEventTypes,
   type ExecutionEventType,
 } from "./execution-event-types.js";
