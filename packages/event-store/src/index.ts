@@ -257,3 +257,10 @@ export type {
   RollbackRehearsalEvidence,
   RollbackUncertainOperationEvidence,
 } from "./day7-operational-evidence.js";
+export { composeDay7ReleaseReadiness } from "./day7-release-readiness.js";
+export type {
+  Day7ReleaseGateDisposition,
+  Day7ReleaseGateEvidence,
+  Day7ReleaseReadinessEvidence,
+  Day7ReleaseReadinessInput,
+} from "./day7-release-readiness.js";
