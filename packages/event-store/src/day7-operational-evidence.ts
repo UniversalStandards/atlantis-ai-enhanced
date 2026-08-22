@@ -115,6 +115,18 @@ function count(value: number, field: string): number {
   return epoch(value, field);
 }
 
+function operationalDisposition(value: unknown, field: string): OperationalEvidenceDisposition {
+  if (value !== "PASS" && value !== "FAIL" && value !== "BLOCKED") {
+    return invalid(`${field} must be PASS, FAIL, or BLOCKED.`);
+  }
+  return value;
+}
+
+function burnInDisposition(value: unknown): BurnInDisposition {
+  if (value === "IN_PROGRESS") return value;
+  return operationalDisposition(value, "finalDisposition");
+}
+
 function uniqueNonEmpty(values: readonly string[], field: string, allowEmpty = false): readonly string[] {
   if (!allowEmpty && values.length === 0) invalid(`${field} must contain evidence.`);
   const normalized = values.map((value, index) => nonEmpty(value, `${field}[${index}]`));
@@ -151,6 +163,7 @@ function validateSteps(values: readonly OperationalStepEvidence[], field: string
     nonEmpty(step.evidenceId, `${field}[${index}].evidenceId`);
     epoch(step.startedAtEpochMs, `${field}[${index}].startedAtEpochMs`);
     epoch(step.completedAtEpochMs, `${field}[${index}].completedAtEpochMs`);
+    operationalDisposition(step.result, `${field}[${index}].result`);
     if (step.completedAtEpochMs < step.startedAtEpochMs) invalid(`${field}[${index}] completes before it starts.`);
     if (ids.has(step.stepId)) invalid(`${field} step identifiers must be unique.`);
     ids.add(step.stepId);
@@ -165,12 +178,14 @@ function validateChecks(values: readonly OperationalCheckEvidence[], field: stri
     nonEmpty(check.expectedCondition, `${field}[${index}].expectedCondition`);
     nonEmpty(check.observedCondition, `${field}[${index}].observedCondition`);
     nonEmpty(check.evidenceId, `${field}[${index}].evidenceId`);
+    operationalDisposition(check.result, `${field}[${index}].result`);
     if (ids.has(check.checkId)) invalid(`${field} check identifiers must be unique.`);
     ids.add(check.checkId);
   }
 }
 
 function validateTerminalDisposition(result: OperationalEvidenceDisposition, failureReason: string | null, field: string): void {
+  operationalDisposition(result, `${field} result`);
   if (result === "PASS") {
     if (failureReason !== null) invalid(`${field} PASS must not carry a failure reason.`);
   } else {
@@ -214,6 +229,7 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
     nonEmpty(operation.uncertaintySource, `uncertainOperations[${index}].uncertaintySource`);
     nonEmpty(operation.authoritativeReadbackId, `uncertainOperations[${index}].authoritativeReadbackId`);
     nonEmpty(operation.evidenceId, `uncertainOperations[${index}].evidenceId`);
+    operationalDisposition(operation.reconciliationDisposition, `uncertainOperations[${index}].reconciliationDisposition`);
     if (operationIds.has(operation.operationId)) invalid("uncertain operation identifiers must be unique.");
     operationIds.add(operation.operationId);
   }
@@ -248,10 +264,11 @@ export function validateBurnInEvidence(input: BurnInEvidence): BurnInEvidence {
     securityFindings: input.securityFindings,
     incidents: input.incidents,
   })) uniqueNonEmpty(values, field, true);
-  if (input.finalDisposition === "IN_PROGRESS") {
+  const disposition = burnInDisposition(input.finalDisposition);
+  if (disposition === "IN_PROGRESS") {
     if (input.endedAtEpochMs !== null) invalid("IN_PROGRESS burn-in must not have endedAtEpochMs.");
   } else if (input.endedAtEpochMs === null) invalid("terminal burn-in disposition requires endedAtEpochMs.");
-  if (input.finalDisposition === "PASS") {
+  if (disposition === "PASS") {
     if (input.endedAtEpochMs === null || input.endedAtEpochMs - input.startedAtEpochMs < input.plannedDurationMs) invalid("burn-in PASS requires the planned duration to complete.");
     if (input.securityFindings.length > 0 || input.incidents.length > 0) invalid("burn-in PASS requires zero unresolved security findings and incidents.");
   }
