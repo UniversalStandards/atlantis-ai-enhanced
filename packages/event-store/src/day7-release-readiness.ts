@@ -1,4 +1,5 @@
 import { InvalidEventError } from "./index.js";
+import { requireCompleteDay7ReleaseGateCatalog } from "./day7-release-gate-catalog.js";
 import {
   validateBurnInEvidence,
   validateDeploymentRehearsalEvidence,
@@ -58,16 +59,12 @@ function sameCandidate(expected: Day7CandidateIdentity, actual: Day7CandidateIde
 }
 
 function assertSameCandidate(expected: Day7CandidateIdentity, actual: Day7CandidateIdentity, field: string): void {
-  if (!sameCandidate(expected, actual)) {
-    invalid(`${field} must be bound to the exact release candidate identity.`);
-  }
+  if (!sameCandidate(expected, actual)) invalid(`${field} must be bound to the exact release candidate identity.`);
 }
 
 function validateGate(gate: Day7ReleaseGateEvidence, index: number): Day7ReleaseGateEvidence {
   nonEmpty(gate.gateId, `independentGates[${index}].gateId`);
-  if (gate.disposition !== "PASS" && gate.disposition !== "BLOCKED") {
-    invalid(`independentGates[${index}].disposition must be PASS or BLOCKED.`);
-  }
+  if (gate.disposition !== "PASS" && gate.disposition !== "BLOCKED") invalid(`independentGates[${index}].disposition must be PASS or BLOCKED.`);
   if (gate.evidenceIds.length === 0) invalid(`independentGates[${index}].evidenceIds must contain evidence.`);
   const evidenceIds = gate.evidenceIds.map((id, evidenceIndex) => nonEmpty(id, `independentGates[${index}].evidenceIds[${evidenceIndex}]`));
   if (new Set(evidenceIds).size !== evidenceIds.length) invalid(`independentGates[${index}].evidenceIds must be unique.`);
@@ -86,9 +83,7 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   assertSameCandidate(input.candidateIdentity, burnIn.candidateIdentity, "burnIn");
 
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
-  const independentGates = input.independentGates.map(validateGate);
-  const gateIds = independentGates.map((gate) => gate.gateId);
-  if (new Set(gateIds).size !== gateIds.length) invalid("independent gate identifiers must be unique.");
+  const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map(validateGate));
 
   const blockingGateIds: string[] = [];
   if (deployment.result !== "PASS") blockingGateIds.push("deployment");
@@ -101,7 +96,7 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
     deployment,
     rollback,
     burnIn,
-    independentGates: Object.freeze(independentGates),
+    independentGates,
     disposition: blockingGateIds.length === 0 ? "PASS" : "BLOCKED",
     blockingGateIds: Object.freeze(blockingGateIds),
   });
