@@ -102,6 +102,12 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   }
   assertStepsWithinRehearsalWindow(deployment.steps, deployment.startedAtEpochMs, deployment.completedAtEpochMs, "deployment.steps");
   assertStepsWithinRehearsalWindow(rollback.steps, rollback.startedAtEpochMs, rollback.completedAtEpochMs, "rollback.steps");
+  if (rollback.startedAtEpochMs < deployment.completedAtEpochMs) {
+    invalid("rollback rehearsal must not start before the release-candidate deployment rehearsal completes.");
+  }
+  if (burnIn.startedAtEpochMs < deployment.completedAtEpochMs) {
+    invalid("burn-in must not start before the release-candidate deployment rehearsal completes.");
+  }
 
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
   const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
