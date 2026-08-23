@@ -36,6 +36,11 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: { ...rollback(), steps: [{ ...rollbackStep, completedAtEpochMs: 5 }] }, burnIn: burnIn(), independentGates: gates() })).toThrow("rollback.steps[0] must be temporally contained within its rehearsal window");
   });
 
+  it("rejects rollback or burn-in evidence that predates completion of the candidate deployment rehearsal", () => {
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: { ...rollback(), startedAtEpochMs: 1, steps: [{ ...rollbackStep, startedAtEpochMs: 1 }] }, burnIn: burnIn(), independentGates: gates() })).toThrow("rollback rehearsal must not start before the release-candidate deployment rehearsal completes");
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: { ...burnIn(), startedAtEpochMs: 1, endedAtEpochMs: 101 }, independentGates: gates() })).toThrow("burn-in must not start before the release-candidate deployment rehearsal completes");
+  });
+
   it("rejects a genuinely substituted candidate identity", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment({ ...candidate, candidateHeadSha: "other-head" }), rollback: rollback(), burnIn: burnIn(), independentGates: gates() })).toThrow("deployment must be bound to the exact release candidate identity");
   });
