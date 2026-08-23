@@ -49,6 +49,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
     "external-artifact-durability",
     "recovery-ownership-durability",
     "ownership-writer-atomicity",
+    "provider-failover",
     "trace-completeness",
     "telemetry-binding",
     "adversarial-security",
