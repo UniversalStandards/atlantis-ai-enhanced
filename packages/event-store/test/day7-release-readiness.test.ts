@@ -42,6 +42,11 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: incomplete })).toThrow("missing required Day-7 release gates: browser-runtime");
   });
 
+  it("fails closed when provider-failover evidence is omitted", () => {
+    const incomplete = gates().filter((gate) => gate.gateId !== "provider-failover");
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: incomplete })).toThrow("missing required Day-7 release gates: provider-failover");
+  });
+
   it("fails closed when operator-runbook evidence is omitted", () => {
     const incomplete = gates().filter((gate) => gate.gateId !== "operator-runbook");
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: incomplete })).toThrow("missing required Day-7 release gates: operator-runbook");
