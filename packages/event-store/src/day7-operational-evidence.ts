@@ -216,6 +216,7 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
   candidate(input.candidateIdentity);
   nonEmpty(input.fromDeploymentIdentity, "fromDeploymentIdentity");
   nonEmpty(input.targetKnownGoodIdentity, "targetKnownGoodIdentity");
+  if (input.targetKnownGoodIdentity === input.fromDeploymentIdentity) invalid("rollback target must differ from the deployment being rolled back.");
   uniqueNonEmpty(input.compatibilityEvidence, "compatibilityEvidence");
   uniqueNonEmpty(input.preservedAuthorityEvidence, "preservedAuthorityEvidence");
   epoch(input.startedAtEpochMs, "startedAtEpochMs");
