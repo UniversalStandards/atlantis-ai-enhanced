@@ -89,6 +89,7 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
 
   const blockingGateIds: string[] = [];
   if (deployment.result !== "PASS") blockingGateIds.push("deployment");
+  if (deployment.releaseEvidenceArtifactId === null) blockingGateIds.push("deployment-release-artifact");
   if (rollback.result !== "PASS") blockingGateIds.push("rollback");
   if (burnIn.finalDisposition !== "PASS") blockingGateIds.push("burn-in");
   for (const gate of independentGates) if (gate.disposition === "BLOCKED") blockingGateIds.push(gate.gateId);
