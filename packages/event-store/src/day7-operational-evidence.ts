@@ -270,6 +270,7 @@ export function validateBurnInEvidence(input: BurnInEvidence): BurnInEvidence {
   } else if (input.endedAtEpochMs === null) invalid("terminal burn-in disposition requires endedAtEpochMs.");
   if (disposition === "PASS") {
     if (input.endedAtEpochMs === null || input.endedAtEpochMs - input.startedAtEpochMs < input.plannedDurationMs) invalid("burn-in PASS requires the planned duration to complete.");
+    if (input.executionCounts.failed !== 0 || input.executionCounts.waitingApproval !== 0 || input.executionCounts.completed !== input.executionCounts.attempted) invalid("burn-in PASS requires every attempted execution to complete successfully with no failures or pending approvals.");
     if (input.securityFindings.length > 0 || input.incidents.length > 0) invalid("burn-in PASS requires zero unresolved security findings and incidents.");
   }
   return cloneFreeze(input);
