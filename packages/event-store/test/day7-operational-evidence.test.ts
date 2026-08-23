@@ -78,7 +78,7 @@ const burnIn = () => ({
   plannedDurationMs: 100,
   startedAtEpochMs: 10,
   endedAtEpochMs: 110,
-  executionCounts: { attempted: 2, completed: 1, failed: 0, waitingApproval: 1 },
+  executionCounts: { attempted: 2, completed: 2, failed: 0, waitingApproval: 0 },
   approvalOutcomes: ["approval-1"],
   injectedFailures: ["failure-injection-1"],
   ownershipEvents: ["ownership-1"],
@@ -137,6 +137,22 @@ describe("Day-7 operational evidence conformance", () => {
     expect(() => validateBurnInEvidence({ ...burnIn(), incidents: ["incident-1"] })).toThrow(
       "burn-in PASS requires zero unresolved security findings and incidents",
     );
+  });
+
+  it("rejects burn-in PASS with failed, pending, or otherwise unsettled executions", () => {
+    const message = "burn-in PASS requires every attempted execution to complete successfully with no failures or pending approvals";
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      executionCounts: { attempted: 2, completed: 1, failed: 1, waitingApproval: 0 },
+    })).toThrow(message);
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      executionCounts: { attempted: 2, completed: 1, failed: 0, waitingApproval: 1 },
+    })).toThrow(message);
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      executionCounts: { attempted: 2, completed: 1, failed: 0, waitingApproval: 0 },
+    })).toThrow(message);
   });
 
   it("preserves an in-progress burn-in only while it has no terminal timestamp", () => {
