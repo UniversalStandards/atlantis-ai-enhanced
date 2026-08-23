@@ -100,7 +100,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
       approvalOutcomes: ["approval-evidence"],
       injectedFailures: ["failure-injection-evidence"],
       ownershipEvents: ["ownership-evidence"],
-      persistenceUncertaintyEvents: [],
+      persistenceUncertaintyEvents: ["persistence-uncertainty-evidence"],
       telemetryFailures: [],
       securityFindings: [],
       regressionEvidence: ["regression-evidence"],
