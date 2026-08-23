@@ -86,6 +86,27 @@ export function registerExecutionReleaseArtifactExternalConformance(
       ).toBe(written);
     });
 
+    it("keeps authoritative bytes stable across repeated reads, restart, and independent clients", () => {
+      const fixture = createFixture();
+      const artifactId = "release/external-stable";
+      const written = new ExecutionReleaseArtifactRepository(fixture.createIndependentStorage()).save(
+        artifactId,
+        evidence("external-stable"),
+      );
+
+      const beforeRestart = new ExecutionReleaseArtifactRepository(fixture.createIndependentStorage());
+      expect(beforeRestart.load(artifactId)).toBe(written);
+      expect(beforeRestart.load(artifactId)).toBe(written);
+
+      fixture.restart();
+
+      const afterRestart = new ExecutionReleaseArtifactRepository(fixture.createIndependentStorage());
+      expect(afterRestart.load(artifactId)).toBe(written);
+      expect(
+        new ExecutionReleaseArtifactRepository(fixture.createIndependentStorage()).load(artifactId),
+      ).toBe(written);
+    });
+
     it("keeps pre-commit failure invisible across independent clients and restart", () => {
       const fixture = createFixture();
       const artifactId = "release/external-3";
