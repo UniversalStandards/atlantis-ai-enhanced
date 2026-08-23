@@ -15,6 +15,7 @@ export const DAY7_REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "adversarial-security",
   "browser-runtime",
   "operator-runbook",
+  "deployment-reproducibility",
 ] as const);
 
 export type Day7RequiredReleaseGateId = typeof DAY7_REQUIRED_RELEASE_GATE_IDS[number];
