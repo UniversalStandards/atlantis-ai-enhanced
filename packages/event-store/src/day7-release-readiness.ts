@@ -97,6 +97,9 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   assertSameCandidate(input.candidateIdentity, deployment.candidateIdentity, "deployment");
   assertSameCandidate(input.candidateIdentity, rollback.candidateIdentity, "rollback");
   assertSameCandidate(input.candidateIdentity, burnIn.candidateIdentity, "burnIn");
+  if (input.candidateIdentity.recordedAtEpochMs > deployment.startedAtEpochMs) {
+    invalid("release candidate identity must be recorded no later than the deployment rehearsal starts.");
+  }
   if (rollback.fromDeploymentIdentity !== deployment.candidateIdentity.deploymentIdentity) {
     invalid("rollback must rehearse the exact release candidate deployment identity.");
   }
