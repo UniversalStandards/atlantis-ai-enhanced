@@ -55,6 +55,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
     "adversarial-security",
     "browser-runtime",
     "operator-runbook",
+    "deployment-reproducibility",
   ] as const;
 
   return {
