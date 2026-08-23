@@ -34,10 +34,10 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
     result: "PASS" as const,
     evidenceId: `${checkId}-evidence`,
   });
-  const step = (stepId: string) => Object.freeze({
+  const step = (stepId: string, startedAtEpochMs: number, completedAtEpochMs: number) => Object.freeze({
     stepId,
-    startedAtEpochMs: 1,
-    completedAtEpochMs: 2,
+    startedAtEpochMs,
+    completedAtEpochMs,
     result: "PASS" as const,
     evidenceId: `${stepId}-evidence`,
   });
@@ -68,7 +68,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
       migrationPrerequisiteEvidence: [],
       startedAtEpochMs: 1,
       completedAtEpochMs: 2,
-      steps: [step("deploy")],
+      steps: [step("deploy", 1, 2)],
       postDeployChecks: [check("deploy-check")],
       releaseEvidenceArtifactId: "release-artifact",
       result: "PASS",
@@ -83,7 +83,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
       preservedAuthorityEvidence: ["authority-evidence"],
       startedAtEpochMs: 3,
       completedAtEpochMs: 4,
-      steps: [step("rollback")],
+      steps: [step("rollback", 3, 4)],
       postRollbackChecks: [check("rollback-check")],
       uncertainOperations: [],
       result: "PASS",
