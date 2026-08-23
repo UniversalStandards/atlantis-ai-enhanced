@@ -26,6 +26,10 @@ describe("Day-7 release readiness composition", () => {
     expect(result.blockingGateIds).toContain("deployment-release-artifact");
   });
 
+  it("rejects rollback evidence for a different deployment identity", () => {
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: { ...rollback(), fromDeploymentIdentity: "deployment-other" }, burnIn: burnIn(), independentGates: gates() })).toThrow("rollback must rehearse the exact release candidate deployment identity");
+  });
+
   it("rejects a genuinely substituted candidate identity", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment({ ...candidate, candidateHeadSha: "other-head" }), rollback: rollback(), burnIn: burnIn(), independentGates: gates() })).toThrow("deployment must be bound to the exact release candidate identity");
   });
