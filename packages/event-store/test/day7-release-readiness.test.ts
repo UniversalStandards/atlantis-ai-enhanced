@@ -20,6 +20,12 @@ describe("Day-7 release readiness composition", () => {
     expect(result.independentGates.map((gate) => gate.gateId)).toEqual(DAY7_REQUIRED_RELEASE_GATE_IDS);
   });
 
+  it("blocks readiness when deployment has no release evidence artifact identity", () => {
+    const result = composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: { ...deployment(), releaseEvidenceArtifactId: null }, rollback: rollback(), burnIn: burnIn(), independentGates: gates() });
+    expect(result.disposition).toBe("BLOCKED");
+    expect(result.blockingGateIds).toContain("deployment-release-artifact");
+  });
+
   it("rejects a genuinely substituted candidate identity", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment({ ...candidate, candidateHeadSha: "other-head" }), rollback: rollback(), burnIn: burnIn(), independentGates: gates() })).toThrow("deployment must be bound to the exact release candidate identity");
   });
