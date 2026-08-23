@@ -169,6 +169,13 @@ describe("Day-7 operational evidence conformance", () => {
     })).toThrow("burn-in PASS requires evidence that governed approval behavior was exercised");
   });
 
+  it("rejects burn-in PASS without approved reversible failure-injection evidence", () => {
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      injectedFailures: [],
+    })).toThrow("burn-in PASS requires evidence from at least one approved reversible failure injection");
+  });
+
   it("preserves an in-progress burn-in only while it has no terminal timestamp", () => {
     const inProgress = validateBurnInEvidence({
       ...burnIn(),
