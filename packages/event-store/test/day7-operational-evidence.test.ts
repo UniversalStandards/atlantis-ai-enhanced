@@ -176,6 +176,13 @@ describe("Day-7 operational evidence conformance", () => {
     })).toThrow("burn-in PASS requires evidence from at least one approved reversible failure injection");
   });
 
+  it("rejects burn-in PASS without durable execution ownership evidence", () => {
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      ownershipEvents: [],
+    })).toThrow("burn-in PASS requires durable execution ownership evidence");
+  });
+
   it("preserves an in-progress burn-in only while it has no terminal timestamp", () => {
     const inProgress = validateBurnInEvidence({
       ...burnIn(),
