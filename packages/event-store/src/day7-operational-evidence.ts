@@ -274,6 +274,7 @@ export function validateBurnInEvidence(input: BurnInEvidence): BurnInEvidence {
     if (input.executionCounts.attempted === 0) invalid("burn-in PASS requires at least one attempted execution.");
     if (input.executionCounts.failed !== 0 || input.executionCounts.waitingApproval !== 0 || input.executionCounts.completed !== input.executionCounts.attempted) invalid("burn-in PASS requires every attempted execution to complete successfully with no failures or pending approvals.");
     if (input.approvalOutcomes.length === 0) invalid("burn-in PASS requires evidence that governed approval behavior was exercised.");
+    if (input.injectedFailures.length === 0) invalid("burn-in PASS requires evidence from at least one approved reversible failure injection.");
     if (input.securityFindings.length > 0 || input.incidents.length > 0) invalid("burn-in PASS requires zero unresolved security findings and incidents.");
   }
   return cloneFreeze(input);
