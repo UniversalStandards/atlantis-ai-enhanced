@@ -98,7 +98,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
       endedAtEpochMs: 20,
       executionCounts: { attempted: 1, completed: 1, failed: 0, waitingApproval: 0 },
       approvalOutcomes: ["approval-evidence"],
-      injectedFailures: [],
+      injectedFailures: ["failure-injection-evidence"],
       ownershipEvents: ["ownership-evidence"],
       persistenceUncertaintyEvents: [],
       telemetryFailures: [],
@@ -182,57 +182,61 @@ export function registerDay7ReadinessArtifactDurableConformance(
         new Day7ReleaseReadinessArtifactRepository(fixture.createStorage()).save(artifactId, expected),
       ).toThrow();
       fixture.restart();
+      const repository = new Day7ReleaseReadinessArtifactRepository(fixture.createStorage());
       const substituted = {
         ...expected,
-        candidateIdentity: { ...expected.candidateIdentity, candidateHeadSha: "substituted-head" },
-      } as Day7ReleaseReadinessEvidence;
-      expect(() =>
-        new Day7ReleaseReadinessArtifactRepository(fixture.createStorage()).reconcile(
-          artifactId,
-          substituted,
-        ),
-      ).toThrow();
+        candidateIdentity: {
+          ...expected.candidateIdentity,
+          candidateHeadSha: "substituted-head",
+        },
+      };
+      expect(() => repository.reconcile(artifactId, substituted)).toThrow();
+      expect(repository.load(artifactId)).toEqual(expected);
     });
   });
 }
 
-class ProcessLocalReadinessArtifactFixture implements DurableReadinessArtifactFixture {
-  readonly #artifacts = new Map<string, string>();
-  #failBeforeCommit = false;
-  #loseAcknowledgement = false;
+class SharedStateReadinessArtifactStorage implements ExecutionReleaseArtifactStorage {
+  private failBeforeCommit = false;
+  private loseAcknowledgement = false;
 
-  public createStorage(): ExecutionReleaseArtifactStorage {
-    return {
-      put: (artifactId, serializedEvidence) => {
-        if (this.#failBeforeCommit) {
-          this.#failBeforeCommit = false;
-          return false;
-        }
-        this.#artifacts.set(artifactId, serializedEvidence);
-        if (this.#loseAcknowledgement) {
-          this.#loseAcknowledgement = false;
-          return false;
-        }
-        return true;
-      },
-      get: (artifactId) => this.#artifacts.get(artifactId) ?? null,
-    };
+  constructor(private readonly state: Map<string, string>) {}
+
+  put(artifactId: string, canonicalJson: string): void {
+    if (this.failBeforeCommit) {
+      this.failBeforeCommit = false;
+      throw new Error("injected pre-commit failure");
+    }
+    if (this.state.has(artifactId)) throw new Error("artifact already exists");
+    this.state.set(artifactId, canonicalJson);
+    if (this.loseAcknowledgement) {
+      this.loseAcknowledgement = false;
+      throw new Error("injected acknowledgement loss");
+    }
   }
 
-  public restart(): void {
-    // Adapter replacement only. Shared state remains process-local for harness verification.
+  get(artifactId: string): string | null {
+    return this.state.get(artifactId) ?? null;
   }
 
-  public failNextPutBeforeCommit(): void {
-    this.#failBeforeCommit = true;
+  failNextPutBeforeCommit(): void {
+    this.failBeforeCommit = true;
   }
 
-  public loseNextPutAcknowledgement(): void {
-    this.#loseAcknowledgement = true;
+  loseNextPutAcknowledgement(): void {
+    this.loseAcknowledgement = true;
   }
 }
 
-registerDay7ReadinessArtifactDurableConformance(
-  "process-local shared-state harness self-test",
-  () => new ProcessLocalReadinessArtifactFixture(),
-);
+registerDay7ReadinessArtifactDurableConformance("shared-state harness self-test", () => {
+  const state = new Map<string, string>();
+  let storage = new SharedStateReadinessArtifactStorage(state);
+  return {
+    createStorage: () => storage,
+    restart: () => {
+      storage = new SharedStateReadinessArtifactStorage(state);
+    },
+    failNextPutBeforeCommit: () => storage.failNextPutBeforeCommit(),
+    loseNextPutAcknowledgement: () => storage.loseNextPutAcknowledgement(),
+  };
+});
