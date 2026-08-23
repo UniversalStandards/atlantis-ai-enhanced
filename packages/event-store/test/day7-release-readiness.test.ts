@@ -31,6 +31,11 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: { ...rollback(), fromDeploymentIdentity: "deployment-other" }, burnIn: burnIn(), independentGates: gates() })).toThrow("rollback must rehearse the exact release candidate deployment identity");
   });
 
+  it("rejects a release candidate identity recorded after deployment begins", () => {
+    const lateCandidate = { ...candidate, recordedAtEpochMs: 2 };
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: lateCandidate, deployment: deployment(lateCandidate), rollback: rollback(lateCandidate), burnIn: burnIn(lateCandidate), independentGates: gates().map((gate) => ({ ...gate, candidateIdentity: lateCandidate })) })).toThrow("release candidate identity must be recorded no later than the deployment rehearsal starts");
+  });
+
   it("rejects rehearsal steps whose timestamps fall outside their claimed rehearsal window", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: { ...deployment(), steps: [{ ...step, startedAtEpochMs: 0 }] }, rollback: rollback(), burnIn: burnIn(), independentGates: gates() })).toThrow("deployment.steps[0] must be temporally contained within its rehearsal window");
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: { ...rollback(), steps: [{ ...rollbackStep, completedAtEpochMs: 5 }] }, burnIn: burnIn(), independentGates: gates() })).toThrow("rollback.steps[0] must be temporally contained within its rehearsal window");
