@@ -89,6 +89,19 @@ function validateGate(gate: Day7ReleaseGateEvidence, index: number, expectedCand
   return Object.freeze(structuredClone(gate));
 }
 
+function assertIndependentGateEvidenceIdentitiesAreUnique(gates: readonly Day7ReleaseGateEvidence[]): void {
+  const owners = new Map<string, string>();
+  for (const gate of gates) {
+    for (const evidenceId of gate.evidenceIds) {
+      const priorGateId = owners.get(evidenceId);
+      if (priorGateId !== undefined) {
+        invalid(`independent release-gate evidence identity ${evidenceId} is reused by ${priorGateId} and ${gate.gateId}.`);
+      }
+      owners.set(evidenceId, gate.gateId);
+    }
+  }
+}
+
 export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): Day7ReleaseReadinessEvidence {
   const deployment = validateDeploymentRehearsalEvidence(input.deployment);
   const rollback = validateRollbackRehearsalEvidence(input.rollback);
@@ -114,6 +127,7 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
 
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
   const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
+  assertIndependentGateEvidenceIdentitiesAreUnique(independentGates);
 
   const blockingGateIds: string[] = [];
   if (deployment.result !== "PASS") blockingGateIds.push("deployment");
