@@ -127,6 +127,13 @@ describe("Day-7 operational evidence conformance", () => {
     })).toThrow("rollback rehearsal PASS requires every uncertain operation to reconcile successfully");
   });
 
+  it("rejects rollback evidence that targets the deployment being rolled back", () => {
+    expect(() => validateRollbackRehearsalEvidence({
+      ...rollback(),
+      targetKnownGoodIdentity: rollback().fromDeploymentIdentity,
+    })).toThrow("rollback target must differ from the deployment being rolled back");
+  });
+
   it("rejects burn-in PASS before planned duration completes or with unresolved security/incidents", () => {
     expect(() => validateBurnInEvidence({ ...burnIn(), endedAtEpochMs: 109 })).toThrow(
       "burn-in PASS requires the planned duration to complete",
