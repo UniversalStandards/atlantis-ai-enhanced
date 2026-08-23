@@ -15,7 +15,7 @@ The existing `ExecutionReleaseArtifactRepository` is authoritative for repositor
 - missing or divergent authoritative bytes fail closed.
 - `load()` is an authoritative read by artifact identity.
 
-The existing `registerExecutionReleaseArtifactDurableConformance` suite is the minimum reusable acceptance suite for concrete external adapters. The process-local shared-state fixture is only a harness self-test and must not be counted as external durability evidence.
+The existing `registerExecutionReleaseArtifactDurableConformance` suite is the minimum reusable acceptance suite for concrete durable adapters. The stronger `registerExecutionReleaseArtifactExternalConformance` suite is the Day-7 external-adapter gate: it exercises genuinely independent clients over shared durable state, restart survival, deterministic pre-commit failure, post-commit acknowledgement loss with readback-only reconciliation, stable repeated authoritative reads, and divergent same-identity rejection. Process-local shared-state fixtures are only harness self-tests and must not be counted as external durability evidence.
 
 ## Required external-adapter semantics
 
@@ -59,17 +59,17 @@ If authoritative storage contains bytes that differ from the governed bytes expe
 
 ## Required real-adapter conformance evidence
 
-The first approved external adapter must register against `registerExecutionReleaseArtifactDurableConformance` and execute the suite against real external durable state. Evidence must prove:
+The first approved external adapter must register against `registerExecutionReleaseArtifactExternalConformance` and execute the suite against real external durable state. Evidence must prove:
 
 1. exact canonical governed bytes survive destruction/replacement of the adapter process and are returned by a fresh process;
 2. injected failure before provider commit leaves no observable artifact after process restart;
 3. injected acknowledgement loss after provider commit is settled by `ExecutionReleaseArtifactRepository.reconcile()` through exact authoritative readback without rewriting;
 4. substituted/divergent expected evidence is rejected during reconciliation;
-5. repeated authoritative reads after restart remain byte-identical;
+5. repeated authoritative reads before and after restart remain byte-identical;
 6. a second independent process observes the same authoritative bytes for the same artifact identity;
-7. divergent concurrent creation for one artifact identity cannot silently overwrite or supersede the accepted governed bytes.
+7. divergent creation attempts for one artifact identity cannot silently overwrite or supersede the accepted governed bytes.
 
-Items 5-7 extend the reusable minimum suite and should be added as adapter-specific tests until the generic harness exposes those process/provider hooks.
+The generic external harness now directly covers independent-client visibility, restart survival, pre-commit failure, acknowledgement-loss reconciliation, stable repeated reads, and divergent same-identity publication. A concrete provider may add adapter-specific tests for provider primitives or race windows that cannot be deterministically represented by the generic fixture, but those tests supplement rather than replace the shared gate.
 
 ## Provider capability matrix
 
@@ -113,8 +113,8 @@ Before a provider is counted as Day-7 durable artifact evidence, the implementat
 
 - concrete adapter implementation behind `ExecutionReleaseArtifactStorage`;
 - provider/primitive rationale and namespace/identity mapping;
-- registration against `registerExecutionReleaseArtifactDurableConformance`;
-- adapter-specific cross-process and divergent-concurrent-create tests;
+- registration against `registerExecutionReleaseArtifactExternalConformance`;
+- any adapter-specific concurrency/race tests required by the chosen provider primitive;
 - failure-injection evidence for pre-commit and post-commit/pre-ack outcomes;
 - exact authoritative readback evidence after real process restart;
 - permission/credential inventory with least-privilege rationale;
