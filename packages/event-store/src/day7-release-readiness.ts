@@ -7,6 +7,7 @@ import {
   type BurnInEvidence,
   type Day7CandidateIdentity,
   type DeploymentRehearsalEvidence,
+  type OperationalStepEvidence,
   type RollbackRehearsalEvidence,
 } from "./day7-operational-evidence.js";
 
@@ -63,6 +64,19 @@ function assertSameCandidate(expected: Day7CandidateIdentity, actual: Day7Candid
   if (!sameCandidate(expected, actual)) invalid(`${field} must be bound to the exact release candidate identity.`);
 }
 
+function assertStepsWithinRehearsalWindow(
+  steps: readonly OperationalStepEvidence[],
+  rehearsalStartedAtEpochMs: number,
+  rehearsalCompletedAtEpochMs: number,
+  field: string,
+): void {
+  for (const [index, step] of steps.entries()) {
+    if (step.startedAtEpochMs < rehearsalStartedAtEpochMs || step.completedAtEpochMs > rehearsalCompletedAtEpochMs) {
+      invalid(`${field}[${index}] must be temporally contained within its rehearsal window.`);
+    }
+  }
+}
+
 function validateGate(gate: Day7ReleaseGateEvidence, index: number, expectedCandidate: Day7CandidateIdentity): Day7ReleaseGateEvidence {
   nonEmpty(gate.gateId, `independentGates[${index}].gateId`);
   assertSameCandidate(expectedCandidate, gate.candidateIdentity, `independentGates[${index}]`);
@@ -86,6 +100,8 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   if (rollback.fromDeploymentIdentity !== deployment.candidateIdentity.deploymentIdentity) {
     invalid("rollback must rehearse the exact release candidate deployment identity.");
   }
+  assertStepsWithinRehearsalWindow(deployment.steps, deployment.startedAtEpochMs, deployment.completedAtEpochMs, "deployment.steps");
+  assertStepsWithinRehearsalWindow(rollback.steps, rollback.startedAtEpochMs, rollback.completedAtEpochMs, "rollback.steps");
 
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
   const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
