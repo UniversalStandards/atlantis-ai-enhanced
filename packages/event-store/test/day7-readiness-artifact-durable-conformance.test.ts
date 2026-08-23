@@ -202,17 +202,18 @@ class SharedStateReadinessArtifactStorage implements ExecutionReleaseArtifactSto
 
   constructor(private readonly state: Map<string, string>) {}
 
-  put(artifactId: string, canonicalJson: string): void {
+  put(artifactId: string, canonicalJson: string): boolean {
     if (this.failBeforeCommit) {
       this.failBeforeCommit = false;
-      throw new Error("injected pre-commit failure");
+      return false;
     }
     if (this.state.has(artifactId)) throw new Error("artifact already exists");
     this.state.set(artifactId, canonicalJson);
     if (this.loseAcknowledgement) {
       this.loseAcknowledgement = false;
-      throw new Error("injected acknowledgement loss");
+      return false;
     }
+    return true;
   }
 
   get(artifactId: string): string | null {
