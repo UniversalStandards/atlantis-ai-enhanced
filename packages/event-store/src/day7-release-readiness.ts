@@ -83,6 +83,9 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   assertSameCandidate(input.candidateIdentity, deployment.candidateIdentity, "deployment");
   assertSameCandidate(input.candidateIdentity, rollback.candidateIdentity, "rollback");
   assertSameCandidate(input.candidateIdentity, burnIn.candidateIdentity, "burnIn");
+  if (rollback.fromDeploymentIdentity !== deployment.candidateIdentity.deploymentIdentity) {
+    invalid("rollback must rehearse the exact release candidate deployment identity.");
+  }
 
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
   const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
