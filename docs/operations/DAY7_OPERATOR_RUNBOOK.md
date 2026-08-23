@@ -19,7 +19,7 @@ This runbook is evidence-oriented: an operator MUST distinguish verified runtime
 
 An operator MUST NOT:
 
-1. treat a process-local fixture as external durability, cross-process, restart, or production evidence;
+1. treat a process-local fixture as external durability, cross-process, restart, provider-failover, or production evidence;
 2. attribute CI from an earlier runtime head to a later runtime head;
 3. bypass explicit approval for consequential actions;
 4. retry an uncertain persistence write blindly when authoritative reconciliation is available;
@@ -106,9 +106,11 @@ For a completed governed execution, retrieve and bind the following to the same 
 5. independent verification evidence;
 6. exact authoritative release artifact bytes and artifact identity;
 7. durable ownership/fencing evidence where recovery ownership was exercised;
-8. downstream telemetry export result, if configured.
+8. provider-failover evidence from the approved candidate's genuine alternate provider/replica/failover path, when the release gate is evaluated;
+9. operational browser evidence for each required observation representation;
+10. downstream telemetry export result, if configured.
 
-Reject mixed-execution, substituted, stale, or noncanonical evidence.
+Reject mixed-execution, substituted, stale, or noncanonical evidence. Restart-only evidence, process-local fixtures, and copied in-memory state MUST NOT be accepted as provider-failover proof.
 
 ## Persistence uncertainty and reconciliation
 
@@ -135,11 +137,24 @@ If ownership is lost, expired, fenced, or cannot be proven:
 
 If a real durable ownership adapter has not passed cross-process/restart conformance, the production durability gate remains BLOCKED.
 
+## Provider failover
+
+Provider failover is a distinct release gate from ordinary restart/recovery. It may be classified PASS only when the approved candidate executes through its genuine alternate provider, replica, or failover path and preserves all of the following:
+
+1. exactly one live authoritative owner after failover;
+2. monotonically increasing fencing through takeover;
+3. authoritative settlement of post-commit/pre-acknowledgement uncertainty without blind replay;
+4. no manufactured ownership or append after a proven pre-commit failure;
+5. rejection of stale or released authority after takeover;
+6. candidate-bound immutable evidence identifying the failover path exercised.
+
+If the candidate cannot expose a genuine alternate provider/replica/failover path, or the path requires an unresolved architecture or permission decision, keep the provider-failover gate BLOCKED and continue independent safe work. Do not substitute restart-only, process-local, documentation, or copied-memory evidence.
+
 ## Health classification
 
 Use three operational states:
 
-- **GREEN** — all mandatory candidate-bound gates pass; zero unresolved critical findings; required durability, security, trace, deployment/rollback, and burn-in evidence exists.
+- **GREEN** — all mandatory candidate-bound gates pass; zero unresolved critical findings; required durability, provider-failover, security, trace, deployment/rollback, and burn-in evidence exists.
 - **AMBER** — implementation is progressing or component evidence is green, but one or more mandatory release gates remain open/BLOCKED or lack production-grade evidence.
 - **RED** — a mandatory gate fails, unauthorized protected mutation occurs, critical security finding is unresolved, authoritative evidence diverges, or safe recovery cannot be proven.
 
@@ -156,6 +171,7 @@ Immediately classify the candidate RED and stop consequential continuation when 
 - stale owner successfully mutates successor state;
 - divergent authoritative release artifact under one artifact identity;
 - unreconciled ambiguous commit/ownership state;
+- provider failover produces competing authority, fence regression, or unreconciled commit state;
 - critical security finding;
 - evidence substitution or mixed execution identity accepted as authoritative;
 - rollback cannot preserve required durable evidence/state.
@@ -190,12 +206,13 @@ Burn-in evidence MUST record:
 - approval waits and outcomes;
 - injected restart/failure scenarios;
 - ownership loss/reacquisition events;
+- provider-failover scenarios and outcomes when required by the candidate;
 - persistence uncertainty/reconciliation events;
 - telemetry/export failures;
 - security findings/incidents;
 - final regression/security/trace status.
 
-Injected failures MUST exercise only approved, reversible mechanisms. Burn-in cannot substitute for missing external durability or real adapter conformance.
+Injected failures MUST exercise only approved, reversible mechanisms. Burn-in cannot substitute for missing external durability, provider-failover, or real adapter conformance.
 
 ## Stop procedure
 
@@ -220,6 +237,7 @@ A release declaration requires all of the following to be true at the same candi
 - deterministic replay evidence captured;
 - external release-artifact durability conformance passed;
 - durable recovery ownership conformance passed;
+- provider-failover conformance passed against the approved candidate's genuine alternate provider/replica/failover path;
 - ownership/writer atomicity or deterministic reconciliation proven;
 - operational browser evidence passed for all supported observation representations;
 - telemetry remains downstream/non-authoritative;
