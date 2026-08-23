@@ -7,11 +7,10 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Latest independently verified architecture head before this documentation reconciliation: `5340268af61a2231dbaf23e24b57ec690343573f`.
-- Since prior verified documentation head `df24d7b9585255c4e4e80a8816e8b91d7e69783b`, commit `5340268af61a2231dbaf23e24b57ec690343573f` added `docs/architecture/RELEASE_ARTIFACT_EXTERNAL_CANDIDATE_EVIDENCE_MATRIX.md`, grounding the pending external release-artifact decision in authoritative Amazon S3, Google Cloud Storage, and Azure Blob Storage documentation while explicitly selecting no winner and authorizing no implementation.
-- The external artifact matrix preserves `RELEASE_ARTIFACT_EXTERNAL_ADAPTER_CANDIDATE_RECORD.md` as the approval boundary. All three reviewed object-storage candidates expose conditional-create primitives plausibly compatible with immutable artifact publication, but exact SDK retry behavior, failure injection, credentials/network scope, retention/versioning, and operational topology remain unresolved approval inputs.
-- Current architecture head `5340268af61a2231dbaf23e24b57ec690343573f` passed head-associated PR-merge CI run `32624321799` against synthetic merge commit `3631aaa2726550cdbcc2381b54e3469efa677eaf`.
-- Verified gate: `pnpm install --frozen-lockfile`; SEC-20 lockfile/source integrity; structured vulnerability audit; dependency inventory; contracts and event-store typechecks; full recursive tests. Verified baseline remains **301/301 contracts + 505/505 event-store = 806/806 tests**. Vulnerability audit reports zero findings at every severity. Actions permissions remain `contents: read`, `metadata: read`.
+- Latest independently verified branch head before this documentation reconciliation: `45143a19078e7c39a7f20624fc724fe6b1abf93d`.
+- Since prior verified documentation head `ea67922b6a6e5a37886277cb9062ef1464e542e2`, commit `45143a19078e7c39a7f20624fc724fe6b1abf93d` reconciled `docs/verification/DAY7_RELEASE_VERIFICATION_MATRIX.md` with the mandatory provider-failover release gate. Independent review found that the same matrix still labeled the prior head as the current regression baseline even though `45143a…` had its own successful CI run.
+- Corrective commit `2d111d11936a477afd8003b82861555059c14f10` updates the Day-7 matrix to bind regression evidence to head `45143a19078e7c39a7f20624fc724fe6b1abf93d`, head-associated PR-merge run `32627084259`, and synthetic merge commit `6144a491686afe46ba24a79e030921f6bff663eb`.
+- Verified gate for `45143a…`: `pnpm install --frozen-lockfile`; SEC-20 lockfile/source integrity; structured vulnerability audit; dependency inventory; contracts and event-store typechecks; full recursive tests. Verified baseline remains **301/301 contracts + 505/505 event-store = 806/806 tests**. Vulnerability audit reports zero findings at every severity. Actions permissions remain `contents: read`, `metadata: read`.
 - Provider-failover conformance remains defined and wired into durable-adapter registration, but no concrete durable adapter is registered; those scenarios have not executed against genuine independent-client/restart/failover state and do not constitute operational provider-failover proof.
 - PR #10 remains open, draft, mergeable, and has zero unresolved inline review threads.
 
@@ -39,7 +38,7 @@ PR #10 remains draft because production-persistence acceptance and actual Day-7 
 
 ### Single next highest-leverage action
 
-Use the durable-persistence provider-evidence matrix to choose one concrete non-production durable-persistence candidate and complete its canonical candidate record for architecture/operations approval. In parallel, use the newly landed external release-artifact provider-evidence matrix to choose one concrete non-production artifact-storage candidate and complete its candidate record. Do not implement either provider-specific adapter until its approval record is complete.
+Use the durable-persistence provider-evidence matrix to choose one concrete non-production durable-persistence candidate and complete its canonical candidate record for architecture/operations approval. In parallel, use the external release-artifact provider-evidence matrix to choose one concrete non-production artifact-storage candidate and complete its candidate record. Do not implement either provider-specific adapter until its approval record is complete.
 
 ### Integration rule
 
