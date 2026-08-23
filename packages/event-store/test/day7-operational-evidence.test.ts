@@ -162,6 +162,13 @@ describe("Day-7 operational evidence conformance", () => {
     })).toThrow(message);
   });
 
+  it("rejects burn-in PASS that never exercised governed approval behavior", () => {
+    expect(() => validateBurnInEvidence({
+      ...burnIn(),
+      approvalOutcomes: [],
+    })).toThrow("burn-in PASS requires evidence that governed approval behavior was exercised");
+  });
+
   it("preserves an in-progress burn-in only while it has no terminal timestamp", () => {
     const inProgress = validateBurnInEvidence({
       ...burnIn(),
