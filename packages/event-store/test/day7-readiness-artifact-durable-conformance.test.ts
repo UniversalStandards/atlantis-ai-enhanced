@@ -63,7 +63,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
     deployment: {
       deploymentRehearsalId: "deployment-rehearsal",
       candidateIdentity,
-      immutableArtifactIdentities: ["release-artifact"],
+      immutableArtifactIdentities: ["immutable-artifact"],
       environmentClass: "rehearsal",
       configurationDigest: "config-digest",
       migrationPrerequisiteEvidence: [],
