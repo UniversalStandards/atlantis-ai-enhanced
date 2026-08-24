@@ -13,29 +13,49 @@ const candidate = {
   recordedAtEpochMs: 1,
 };
 
+function completeBurnIn(): BurnInEvidence {
+  return {
+    burnInId: "burn-complete",
+    candidateIdentity: candidate,
+    plannedDurationMs: 100,
+    startedAtEpochMs: 10,
+    endedAtEpochMs: 110,
+    executionCounts: { attempted: 1, completed: 1, failed: 0, waitingApproval: 0 },
+    approvalOutcomes: ["approval-1"],
+    injectedFailures: ["failure-1"],
+    ownershipEvents: ["ownership-1"],
+    persistenceUncertaintyEvents: ["uncertainty-1"],
+    telemetryFailures: [],
+    securityFindings: [],
+    regressionEvidence: ["regression-1"],
+    traceCompletenessEvidence: ["trace-1"],
+    incidents: [],
+    finalDisposition: "PASS",
+  };
+}
+
 describe("Day-7 burn-in release evidence", () => {
   it("rejects a vacuous PASS with no attempted executions", () => {
     const evidence: BurnInEvidence = {
+      ...completeBurnIn(),
       burnInId: "burn-empty",
-      candidateIdentity: candidate,
-      plannedDurationMs: 100,
-      startedAtEpochMs: 10,
-      endedAtEpochMs: 110,
       executionCounts: { attempted: 0, completed: 0, failed: 0, waitingApproval: 0 },
-      approvalOutcomes: [],
-      injectedFailures: [],
-      ownershipEvents: [],
-      persistenceUncertaintyEvents: [],
-      telemetryFailures: [],
-      securityFindings: [],
-      regressionEvidence: ["regression-1"],
-      traceCompletenessEvidence: ["trace-1"],
-      incidents: [],
-      finalDisposition: "PASS",
     };
 
     expect(() => validateBurnInEvidence(evidence)).toThrow(
       "burn-in PASS requires at least one attempted execution",
+    );
+  });
+
+  it("rejects one evidence identity reused across distinct burn-in roles", () => {
+    const evidence: BurnInEvidence = {
+      ...completeBurnIn(),
+      injectedFailures: ["shared-evidence"],
+      ownershipEvents: ["shared-evidence"],
+    };
+
+    expect(() => validateBurnInEvidence(evidence)).toThrow(
+      "burn-in evidence identities must be unique across evidence roles",
     );
   });
 });
