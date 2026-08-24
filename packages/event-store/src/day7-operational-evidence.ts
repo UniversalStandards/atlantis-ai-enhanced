@@ -158,6 +158,7 @@ function candidate(value: Day7CandidateIdentity): Day7CandidateIdentity {
 function validateSteps(values: readonly OperationalStepEvidence[], field: string): void {
   if (values.length === 0) invalid(`${field} must contain evidence.`);
   const ids = new Set<string>();
+  const evidenceIds = new Set<string>();
   for (const [index, step] of values.entries()) {
     nonEmpty(step.stepId, `${field}[${index}].stepId`);
     nonEmpty(step.evidenceId, `${field}[${index}].evidenceId`);
@@ -166,13 +167,16 @@ function validateSteps(values: readonly OperationalStepEvidence[], field: string
     operationalDisposition(step.result, `${field}[${index}].result`);
     if (step.completedAtEpochMs < step.startedAtEpochMs) invalid(`${field}[${index}] completes before it starts.`);
     if (ids.has(step.stepId)) invalid(`${field} step identifiers must be unique.`);
+    if (evidenceIds.has(step.evidenceId)) invalid(`${field} evidence identities must be unique.`);
     ids.add(step.stepId);
+    evidenceIds.add(step.evidenceId);
   }
 }
 
 function validateChecks(values: readonly OperationalCheckEvidence[], field: string): void {
   if (values.length === 0) invalid(`${field} must contain evidence.`);
   const ids = new Set<string>();
+  const evidenceIds = new Set<string>();
   for (const [index, check] of values.entries()) {
     nonEmpty(check.checkId, `${field}[${index}].checkId`);
     nonEmpty(check.expectedCondition, `${field}[${index}].expectedCondition`);
@@ -180,7 +184,9 @@ function validateChecks(values: readonly OperationalCheckEvidence[], field: stri
     nonEmpty(check.evidenceId, `${field}[${index}].evidenceId`);
     operationalDisposition(check.result, `${field}[${index}].result`);
     if (ids.has(check.checkId)) invalid(`${field} check identifiers must be unique.`);
+    if (evidenceIds.has(check.evidenceId)) invalid(`${field} evidence identities must be unique.`);
     ids.add(check.checkId);
+    evidenceIds.add(check.evidenceId);
   }
 }
 
@@ -225,6 +231,7 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
   validateSteps(input.steps, "steps");
   validateChecks(input.postRollbackChecks, "postRollbackChecks");
   const operationIds = new Set<string>();
+  const operationEvidenceIds = new Set<string>();
   for (const [index, operation] of input.uncertainOperations.entries()) {
     nonEmpty(operation.operationId, `uncertainOperations[${index}].operationId`);
     nonEmpty(operation.uncertaintySource, `uncertainOperations[${index}].uncertaintySource`);
@@ -232,7 +239,9 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
     nonEmpty(operation.evidenceId, `uncertainOperations[${index}].evidenceId`);
     operationalDisposition(operation.reconciliationDisposition, `uncertainOperations[${index}].reconciliationDisposition`);
     if (operationIds.has(operation.operationId)) invalid("uncertain operation identifiers must be unique.");
+    if (operationEvidenceIds.has(operation.evidenceId)) invalid("uncertain operation evidence identities must be unique.");
     operationIds.add(operation.operationId);
+    operationEvidenceIds.add(operation.evidenceId);
   }
   validateTerminalDisposition(input.result, input.failureReason, "rollback rehearsal");
   if (input.result === "PASS" && [...input.steps, ...input.postRollbackChecks].some((entry) => entry.result !== "PASS")) invalid("rollback rehearsal PASS requires every step and check to pass.");
