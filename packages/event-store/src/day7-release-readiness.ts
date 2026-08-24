@@ -102,33 +102,64 @@ function assertIndependentGateEvidenceIdentitiesAreUnique(gates: readonly Day7Re
   }
 }
 
+function operationalEvidenceByPhase(
+  deployment: DeploymentRehearsalEvidence,
+  rollback: RollbackRehearsalEvidence,
+  burnIn: BurnInEvidence,
+): Readonly<Record<"deployment" | "rollback" | "burn-in", readonly string[]>> {
+  return {
+    deployment: [
+      ...deployment.immutableArtifactIdentities,
+      ...deployment.migrationPrerequisiteEvidence,
+      ...deployment.steps.map((item) => item.evidenceId),
+      ...deployment.postDeployChecks.map((item) => item.evidenceId),
+      ...(deployment.releaseEvidenceArtifactId === null ? [] : [deployment.releaseEvidenceArtifactId]),
+    ],
+    rollback: [
+      ...rollback.compatibilityEvidence,
+      ...rollback.preservedAuthorityEvidence,
+      ...rollback.steps.map((item) => item.evidenceId),
+      ...rollback.postRollbackChecks.map((item) => item.evidenceId),
+      ...rollback.uncertainOperations.flatMap((item) => [item.authoritativeReadbackId, item.evidenceId]),
+    ],
+    "burn-in": [
+      ...burnIn.approvalOutcomes,
+      ...burnIn.injectedFailures,
+      ...burnIn.ownershipEvents,
+      ...burnIn.persistenceUncertaintyEvents,
+      ...burnIn.telemetryFailures,
+      ...burnIn.securityFindings,
+      ...burnIn.regressionEvidence,
+      ...burnIn.traceCompletenessEvidence,
+      ...burnIn.incidents,
+    ],
+  };
+}
+
+function assertOperationalEvidenceIdentitiesAreUniqueAcrossPhases(
+  deployment: DeploymentRehearsalEvidence,
+  rollback: RollbackRehearsalEvidence,
+  burnIn: BurnInEvidence,
+): void {
+  const owners = new Map<string, string>();
+  for (const [phase, evidenceIds] of Object.entries(operationalEvidenceByPhase(deployment, rollback, burnIn))) {
+    for (const evidenceId of evidenceIds) {
+      const priorPhase = owners.get(evidenceId);
+      if (priorPhase !== undefined && priorPhase !== phase) {
+        invalid(`operational evidence identity ${evidenceId} is reused across ${priorPhase} and ${phase}.`);
+      }
+      owners.set(evidenceId, phase);
+    }
+  }
+}
+
 function assertIndependentGateEvidenceDoesNotAliasOperationalEvidence(
   gates: readonly Day7ReleaseGateEvidence[],
   deployment: DeploymentRehearsalEvidence,
   rollback: RollbackRehearsalEvidence,
   burnIn: BurnInEvidence,
 ): void {
-  const operationalEvidenceIds = new Set<string>([
-    ...deployment.immutableArtifactIdentities,
-    ...deployment.migrationPrerequisiteEvidence,
-    ...deployment.steps.map((item) => item.evidenceId),
-    ...deployment.postDeployChecks.map((item) => item.evidenceId),
-    ...(deployment.releaseEvidenceArtifactId === null ? [] : [deployment.releaseEvidenceArtifactId]),
-    ...rollback.compatibilityEvidence,
-    ...rollback.preservedAuthorityEvidence,
-    ...rollback.steps.map((item) => item.evidenceId),
-    ...rollback.postRollbackChecks.map((item) => item.evidenceId),
-    ...rollback.uncertainOperations.flatMap((item) => [item.authoritativeReadbackId, item.evidenceId]),
-    ...burnIn.approvalOutcomes,
-    ...burnIn.injectedFailures,
-    ...burnIn.ownershipEvents,
-    ...burnIn.persistenceUncertaintyEvents,
-    ...burnIn.telemetryFailures,
-    ...burnIn.securityFindings,
-    ...burnIn.regressionEvidence,
-    ...burnIn.traceCompletenessEvidence,
-    ...burnIn.incidents,
-  ]);
+  const operationalEvidenceIds = new Set<string>(Object.values(operationalEvidenceByPhase(deployment, rollback, burnIn)).flat());
 
   for (const gate of gates) {
     for (const evidenceId of gate.evidenceIds) {
@@ -161,6 +192,7 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   if (burnIn.startedAtEpochMs < deployment.completedAtEpochMs) {
     invalid("burn-in must not start before the release-candidate deployment rehearsal completes.");
   }
+  assertOperationalEvidenceIdentitiesAreUniqueAcrossPhases(deployment, rollback, burnIn);
 
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
   const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
