@@ -33,84 +33,99 @@ const check = (checkId: string, evidenceId: string) => ({
   evidenceId,
 });
 
+const deployment = () => ({
+  deploymentRehearsalId: "deploy-1",
+  candidateIdentity: candidate,
+  immutableArtifactIdentities: ["artifact-1"],
+  environmentClass: "release-candidate",
+  configurationDigest: "config-digest",
+  migrationPrerequisiteEvidence: ["migration-1"],
+  startedAtEpochMs: 1,
+  completedAtEpochMs: 2,
+  steps: [step("step-1", "step-evidence-1")],
+  postDeployChecks: [check("check-1", "check-evidence-1")],
+  releaseEvidenceArtifactId: "release-1",
+  result: "PASS" as const,
+  failureReason: null,
+});
+
+const rollback = () => ({
+  rollbackRehearsalId: "rollback-1",
+  candidateIdentity: candidate,
+  fromDeploymentIdentity: "deployment-1",
+  targetKnownGoodIdentity: "deployment-0",
+  compatibilityEvidence: ["compat-1"],
+  preservedAuthorityEvidence: ["authority-1"],
+  startedAtEpochMs: 3,
+  completedAtEpochMs: 4,
+  steps: [step("rollback-step", "rollback-step-evidence")],
+  postRollbackChecks: [check("rollback-check", "rollback-check-evidence")],
+  uncertainOperations: [
+    { operationId: "op-1", uncertaintySource: "ack-loss-1", authoritativeReadbackId: "readback-1", reconciliationDisposition: "PASS" as const, evidenceId: "uncertain-evidence-1" },
+  ],
+  result: "PASS" as const,
+  failureReason: null,
+});
+
 describe("Day-7 operational evidence identity uniqueness", () => {
   it("rejects one evidence identity being reused for distinct steps, checks, or uncertain operations", () => {
-    const deployment = {
-      deploymentRehearsalId: "deploy-1",
-      candidateIdentity: candidate,
-      immutableArtifactIdentities: ["artifact-1"],
-      environmentClass: "release-candidate",
-      configurationDigest: "config-digest",
-      migrationPrerequisiteEvidence: [],
-      startedAtEpochMs: 1,
-      completedAtEpochMs: 2,
-      steps: [step("step-1", "step-evidence"), step("step-2", "step-evidence")],
-      postDeployChecks: [check("check-1", "check-evidence")],
-      releaseEvidenceArtifactId: "release-1",
-      result: "PASS" as const,
-      failureReason: null,
-    };
-
-    expect(() => validateDeploymentRehearsalEvidence(deployment)).toThrow("steps evidence identities must be unique");
     expect(() => validateDeploymentRehearsalEvidence({
-      ...deployment,
-      steps: [step("step-1", "step-evidence-1")],
+      ...deployment(),
+      steps: [step("step-1", "step-evidence"), step("step-2", "step-evidence")],
+    })).toThrow("steps evidence identities must be unique");
+
+    expect(() => validateDeploymentRehearsalEvidence({
+      ...deployment(),
       postDeployChecks: [check("check-1", "check-evidence"), check("check-2", "check-evidence")],
     })).toThrow("postDeployChecks evidence identities must be unique");
 
     expect(() => validateRollbackRehearsalEvidence({
-      rollbackRehearsalId: "rollback-1",
-      candidateIdentity: candidate,
-      fromDeploymentIdentity: "deployment-1",
-      targetKnownGoodIdentity: "deployment-0",
-      compatibilityEvidence: ["compat-1"],
-      preservedAuthorityEvidence: ["authority-1"],
-      startedAtEpochMs: 3,
-      completedAtEpochMs: 4,
-      steps: [step("rollback-step", "rollback-step-evidence")],
-      postRollbackChecks: [check("rollback-check", "rollback-check-evidence")],
+      ...rollback(),
       uncertainOperations: [
         { operationId: "op-1", uncertaintySource: "ack-loss-1", authoritativeReadbackId: "readback-1", reconciliationDisposition: "PASS" as const, evidenceId: "uncertain-evidence" },
         { operationId: "op-2", uncertaintySource: "ack-loss-2", authoritativeReadbackId: "readback-2", reconciliationDisposition: "PASS" as const, evidenceId: "uncertain-evidence" },
       ],
-      result: "PASS" as const,
-      failureReason: null,
     })).toThrow("uncertain operation evidence identities must be unique");
   });
 
-  it("rejects one evidence identity being reused across distinct operational roles", () => {
+  it("rejects evidence reuse across every deployment evidence role", () => {
     expect(() => validateDeploymentRehearsalEvidence({
-      deploymentRehearsalId: "deploy-1",
-      candidateIdentity: candidate,
-      immutableArtifactIdentities: ["artifact-1"],
-      environmentClass: "release-candidate",
-      configurationDigest: "config-digest",
-      migrationPrerequisiteEvidence: [],
-      startedAtEpochMs: 1,
-      completedAtEpochMs: 2,
+      ...deployment(),
+      immutableArtifactIdentities: ["shared-evidence"],
       steps: [step("step-1", "shared-evidence")],
+    })).toThrow("deployment rehearsal evidence identities must be unique across evidence roles");
+
+    expect(() => validateDeploymentRehearsalEvidence({
+      ...deployment(),
+      migrationPrerequisiteEvidence: ["shared-evidence"],
       postDeployChecks: [check("check-1", "shared-evidence")],
-      releaseEvidenceArtifactId: "release-1",
-      result: "PASS" as const,
-      failureReason: null,
-    })).toThrow("deployment rehearsal evidence identities must be unique across operational roles");
+    })).toThrow("deployment rehearsal evidence identities must be unique across evidence roles");
+
+    expect(() => validateDeploymentRehearsalEvidence({
+      ...deployment(),
+      releaseEvidenceArtifactId: "shared-evidence",
+      immutableArtifactIdentities: ["shared-evidence"],
+    })).toThrow("deployment rehearsal evidence identities must be unique across evidence roles");
+  });
+
+  it("rejects evidence reuse across every rollback evidence role, including readback aliases", () => {
+    expect(() => validateRollbackRehearsalEvidence({
+      ...rollback(),
+      compatibilityEvidence: ["shared-evidence"],
+      steps: [step("rollback-step", "shared-evidence")],
+    })).toThrow("rollback rehearsal evidence identities must be unique across evidence roles");
 
     expect(() => validateRollbackRehearsalEvidence({
-      rollbackRehearsalId: "rollback-1",
-      candidateIdentity: candidate,
-      fromDeploymentIdentity: "deployment-1",
-      targetKnownGoodIdentity: "deployment-0",
-      compatibilityEvidence: ["compat-1"],
-      preservedAuthorityEvidence: ["authority-1"],
-      startedAtEpochMs: 3,
-      completedAtEpochMs: 4,
-      steps: [step("rollback-step", "shared-evidence")],
-      postRollbackChecks: [check("rollback-check", "rollback-check-evidence")],
+      ...rollback(),
+      preservedAuthorityEvidence: ["shared-evidence"],
+      postRollbackChecks: [check("rollback-check", "shared-evidence")],
+    })).toThrow("rollback rehearsal evidence identities must be unique across evidence roles");
+
+    expect(() => validateRollbackRehearsalEvidence({
+      ...rollback(),
       uncertainOperations: [
-        { operationId: "op-1", uncertaintySource: "ack-loss-1", authoritativeReadbackId: "readback-1", reconciliationDisposition: "PASS" as const, evidenceId: "shared-evidence" },
+        { operationId: "op-1", uncertaintySource: "ack-loss-1", authoritativeReadbackId: "shared-evidence", reconciliationDisposition: "PASS" as const, evidenceId: "shared-evidence" },
       ],
-      result: "PASS" as const,
-      failureReason: null,
-    })).toThrow("rollback rehearsal evidence identities must be unique across operational roles");
+    })).toThrow("rollback rehearsal evidence identities must be unique across evidence roles");
   });
 });
