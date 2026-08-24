@@ -64,10 +64,12 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: aliased })).toThrow(`independent release-gate evidence identity ${first.evidenceIds[0]} is reused by ${first.gateId} and ${second.gateId}`);
   });
 
-  it("rejects independent release-gate evidence identity reuse from operational evidence", () => {
-    const aliased = gates();
-    aliased[0] = { ...aliased[0]!, evidenceIds: ["ownership-1"] };
-    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: aliased })).toThrow("independent release-gate evidence identity ownership-1 aliases deployment, rollback, or burn-in operational evidence");
+  it("rejects independent release-gate evidence identity reuse from every operational evidence class", () => {
+    for (const evidenceId of ["ownership-1", "artifact-1", "migration-1", "release-1", "compat-1", "authority-1", "readback-1"]) {
+      const aliased = gates();
+      aliased[0] = { ...aliased[0]!, evidenceIds: [evidenceId] };
+      expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: aliased })).toThrow(`independent release-gate evidence identity ${evidenceId} aliases deployment, rollback, or burn-in operational evidence`);
+    }
   });
 
   it("aggregates operational and required independent blockers without converting them to PASS", () => {
