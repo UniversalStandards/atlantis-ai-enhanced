@@ -203,14 +203,6 @@ function validateChecks(values: readonly OperationalCheckEvidence[], field: stri
   }
 }
 
-function validateDistinctOperationalEvidenceRoles(values: readonly { readonly evidenceId: string }[], field: string): void {
-  const evidenceIds = new Set<string>();
-  for (const value of values) {
-    if (evidenceIds.has(value.evidenceId)) invalid(`${field} evidence identities must be unique across operational roles.`);
-    evidenceIds.add(value.evidenceId);
-  }
-}
-
 function validateTerminalDisposition(result: OperationalEvidenceDisposition, failureReason: string | null, field: string): void {
   operationalDisposition(result, `${field} result`);
   if (result === "PASS") {
@@ -232,8 +224,14 @@ export function validateDeploymentRehearsalEvidence(input: DeploymentRehearsalEv
   if (input.completedAtEpochMs < input.startedAtEpochMs) invalid("deployment rehearsal completes before it starts.");
   validateSteps(input.steps, "steps");
   validateChecks(input.postDeployChecks, "postDeployChecks");
-  validateDistinctOperationalEvidenceRoles([...input.steps, ...input.postDeployChecks], "deployment rehearsal");
   if (input.releaseEvidenceArtifactId !== null) nonEmpty(input.releaseEvidenceArtifactId, "releaseEvidenceArtifactId");
+  validateDistinctEvidenceCollections({
+    immutableArtifactIdentities: input.immutableArtifactIdentities,
+    migrationPrerequisiteEvidence: input.migrationPrerequisiteEvidence,
+    steps: input.steps.map((entry) => entry.evidenceId),
+    postDeployChecks: input.postDeployChecks.map((entry) => entry.evidenceId),
+    releaseEvidenceArtifact: input.releaseEvidenceArtifactId === null ? [] : [input.releaseEvidenceArtifactId],
+  }, "deployment rehearsal");
   validateTerminalDisposition(input.result, input.failureReason, "deployment rehearsal");
   if (input.result === "PASS" && [...input.steps, ...input.postDeployChecks].some((entry) => entry.result !== "PASS")) invalid("deployment rehearsal PASS requires every step and check to pass.");
   return cloneFreeze(input);
@@ -254,6 +252,7 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
   validateChecks(input.postRollbackChecks, "postRollbackChecks");
   const operationIds = new Set<string>();
   const operationEvidenceIds = new Set<string>();
+  const authoritativeReadbackIds = new Set<string>();
   for (const [index, operation] of input.uncertainOperations.entries()) {
     nonEmpty(operation.operationId, `uncertainOperations[${index}].operationId`);
     nonEmpty(operation.uncertaintySource, `uncertainOperations[${index}].uncertaintySource`);
@@ -262,10 +261,19 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
     operationalDisposition(operation.reconciliationDisposition, `uncertainOperations[${index}].reconciliationDisposition`);
     if (operationIds.has(operation.operationId)) invalid("uncertain operation identifiers must be unique.");
     if (operationEvidenceIds.has(operation.evidenceId)) invalid("uncertain operation evidence identities must be unique.");
+    if (authoritativeReadbackIds.has(operation.authoritativeReadbackId)) invalid("uncertain operation authoritative readback identities must be unique.");
     operationIds.add(operation.operationId);
     operationEvidenceIds.add(operation.evidenceId);
+    authoritativeReadbackIds.add(operation.authoritativeReadbackId);
   }
-  validateDistinctOperationalEvidenceRoles([...input.steps, ...input.postRollbackChecks, ...input.uncertainOperations], "rollback rehearsal");
+  validateDistinctEvidenceCollections({
+    compatibilityEvidence: input.compatibilityEvidence,
+    preservedAuthorityEvidence: input.preservedAuthorityEvidence,
+    steps: input.steps.map((entry) => entry.evidenceId),
+    postRollbackChecks: input.postRollbackChecks.map((entry) => entry.evidenceId),
+    uncertainOperationEvidence: input.uncertainOperations.map((entry) => entry.evidenceId),
+    authoritativeReadbacks: input.uncertainOperations.map((entry) => entry.authoritativeReadbackId),
+  }, "rollback rehearsal");
   validateTerminalDisposition(input.result, input.failureReason, "rollback rehearsal");
   if (input.result === "PASS" && [...input.steps, ...input.postRollbackChecks].some((entry) => entry.result !== "PASS")) invalid("rollback rehearsal PASS requires every step and check to pass.");
   if (input.result === "PASS" && input.uncertainOperations.some((operation) => operation.reconciliationDisposition !== "PASS")) invalid("rollback rehearsal PASS requires every uncertain operation to reconcile successfully.");
