@@ -102,6 +102,38 @@ function assertIndependentGateEvidenceIdentitiesAreUnique(gates: readonly Day7Re
   }
 }
 
+function assertIndependentGateEvidenceDoesNotAliasOperationalEvidence(
+  gates: readonly Day7ReleaseGateEvidence[],
+  deployment: DeploymentRehearsalEvidence,
+  rollback: RollbackRehearsalEvidence,
+  burnIn: BurnInEvidence,
+): void {
+  const operationalEvidenceIds = new Set<string>([
+    ...deployment.steps.map((item) => item.evidenceId),
+    ...deployment.postDeployChecks.map((item) => item.evidenceId),
+    ...rollback.steps.map((item) => item.evidenceId),
+    ...rollback.postRollbackChecks.map((item) => item.evidenceId),
+    ...rollback.uncertainOperations.map((item) => item.evidenceId),
+    ...burnIn.approvalOutcomes,
+    ...burnIn.injectedFailures,
+    ...burnIn.ownershipEvents,
+    ...burnIn.persistenceUncertaintyEvents,
+    ...burnIn.telemetryFailures,
+    ...burnIn.securityFindings,
+    ...burnIn.regressionEvidence,
+    ...burnIn.traceCompletenessEvidence,
+    ...burnIn.incidents,
+  ]);
+
+  for (const gate of gates) {
+    for (const evidenceId of gate.evidenceIds) {
+      if (operationalEvidenceIds.has(evidenceId)) {
+        invalid(`independent release-gate evidence identity ${evidenceId} aliases deployment, rollback, or burn-in operational evidence.`);
+      }
+    }
+  }
+}
+
 export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): Day7ReleaseReadinessEvidence {
   const deployment = validateDeploymentRehearsalEvidence(input.deployment);
   const rollback = validateRollbackRehearsalEvidence(input.rollback);
@@ -128,6 +160,7 @@ export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): D
   if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
   const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
   assertIndependentGateEvidenceIdentitiesAreUnique(independentGates);
+  assertIndependentGateEvidenceDoesNotAliasOperationalEvidence(independentGates, deployment, rollback, burnIn);
 
   const blockingGateIds: string[] = [];
   if (deployment.result !== "PASS") blockingGateIds.push("deployment");
