@@ -64,6 +64,12 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: aliased })).toThrow(`independent release-gate evidence identity ${first.evidenceIds[0]} is reused by ${first.gateId} and ${second.gateId}`);
   });
 
+  it("rejects independent release-gate evidence identity reuse from operational evidence", () => {
+    const aliased = gates();
+    aliased[0] = { ...aliased[0]!, evidenceIds: ["ownership-1"] };
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: aliased })).toThrow("independent release-gate evidence identity ownership-1 aliases deployment, rollback, or burn-in operational evidence");
+  });
+
   it("aggregates operational and required independent blockers without converting them to PASS", () => {
     const independentGates = gates().map((gate) => gate.gateId === "external-artifact-durability" ? { ...gate, disposition: "BLOCKED" as const, blockerReason: "external durability not proven" } : gate);
     const result = composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: { ...deployment(), result: "BLOCKED" as const, failureReason: "deployment approval pending" }, rollback: rollback(), burnIn: { ...burnIn(), endedAtEpochMs: null, finalDisposition: "IN_PROGRESS" as const }, independentGates });
