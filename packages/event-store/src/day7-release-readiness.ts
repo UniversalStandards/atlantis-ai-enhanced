@@ -109,11 +109,16 @@ function assertIndependentGateEvidenceDoesNotAliasOperationalEvidence(
   burnIn: BurnInEvidence,
 ): void {
   const operationalEvidenceIds = new Set<string>([
+    ...deployment.immutableArtifactIdentities,
+    ...deployment.migrationPrerequisiteEvidence,
     ...deployment.steps.map((item) => item.evidenceId),
     ...deployment.postDeployChecks.map((item) => item.evidenceId),
+    ...(deployment.releaseEvidenceArtifactId === null ? [] : [deployment.releaseEvidenceArtifactId]),
+    ...rollback.compatibilityEvidence,
+    ...rollback.preservedAuthorityEvidence,
     ...rollback.steps.map((item) => item.evidenceId),
     ...rollback.postRollbackChecks.map((item) => item.evidenceId),
-    ...rollback.uncertainOperations.map((item) => item.evidenceId),
+    ...rollback.uncertainOperations.flatMap((item) => [item.authoritativeReadbackId, item.evidenceId]),
     ...burnIn.approvalOutcomes,
     ...burnIn.injectedFailures,
     ...burnIn.ownershipEvents,
