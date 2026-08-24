@@ -190,6 +190,14 @@ function validateChecks(values: readonly OperationalCheckEvidence[], field: stri
   }
 }
 
+function validateDistinctOperationalEvidenceRoles(values: readonly { readonly evidenceId: string }[], field: string): void {
+  const evidenceIds = new Set<string>();
+  for (const value of values) {
+    if (evidenceIds.has(value.evidenceId)) invalid(`${field} evidence identities must be unique across operational roles.`);
+    evidenceIds.add(value.evidenceId);
+  }
+}
+
 function validateTerminalDisposition(result: OperationalEvidenceDisposition, failureReason: string | null, field: string): void {
   operationalDisposition(result, `${field} result`);
   if (result === "PASS") {
@@ -211,6 +219,7 @@ export function validateDeploymentRehearsalEvidence(input: DeploymentRehearsalEv
   if (input.completedAtEpochMs < input.startedAtEpochMs) invalid("deployment rehearsal completes before it starts.");
   validateSteps(input.steps, "steps");
   validateChecks(input.postDeployChecks, "postDeployChecks");
+  validateDistinctOperationalEvidenceRoles([...input.steps, ...input.postDeployChecks], "deployment rehearsal");
   if (input.releaseEvidenceArtifactId !== null) nonEmpty(input.releaseEvidenceArtifactId, "releaseEvidenceArtifactId");
   validateTerminalDisposition(input.result, input.failureReason, "deployment rehearsal");
   if (input.result === "PASS" && [...input.steps, ...input.postDeployChecks].some((entry) => entry.result !== "PASS")) invalid("deployment rehearsal PASS requires every step and check to pass.");
@@ -243,6 +252,7 @@ export function validateRollbackRehearsalEvidence(input: RollbackRehearsalEviden
     operationIds.add(operation.operationId);
     operationEvidenceIds.add(operation.evidenceId);
   }
+  validateDistinctOperationalEvidenceRoles([...input.steps, ...input.postRollbackChecks, ...input.uncertainOperations], "rollback rehearsal");
   validateTerminalDisposition(input.result, input.failureReason, "rollback rehearsal");
   if (input.result === "PASS" && [...input.steps, ...input.postRollbackChecks].some((entry) => entry.result !== "PASS")) invalid("rollback rehearsal PASS requires every step and check to pass.");
   if (input.result === "PASS" && input.uncertainOperations.some((operation) => operation.reconciliationDisposition !== "PASS")) invalid("rollback rehearsal PASS requires every uncertain operation to reconcile successfully.");
