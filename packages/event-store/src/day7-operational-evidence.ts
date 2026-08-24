@@ -134,6 +134,19 @@ function uniqueNonEmpty(values: readonly string[], field: string, allowEmpty = f
   return Object.freeze([...normalized]);
 }
 
+function validateDistinctEvidenceCollections(collections: Readonly<Record<string, readonly string[]>>, field: string): void {
+  const owners = new Map<string, string>();
+  for (const [role, values] of Object.entries(collections)) {
+    for (const evidenceId of values) {
+      const priorRole = owners.get(evidenceId);
+      if (priorRole !== undefined && priorRole !== role) {
+        invalid(`${field} evidence identities must be unique across evidence roles.`);
+      }
+      owners.set(evidenceId, role);
+    }
+  }
+}
+
 function cloneFreeze<T>(value: T): T {
   try {
     return Object.freeze(structuredClone(value));
@@ -284,6 +297,17 @@ export function validateBurnInEvidence(input: BurnInEvidence): BurnInEvidence {
     securityFindings: input.securityFindings,
     incidents: input.incidents,
   })) uniqueNonEmpty(values, field, true);
+  validateDistinctEvidenceCollections({
+    approvalOutcomes: input.approvalOutcomes,
+    injectedFailures: input.injectedFailures,
+    ownershipEvents: input.ownershipEvents,
+    persistenceUncertaintyEvents: input.persistenceUncertaintyEvents,
+    telemetryFailures: input.telemetryFailures,
+    securityFindings: input.securityFindings,
+    regressionEvidence: input.regressionEvidence,
+    traceCompletenessEvidence: input.traceCompletenessEvidence,
+    incidents: input.incidents,
+  }, "burn-in");
   const disposition = burnInDisposition(input.finalDisposition);
   if (disposition === "IN_PROGRESS") {
     if (input.endedAtEpochMs !== null) invalid("IN_PROGRESS burn-in must not have endedAtEpochMs.");
