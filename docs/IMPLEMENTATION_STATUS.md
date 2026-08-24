@@ -45,7 +45,7 @@ PR #10 remains draft because production-persistence acceptance and actual Day-7 
 
 ### Single next highest-leverage action
 
-Use the durable-persistence provider-evidence matrix to choose one concrete non-production durable-persistence candidate and complete its canonical candidate record for architecture/operations approval. In parallel, use the external release-artifact provider-evidence matrix to choose one concrete non-production artifact-storage candidate and complete its candidate record. Do not implement either provider-specific adapter until its approval record is complete.
+Use the durable-persistence provider-evidence matrix to choose exactly one concrete non-production durable-persistence candidate, complete `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval. Do not begin provider-specific durable-persistence implementation before that approval record is complete.
 
 ### Integration rule
 
