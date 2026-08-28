@@ -86,6 +86,19 @@ function requireNonBlank(field: string, value: unknown): string {
   return value.trim();
 }
 
+function requireCanonicalTimestamp(field: string, value: unknown): string {
+  const timestamp = requireNonBlank(field, value);
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) {
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(`${field} must be a canonical ISO timestamp`);
+  }
+  const canonical = new Date(parsed).toISOString();
+  if (timestamp !== canonical) {
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(`${field} must be a canonical ISO timestamp`);
+  }
+  return timestamp;
+}
+
 function validateApproval(approval: unknown): Readonly<DurablePersistenceCandidateApproval> {
   const record = requireRecord("approval", approval);
   rejectUnknownFields("approval", record, approvalFields);
@@ -94,10 +107,7 @@ function validateApproval(approval: unknown): Readonly<DurablePersistenceCandida
     throw new InvalidDurablePersistenceCandidateAuthorizationError("approval role must be architecture or operations");
   }
   const approvedBy = requireNonBlank(`${record.role}.approvedBy`, record.approvedBy);
-  const approvedAt = requireNonBlank(`${record.role}.approvedAt`, record.approvedAt);
-  if (!Number.isFinite(Date.parse(approvedAt))) {
-    throw new InvalidDurablePersistenceCandidateAuthorizationError(`${record.role}.approvedAt must be an ISO-compatible timestamp`);
-  }
+  const approvedAt = requireCanonicalTimestamp(`${record.role}.approvedAt`, record.approvedAt);
   return Object.freeze({ role: record.role, approvedBy, approvedAt });
 }
 
