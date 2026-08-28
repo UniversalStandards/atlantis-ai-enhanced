@@ -72,16 +72,41 @@ function requireNonBlank(field: string, value: unknown): string {
   return value.trim();
 }
 
+function requireRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidRecoveryOwnershipDurableAdapterRegistrationError(
+      "registration must be an object record",
+    );
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectUnsupportedRegistrationFields(record: Record<string, unknown>): void {
+  const allowed = new Set(["adapterId", "createHarness"]);
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) {
+      throw new InvalidRecoveryOwnershipDurableAdapterRegistrationError(
+        `registration contains unsupported field: ${key}`,
+      );
+    }
+  }
+}
+
 export function validateRecoveryOwnershipDurableAdapterRegistration(
-  registration: RecoveryOwnershipDurableAdapterRegistration,
+  registration: unknown,
 ): Readonly<RecoveryOwnershipDurableAdapterRegistration> {
-  requireNonBlank("adapterId", registration.adapterId);
-  if (typeof registration.createHarness !== "function") {
+  const record = requireRecord(registration);
+  rejectUnsupportedRegistrationFields(record);
+  const adapterId = requireNonBlank("adapterId", record.adapterId);
+  if (typeof record.createHarness !== "function") {
     throw new InvalidRecoveryOwnershipDurableAdapterRegistrationError(
       "createHarness must be a function",
     );
   }
-  return Object.freeze({ ...registration, adapterId: registration.adapterId.trim() });
+  return Object.freeze({
+    adapterId,
+    createHarness: record.createHarness as RecoveryOwnershipDurableAdapterRegistration["createHarness"],
+  });
 }
 
 /**
@@ -91,7 +116,7 @@ export function validateRecoveryOwnershipDurableAdapterRegistration(
  * This still does not authorize production enablement or prove conformance.
  */
 export function authorizeRecoveryOwnershipDurableAdapterRegistration(
-  registration: RecoveryOwnershipDurableAdapterRegistration,
+  registration: unknown,
   authorization: unknown,
 ): Readonly<AuthorizedRecoveryOwnershipDurableAdapterRegistration> {
   const validatedRegistration = validateRecoveryOwnershipDurableAdapterRegistration(registration);
