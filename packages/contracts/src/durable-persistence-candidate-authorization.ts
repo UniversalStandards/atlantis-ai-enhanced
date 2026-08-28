@@ -54,6 +54,30 @@ const requiredFields = [
   "decisionEvidence",
 ] as const satisfies readonly (keyof DurablePersistenceCandidateAuthorization)[];
 
+const approvalFields = ["role", "approvedBy", "approvedAt"] as const;
+const authorizationFields = [...requiredFields, "approvals"] as const;
+
+function requireRecord(field: string, value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(`${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function rejectUnknownFields(
+  field: string,
+  value: Readonly<Record<string, unknown>>,
+  allowedFields: readonly string[],
+): void {
+  const allowed = new Set(allowedFields);
+  const unknown = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(
+      `${field} contains unsupported field(s): ${unknown.sort().join(", ")}`,
+    );
+  }
+}
+
 function requireNonBlank(field: string, value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new InvalidDurablePersistenceCandidateAuthorizationError(`${field} must be a non-blank string`);
@@ -61,16 +85,19 @@ function requireNonBlank(field: string, value: unknown): string {
   return value.trim();
 }
 
-function validateApproval(approval: DurablePersistenceCandidateApproval): Readonly<DurablePersistenceCandidateApproval> {
-  if (approval.role !== "architecture" && approval.role !== "operations") {
+function validateApproval(approval: unknown): Readonly<DurablePersistenceCandidateApproval> {
+  const record = requireRecord("approval", approval);
+  rejectUnknownFields("approval", record, approvalFields);
+
+  if (record.role !== "architecture" && record.role !== "operations") {
     throw new InvalidDurablePersistenceCandidateAuthorizationError("approval role must be architecture or operations");
   }
-  const approvedBy = requireNonBlank(`${approval.role}.approvedBy`, approval.approvedBy);
-  const approvedAt = requireNonBlank(`${approval.role}.approvedAt`, approval.approvedAt);
+  const approvedBy = requireNonBlank(`${record.role}.approvedBy`, record.approvedBy);
+  const approvedAt = requireNonBlank(`${record.role}.approvedAt`, record.approvedAt);
   if (!Number.isFinite(Date.parse(approvedAt))) {
-    throw new InvalidDurablePersistenceCandidateAuthorizationError(`${approval.role}.approvedAt must be an ISO-compatible timestamp`);
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(`${record.role}.approvedAt must be an ISO-compatible timestamp`);
   }
-  return Object.freeze({ role: approval.role, approvedBy, approvedAt });
+  return Object.freeze({ role: record.role, approvedBy, approvedAt });
 }
 
 /**
@@ -79,15 +106,18 @@ function validateApproval(approval: DurablePersistenceCandidateApproval): Readon
  * prove provider semantics, or substitute for executable conformance evidence.
  */
 export function validateDurablePersistenceCandidateAuthorization(
-  authorization: DurablePersistenceCandidateAuthorization,
+  authorization: unknown,
 ): Readonly<DurablePersistenceCandidateAuthorization> {
-  const normalized = { ...authorization } as Record<string, unknown>;
-  for (const field of requiredFields) normalized[field] = requireNonBlank(field, authorization[field]);
+  const record = requireRecord("authorization", authorization);
+  rejectUnknownFields("authorization", record, authorizationFields);
 
-  if (!Array.isArray(authorization.approvals)) {
+  const normalized: Record<string, string> = {};
+  for (const field of requiredFields) normalized[field] = requireNonBlank(field, record[field]);
+
+  if (!Array.isArray(record.approvals)) {
     throw new InvalidDurablePersistenceCandidateAuthorizationError("approvals must be an array");
   }
-  const approvals = authorization.approvals.map(validateApproval);
+  const approvals = record.approvals.map(validateApproval);
   for (const role of ["architecture", "operations"] as const) {
     if (approvals.filter((approval) => approval.role === role).length !== 1) {
       throw new InvalidDurablePersistenceCandidateAuthorizationError(`exactly one ${role} approval is required`);
@@ -95,7 +125,7 @@ export function validateDurablePersistenceCandidateAuthorization(
   }
 
   return Object.freeze({
-    ...(normalized as unknown as DurablePersistenceCandidateAuthorization),
+    ...(normalized as unknown as Omit<DurablePersistenceCandidateAuthorization, "approvals">),
     approvals: Object.freeze(approvals),
   });
 }
