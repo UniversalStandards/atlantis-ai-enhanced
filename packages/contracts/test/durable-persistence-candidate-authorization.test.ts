@@ -69,13 +69,27 @@ describe("durable persistence candidate authorization", () => {
       .toThrow(/exactly one architecture approval/);
   });
 
-  it("rejects malformed approval timestamps", () => {
-    const approvals = [
+  it("requires canonical approval timestamps", () => {
+    const malformed = [
       { ...candidate().approvals[0]!, approvedAt: "not-a-time" },
       candidate().approvals[1]!,
     ];
-    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals }))
-      .toThrow(/approvedAt must be an ISO-compatible timestamp/);
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals: malformed }))
+      .toThrow(/approvedAt must be a canonical ISO timestamp/);
+
+    const dateOnly = [
+      { ...candidate().approvals[0]!, approvedAt: "2026-08-28" },
+      candidate().approvals[1]!,
+    ];
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals: dateOnly }))
+      .toThrow(/approvedAt must be a canonical ISO timestamp/);
+
+    const offsetEquivalent = [
+      { ...candidate().approvals[0]!, approvedAt: "2026-08-28T08:00:00-07:00" },
+      candidate().approvals[1]!,
+    ];
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals: offsetEquivalent }))
+      .toThrow(/approvedAt must be a canonical ISO timestamp/);
   });
 
   it("rejects unsupported top-level fields instead of preserving secret-bearing input", () => {
