@@ -29,6 +29,7 @@ function createStore() {
 function authorization(candidateId = "durable-test-adapter") {
   return {
     candidateId,
+    executionEnvironment: "non-production",
     productSubstrate: "approved non-production substrate",
     versionServiceMode: "approved exact version/service mode",
     driverSdk: "approved exact driver and version",
