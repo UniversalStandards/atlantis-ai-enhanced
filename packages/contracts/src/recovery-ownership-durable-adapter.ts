@@ -4,6 +4,10 @@ import type {
   RecoveryOwnershipStore,
 } from "./recovery-ownership-store.js";
 import type { RecoveryOwnershipLeaseEvidence } from "./recovery-ownership-lease-evidence.js";
+import {
+  validateDurablePersistenceCandidateAuthorization,
+  type DurablePersistenceCandidateAuthorization,
+} from "./durable-persistence-candidate-authorization.js";
 
 export type RecoveryOwnershipMutationKind = "acquire" | "renew" | "release";
 export type RecoveryOwnershipFailurePoint = "pre-commit" | "post-commit-pre-ack";
@@ -47,6 +51,11 @@ export interface RecoveryOwnershipDurableAdapterRegistration {
     | Promise<RecoveryOwnershipDurableAdapterHarness>;
 }
 
+export interface AuthorizedRecoveryOwnershipDurableAdapterRegistration {
+  readonly registration: Readonly<RecoveryOwnershipDurableAdapterRegistration>;
+  readonly authorization: Readonly<DurablePersistenceCandidateAuthorization>;
+}
+
 export class InvalidRecoveryOwnershipDurableAdapterRegistrationError extends Error {
   public constructor(message: string) {
     super(message);
@@ -73,6 +82,29 @@ export function validateRecoveryOwnershipDurableAdapterRegistration(
     );
   }
   return Object.freeze({ ...registration, adapterId: registration.adapterId.trim() });
+}
+
+/**
+ * Admission boundary for a concrete durable adapter after architecture/operations
+ * approval. The adapter identity must be exactly the approved candidate identity,
+ * preventing a valid decision record from being replayed onto another adapter.
+ * This still does not authorize production enablement or prove conformance.
+ */
+export function authorizeRecoveryOwnershipDurableAdapterRegistration(
+  registration: RecoveryOwnershipDurableAdapterRegistration,
+  authorization: unknown,
+): Readonly<AuthorizedRecoveryOwnershipDurableAdapterRegistration> {
+  const validatedRegistration = validateRecoveryOwnershipDurableAdapterRegistration(registration);
+  const validatedAuthorization = validateDurablePersistenceCandidateAuthorization(authorization);
+  if (validatedRegistration.adapterId !== validatedAuthorization.candidateId) {
+    throw new InvalidRecoveryOwnershipDurableAdapterRegistrationError(
+      "adapterId must exactly match the approved durable-persistence candidateId",
+    );
+  }
+  return Object.freeze({
+    registration: validatedRegistration,
+    authorization: validatedAuthorization,
+  });
 }
 
 export interface RecoveryOwnershipDurableObservation {
