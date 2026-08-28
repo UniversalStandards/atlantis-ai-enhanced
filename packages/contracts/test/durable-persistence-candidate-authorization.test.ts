@@ -64,4 +64,22 @@ describe("durable persistence candidate authorization", () => {
     expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals }))
       .toThrow(/approvedAt must be an ISO-compatible timestamp/);
   });
+
+  it("rejects unsupported top-level fields instead of preserving secret-bearing input", () => {
+    const authorization = { ...candidate(), connectionString: "must-not-survive-validation" };
+    expect(() => validateDurablePersistenceCandidateAuthorization(authorization))
+      .toThrow(/authorization contains unsupported field\(s\): connectionString/);
+  });
+
+  it("rejects malformed or extended approval records at the runtime boundary", () => {
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals: [null, candidate().approvals[1]] }))
+      .toThrow(/approval must be an object/);
+
+    const approvals = [
+      { ...candidate().approvals[0]!, token: "must-not-survive-validation" },
+      candidate().approvals[1]!,
+    ];
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals }))
+      .toThrow(/approval contains unsupported field\(s\): token/);
+  });
 });
