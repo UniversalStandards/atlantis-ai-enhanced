@@ -10,8 +10,10 @@ export {
 
 export {
   InvalidRecoveryOwnershipDurableAdapterRegistrationError,
+  authorizeRecoveryOwnershipDurableAdapterRegistration,
   observeRecoveryOwnershipDurably,
   validateRecoveryOwnershipDurableAdapterRegistration,
+  type AuthorizedRecoveryOwnershipDurableAdapterRegistration,
   type DurableRecoveryOwnershipAcquireRequest,
   type DurableRecoveryOwnershipLeaseEvidence,
   type RecoveryOwnershipDurableAdapterCapabilities,
