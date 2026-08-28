@@ -19,6 +19,7 @@ export interface DurablePersistenceCandidateAuthorization {
   readonly credentialClass: string;
   readonly networkBoundary: string;
   readonly featureGate: string;
+  readonly featureGateDefault: "disabled";
   readonly rollbackDisable: string;
   readonly semanticMappingEvidence: string;
   readonly errorMappingEvidence: string;
@@ -55,7 +56,7 @@ const requiredFields = [
 ] as const satisfies readonly (keyof DurablePersistenceCandidateAuthorization)[];
 
 const approvalFields = ["role", "approvedBy", "approvedAt"] as const;
-const authorizationFields = [...requiredFields, "approvals"] as const;
+const authorizationFields = [...requiredFields, "featureGateDefault", "approvals"] as const;
 
 function requireRecord(field: string, value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -114,6 +115,12 @@ export function validateDurablePersistenceCandidateAuthorization(
   const normalized: Record<string, string> = {};
   for (const field of requiredFields) normalized[field] = requireNonBlank(field, record[field]);
 
+  if (record.featureGateDefault !== "disabled") {
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(
+      "featureGateDefault must be disabled for non-production candidate authorization",
+    );
+  }
+
   if (!Array.isArray(record.approvals)) {
     throw new InvalidDurablePersistenceCandidateAuthorizationError("approvals must be an array");
   }
@@ -125,7 +132,8 @@ export function validateDurablePersistenceCandidateAuthorization(
   }
 
   return Object.freeze({
-    ...(normalized as unknown as Omit<DurablePersistenceCandidateAuthorization, "approvals">),
+    ...(normalized as unknown as Omit<DurablePersistenceCandidateAuthorization, "featureGateDefault" | "approvals">),
+    featureGateDefault: "disabled",
     approvals: Object.freeze(approvals),
   });
 }
