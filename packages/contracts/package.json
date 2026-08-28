@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./approval-control": "./src/approval-control.ts",
+    "./browser-release-adapter-candidate-authorization": "./src/browser-release-adapter-candidate-authorization.ts",
     "./durable-append-outcome": "./src/durable-append-outcome.ts",
     "./durable-persistence-candidate-authorization": "./src/durable-persistence-candidate-authorization.ts",
     "./external-release-artifact-candidate-authorization": "./src/external-release-artifact-candidate-authorization.ts",
