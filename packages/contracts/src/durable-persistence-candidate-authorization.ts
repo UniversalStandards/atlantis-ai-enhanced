@@ -8,6 +8,7 @@ export interface DurablePersistenceCandidateApproval {
 
 export interface DurablePersistenceCandidateAuthorization {
   readonly candidateId: string;
+  readonly executionEnvironment: "non-production";
   readonly productSubstrate: string;
   readonly versionServiceMode: string;
   readonly driverSdk: string;
@@ -56,7 +57,7 @@ const requiredFields = [
 ] as const satisfies readonly (keyof DurablePersistenceCandidateAuthorization)[];
 
 const approvalFields = ["role", "approvedBy", "approvedAt"] as const;
-const authorizationFields = [...requiredFields, "featureGateDefault", "approvals"] as const;
+const authorizationFields = [...requiredFields, "executionEnvironment", "featureGateDefault", "approvals"] as const;
 
 function requireRecord(field: string, value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -125,6 +126,12 @@ export function validateDurablePersistenceCandidateAuthorization(
   const normalized: Record<string, string> = {};
   for (const field of requiredFields) normalized[field] = requireNonBlank(field, record[field]);
 
+  if (record.executionEnvironment !== "non-production") {
+    throw new InvalidDurablePersistenceCandidateAuthorizationError(
+      "executionEnvironment must be non-production; production authorization is a separate gate",
+    );
+  }
+
   if (record.featureGateDefault !== "disabled") {
     throw new InvalidDurablePersistenceCandidateAuthorizationError(
       "featureGateDefault must be disabled for non-production candidate authorization",
@@ -142,7 +149,8 @@ export function validateDurablePersistenceCandidateAuthorization(
   }
 
   return Object.freeze({
-    ...(normalized as unknown as Omit<DurablePersistenceCandidateAuthorization, "featureGateDefault" | "approvals">),
+    ...(normalized as unknown as Omit<DurablePersistenceCandidateAuthorization, "executionEnvironment" | "featureGateDefault" | "approvals">),
+    executionEnvironment: "non-production",
     featureGateDefault: "disabled",
     approvals: Object.freeze(approvals),
   });
