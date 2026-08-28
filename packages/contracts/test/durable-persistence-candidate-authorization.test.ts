@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  InvalidDurablePersistenceCandidateAuthorizationError,
+  validateDurablePersistenceCandidateAuthorization,
+  type DurablePersistenceCandidateAuthorization,
+} from "../src/durable-persistence-candidate-authorization.js";
+
+function candidate(): DurablePersistenceCandidateAuthorization {
+  return {
+    candidateId: "candidate-nonprod-1",
+    productSubstrate: "approved substrate",
+    versionServiceMode: "approved version/mode",
+    driverSdk: "approved frozen dependency",
+    authoritativeTopology: "approved non-production topology",
+    consistencyMode: "documented consistency semantics",
+    transactionPrimitive: "documented conditional/transaction primitive",
+    independentClientTopology: "independent clients share authoritative state",
+    restartBoundary: "client process recreated",
+    credentialClass: "non-secret workload identity class",
+    networkBoundary: "approved non-secret network boundary",
+    featureGate: "disabled by default",
+    rollbackDisable: "disable adapter registration",
+    semanticMappingEvidence: "architecture evidence reference",
+    errorMappingEvidence: "provider error mapping reference",
+    failureInjectionPlan: "deterministic failure-injection plan reference",
+    decisionEvidence: "approved candidate decision record reference",
+    approvals: [
+      { role: "architecture", approvedBy: "architecture-reviewer", approvedAt: "2026-08-28T15:00:00.000Z" },
+      { role: "operations", approvedBy: "operations-reviewer", approvedAt: "2026-08-28T15:01:00.000Z" },
+    ],
+  };
+}
+
+describe("durable persistence candidate authorization", () => {
+  it("normalizes and freezes a complete provider-neutral authorization", () => {
+    const authorization = validateDurablePersistenceCandidateAuthorization(candidate());
+    expect(authorization.candidateId).toBe("candidate-nonprod-1");
+    expect(authorization.approvals.map(({ role }) => role)).toEqual(["architecture", "operations"]);
+    expect(Object.isFrozen(authorization)).toBe(true);
+    expect(Object.isFrozen(authorization.approvals)).toBe(true);
+  });
+
+  it("fails closed when a required decision field is blank", () => {
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), transactionPrimitive: " " }))
+      .toThrow(InvalidDurablePersistenceCandidateAuthorizationError);
+  });
+
+  it("requires exactly one architecture and one operations approval", () => {
+    const architectureOnly = candidate().approvals.slice(0, 1);
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals: architectureOnly }))
+      .toThrow(/exactly one operations approval/);
+
+    const duplicateArchitecture = [...candidate().approvals, candidate().approvals[0]!];
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals: duplicateArchitecture }))
+      .toThrow(/exactly one architecture approval/);
+  });
+
+  it("rejects malformed approval timestamps", () => {
+    const approvals = [
+      { ...candidate().approvals[0]!, approvedAt: "not-a-time" },
+      candidate().approvals[1]!,
+    ];
+    expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), approvals }))
+      .toThrow(/approvedAt must be an ISO-compatible timestamp/);
+  });
+});
