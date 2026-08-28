@@ -7,22 +7,21 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `8631df097e1204e49fa7a6500bb8f0220bffca60`.
-- Current verified implementation head before this documentation reconciliation: `d8a736e34fc95612683e785fe3e930a5a6e75654`.
-- Since the prior verification, the sprint advanced three commits confined to durable-persistence candidate admission and its tests:
-  - `345d61eb7cc8916a22a11fa3c477720f74b1ea29` — enforce disabled durable candidate admission.
-  - `0f315d653b64bbe8b9f1880853545c320af2d1e6` — cover disabled durable candidate admission.
-  - `d8a736e34fc95612683e785fe3e930a5a6e75654` — bind durable adapter admission to the disabled candidate state.
+- Prior verified documentation head: `b319f3e0893787e479fbb24a6caaa425051e626f`.
+- Current verified implementation head before this documentation reconciliation: `7db1eb74a1321d03f2c44b35c4ad0b08a99d3cea`.
+- Since the prior verification, the sprint advanced two commits confined to durable-persistence candidate approval timestamp validation and its tests:
+  - `4004f5c724523c5f703052ee82d0c2668aedda9a` — require canonical approval timestamps.
+  - `7db1eb74a1321d03f2c44b35c4ad0b08a99d3cea` — reject ambiguous approval timestamp representations.
 
 ### Independent verification findings
 
-The new slice is fail-closed and consistent with the existing architecture gate. `DurablePersistenceCandidateAuthorization` now carries an explicit `featureGateDefault: "disabled"` field. Runtime validation rejects omitted or non-disabled values, and the validated authorization reconstructs the field as the literal disabled state. Adapter admission continues to require exact `adapterId === candidateId` binding and now verifies that admitted authorization remains disabled by default.
+The new slice is fail-closed and consistent with the existing candidate-authorization boundary. Architecture and operations approval timestamps must now be exact canonical UTC ISO strings as produced by `Date.prototype.toISOString()`. Malformed timestamps, date-only values, and offset-equivalent representations are rejected rather than normalized implicitly. This reduces ambiguity in serialized approval evidence while preserving the existing exact-one-approval-per-role, unknown-field rejection, secret-bearing-input containment, disabled-by-default feature gate, and candidate-to-adapter identity binding.
 
-No runtime, security, provider-binding, credential, network, deployment-authority, persistence-ordering, trace-schema, or workflow-permission defect was found in the incoming implementation.
+Independent review found no runtime, security, provider-binding, credential, network, deployment-authority, persistence-ordering, trace-schema, or workflow-permission defect in the incoming implementation.
 
-The concrete integration defect was canonical evidence drift: this document, PR #10, and Issue #8 still reported the prior **837/837** baseline even though current-head CI is green at **313/313 contracts + 525/525 event-store = 838/838 tests** and durable candidate authorization increased to **7/7 green**.
+The concrete integration defect was canonical status drift: this document, PR #10, and Issue #8 still identified the preceding disabled-default admission slice as current even though the branch had advanced two commits.
 
-Current head-associated PR-merge run `33197571622` passed on synthetic merge `ec65f532c311e374f1593b7d32a365794aa1bd47`.
+Head-associated PR-merge run `33201937465` passed for implementation head `7db1eb74a1321d03f2c44b35c4ad0b08a99d3cea`, validating synthetic merge `a022b7f528cca9643488beb7719f56e80bc58f3f`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
@@ -44,7 +43,7 @@ Current head-associated PR-merge run `33197571622` passed on synthetic merge `ec
 
 ### Architecture, security, trace, and evidence boundary
 
-The durable candidate authorization and candidate-to-adapter registration binding remain admission/completeness boundaries only. The new disabled-default invariant prevents an approved non-production candidate from being admitted as enabled, but it does **not** select a provider, prove transaction/consistency semantics, authorize credentials/networking/deployment, authorize production enablement, or constitute real durability/provider-failover evidence.
+Canonical approval timestamps strengthen deterministic evidence identity only. Candidate authorization, disabled-default enforcement, and candidate-to-adapter registration binding remain admission/completeness boundaries; they do **not** select a provider, prove transaction/consistency semantics, authorize credentials/networking/deployment, authorize production enablement, or constitute real durability/provider-failover evidence.
 
 `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** and its architecture/operations decision remains **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the canonical record is fully populated with non-secret evidence, and explicit architecture/operations approval is obtained.
 
@@ -65,4 +64,4 @@ Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to choose exactly one con
 
 ### Integration rule
 
-Do not repeat completed provider-neutral contracts, candidate authorization, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, gate construction, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, process-local fixtures, capability declarations, or documentation records as real durability or provider-selection proof. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed provider-neutral contracts, candidate authorization, canonical approval timestamp validation, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, gate construction, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, process-local fixtures, capability declarations, or documentation records as real durability or provider-selection proof. Nothing is complete without build, test, execution, and trace evidence.
