@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   InMemoryRecoveryOwnershipStore,
   InvalidRecoveryOwnershipDurableAdapterRegistrationError,
+  authorizeRecoveryOwnershipDurableAdapterRegistration,
   observeRecoveryOwnershipDurably,
   validateRecoveryOwnershipDurableAdapterRegistration,
   type RecoveryOwnershipDurableAdapterRegistration,
@@ -25,17 +26,68 @@ function createStore() {
   };
 }
 
+function authorization(candidateId = "durable-test-adapter") {
+  return {
+    candidateId,
+    productSubstrate: "approved non-production substrate",
+    versionServiceMode: "approved exact version/service mode",
+    driverSdk: "approved exact driver and version",
+    authoritativeTopology: "approved authoritative topology",
+    consistencyMode: "approved consistency semantics",
+    transactionPrimitive: "approved atomic primitive",
+    independentClientTopology: "approved independent-client topology",
+    restartBoundary: "approved restart boundary",
+    credentialClass: "approved non-secret credential class",
+    networkBoundary: "approved non-secret network boundary",
+    featureGate: "disabled by default",
+    rollbackDisable: "remove registration and disable feature gate",
+    semanticMappingEvidence: "approved semantic mapping evidence",
+    errorMappingEvidence: "approved error mapping evidence",
+    failureInjectionPlan: "approved deterministic failure-injection plan",
+    decisionEvidence: "approved architecture decision evidence",
+    approvals: [
+      { role: "architecture", approvedBy: "architecture-reviewer", approvedAt: "2026-08-28T16:00:00.000Z" },
+      { role: "operations", approvedBy: "operations-reviewer", approvedAt: "2026-08-28T16:01:00.000Z" },
+    ],
+  } as const;
+}
+
+function registration(adapterId = "durable-test-adapter"): RecoveryOwnershipDurableAdapterRegistration {
+  return {
+    adapterId,
+    createHarness: async () => {
+      throw new Error("not invoked by registration validation");
+    },
+  };
+}
+
 describe("durable recovery ownership adapter boundary", () => {
   it("normalizes and freezes a valid adapter registration", () => {
-    const registration = validateRecoveryOwnershipDurableAdapterRegistration({
-      adapterId: "  durable-test-adapter  ",
-      createHarness: async () => {
-        throw new Error("not invoked by registration validation");
-      },
-    });
+    const valid = registration("  durable-test-adapter  ");
+    const normalized = validateRecoveryOwnershipDurableAdapterRegistration(valid);
 
-    expect(registration.adapterId).toBe("durable-test-adapter");
-    expect(Object.isFrozen(registration)).toBe(true);
+    expect(normalized.adapterId).toBe("durable-test-adapter");
+    expect(Object.isFrozen(normalized)).toBe(true);
+  });
+
+  it("binds an admitted durable adapter to exactly its approved candidate identity", () => {
+    const admitted = authorizeRecoveryOwnershipDurableAdapterRegistration(
+      registration(),
+      authorization(),
+    );
+
+    expect(admitted.registration.adapterId).toBe("durable-test-adapter");
+    expect(admitted.authorization.candidateId).toBe("durable-test-adapter");
+    expect(Object.isFrozen(admitted)).toBe(true);
+  });
+
+  it("rejects replaying an approved candidate record onto a different adapter", () => {
+    expect(() =>
+      authorizeRecoveryOwnershipDurableAdapterRegistration(
+        registration("different-adapter"),
+        authorization("approved-adapter"),
+      ),
+    ).toThrow("adapterId must exactly match the approved durable-persistence candidateId");
   });
 
   it("fails closed on blank adapter identity", () => {
