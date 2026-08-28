@@ -9,6 +9,7 @@ import {
 function candidate(): DurablePersistenceCandidateAuthorization {
   return {
     candidateId: "candidate-nonprod-1",
+    executionEnvironment: "non-production",
     productSubstrate: "approved substrate",
     versionServiceMode: "approved version/mode",
     driverSdk: "approved frozen dependency",
@@ -37,6 +38,7 @@ describe("durable persistence candidate authorization", () => {
   it("normalizes and freezes a complete provider-neutral authorization", () => {
     const authorization = validateDurablePersistenceCandidateAuthorization(candidate());
     expect(authorization.candidateId).toBe("candidate-nonprod-1");
+    expect(authorization.executionEnvironment).toBe("non-production");
     expect(authorization.featureGateDefault).toBe("disabled");
     expect(authorization.approvals.map(({ role }) => role)).toEqual(["architecture", "operations"]);
     expect(Object.isFrozen(authorization)).toBe(true);
@@ -46,6 +48,17 @@ describe("durable persistence candidate authorization", () => {
   it("fails closed when a required decision field is blank", () => {
     expect(() => validateDurablePersistenceCandidateAuthorization({ ...candidate(), transactionPrimitive: " " }))
       .toThrow(InvalidDurablePersistenceCandidateAuthorizationError);
+  });
+
+  it("limits this admission boundary to non-production execution", () => {
+    expect(() => validateDurablePersistenceCandidateAuthorization({
+      ...candidate(),
+      executionEnvironment: "production",
+    })).toThrow(/executionEnvironment must be non-production/);
+
+    const { executionEnvironment: _omitted, ...withoutEnvironment } = candidate();
+    expect(() => validateDurablePersistenceCandidateAuthorization(withoutEnvironment))
+      .toThrow(/executionEnvironment must be non-production/);
   });
 
   it("requires the admitted candidate to remain disabled by default", () => {
