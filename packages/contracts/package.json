@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./approval-control": "./src/approval-control.ts",
     "./durable-append-outcome": "./src/durable-append-outcome.ts",
+    "./durable-persistence-candidate-authorization": "./src/durable-persistence-candidate-authorization.ts",
     "./execution-control": "./src/execution-control.ts",
     "./external-effect": "./src/external-effect.ts",
     "./external-effect-execution": "./src/external-effect-execution.ts",
