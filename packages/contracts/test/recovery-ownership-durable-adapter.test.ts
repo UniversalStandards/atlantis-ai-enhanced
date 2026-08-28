@@ -39,7 +39,8 @@ function authorization(candidateId = "durable-test-adapter") {
     restartBoundary: "approved restart boundary",
     credentialClass: "approved non-secret credential class",
     networkBoundary: "approved non-secret network boundary",
-    featureGate: "disabled by default",
+    featureGate: "candidate registration control",
+    featureGateDefault: "disabled",
     rollbackDisable: "remove registration and disable feature gate",
     semanticMappingEvidence: "approved semantic mapping evidence",
     errorMappingEvidence: "approved error mapping evidence",
@@ -78,6 +79,7 @@ describe("durable recovery ownership adapter boundary", () => {
 
     expect(admitted.registration.adapterId).toBe("durable-test-adapter");
     expect(admitted.authorization.candidateId).toBe("durable-test-adapter");
+    expect(admitted.authorization.featureGateDefault).toBe("disabled");
     expect(Object.isFrozen(admitted)).toBe(true);
   });
 
@@ -137,7 +139,6 @@ describe("durable recovery ownership adapter boundary", () => {
       adapterId: "durable-test-adapter",
       createHarness: null,
     } as unknown as RecoveryOwnershipDurableAdapterRegistration;
-
     expect(() => validateRecoveryOwnershipDurableAdapterRegistration(invalid)).toThrow(
       "createHarness must be a function",
     );
