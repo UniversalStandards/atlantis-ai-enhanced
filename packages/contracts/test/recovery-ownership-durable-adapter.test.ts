@@ -90,6 +90,37 @@ describe("durable recovery ownership adapter boundary", () => {
     ).toThrow("adapterId must exactly match the approved durable-persistence candidateId");
   });
 
+  it("rejects undeclared registration fields instead of preserving secret-bearing metadata", () => {
+    const invalid = {
+      ...registration(),
+      connectionString: "postgres://secret-bearing-value",
+    };
+
+    expect(() => validateRecoveryOwnershipDurableAdapterRegistration(invalid)).toThrow(
+      "registration contains unsupported field: connectionString",
+    );
+  });
+
+  it("fails closed on malformed runtime registration objects", () => {
+    expect(() => validateRecoveryOwnershipDurableAdapterRegistration(null)).toThrow(
+      "registration must be an object record",
+    );
+    expect(() => validateRecoveryOwnershipDurableAdapterRegistration([])).toThrow(
+      "registration must be an object record",
+    );
+  });
+
+  it("does not admit registration extensions through candidate authorization", () => {
+    const extended = {
+      ...registration(),
+      credential: "secret-bearing-runtime-value",
+    };
+
+    expect(() =>
+      authorizeRecoveryOwnershipDurableAdapterRegistration(extended, authorization()),
+    ).toThrow("registration contains unsupported field: credential");
+  });
+
   it("fails closed on blank adapter identity", () => {
     expect(() =>
       validateRecoveryOwnershipDurableAdapterRegistration({
