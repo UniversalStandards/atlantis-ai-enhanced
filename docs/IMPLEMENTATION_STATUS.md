@@ -7,34 +7,33 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Latest verified implementation correction head: `c3bb3219b8b28e75b8d5abba95cabda45373d4c0`.
-- Since prior verified documentation head `dcfaa21fa14508e7e737c2f8300c40cfa5c1f7e1`, the sprint advanced three incoming commits to `519cfe7c92aa9e13d51c171d5b72da15046c785f`, confined to the durable recovery-ownership adapter contract and tests.
-- The incoming slice added candidate-to-adapter admission binding: a durable adapter registration may be admitted only when its `adapterId` exactly matches the approved durable-persistence `candidateId`.
-- Incoming head-associated PR-merge run `33192667086` passed on synthetic merge `07193b7f716a3087e7cc6e2cd51c7a6f431bd1af` at **309/309 contracts + 525/525 event-store = 834/834 tests**.
+- Prior verified documentation head: `8631df097e1204e49fa7a6500bb8f0220bffca60`.
+- Current verified implementation head before this documentation reconciliation: `d8a736e34fc95612683e785fe3e930a5a6e75654`.
+- Since the prior verification, the sprint advanced three commits confined to durable-persistence candidate admission and its tests:
+  - `345d61eb7cc8916a22a11fa3c477720f74b1ea29` — enforce disabled durable candidate admission.
+  - `0f315d653b64bbe8b9f1880853545c320af2d1e6` — cover disabled durable candidate admission.
+  - `d8a736e34fc95612683e785fe3e930a5a6e75654` — bind durable adapter admission to the disabled candidate state.
 
-### Independent verification findings and corrections
+### Independent verification findings
 
-Independent review found one concrete containment/security defect in the new registration admission boundary:
+The new slice is fail-closed and consistent with the existing architecture gate. `DurablePersistenceCandidateAuthorization` now carries an explicit `featureGateDefault: "disabled"` field. Runtime validation rejects omitted or non-disabled values, and the validated authorization reconstructs the field as the literal disabled state. Adapter admission continues to require exact `adapterId === candidateId` binding and now verifies that admitted authorization remains disabled by default.
 
-1. `validateRecoveryOwnershipDurableAdapterRegistration` normalized by spreading the caller-supplied runtime registration object. Undeclared fields could therefore survive into the admitted registration, including secret-bearing metadata such as a connection string or credential value. This repeated the same class of defect already corrected in the durable candidate-authorization boundary.
+No runtime, security, provider-binding, credential, network, deployment-authority, persistence-ordering, trace-schema, or workflow-permission defect was found in the incoming implementation.
 
-Corrections were intentionally narrow and reversible:
+The concrete integration defect was canonical evidence drift: this document, PR #10, and Issue #8 still reported the prior **837/837** baseline even though current-head CI is green at **313/313 contracts + 525/525 event-store = 838/838 tests** and durable candidate authorization increased to **7/7 green**.
 
-- `c5b26f9510d08268028aeb2b085b67b40cebabca` (`fix(contracts): contain durable adapter registration fields`) changes registration validation to accept `unknown`, require an object record, reject unsupported fields, emit controlled domain errors for malformed runtime input, and reconstruct the validated registration strictly from `adapterId` and `createHarness` rather than preserving caller extras.
-- `c3bb3219b8b28e75b8d5abba95cabda45373d4c0` (`test(contracts): cover durable adapter registration containment`) adds direct regressions for undeclared secret-bearing registration fields, malformed runtime registration objects, and registration extension through candidate authorization.
-
-Corrected head-associated PR-merge run `33194885622` passed on synthetic merge `8329be7f5127e03fbcfda4988553f8393f7920f0`.
+Current head-associated PR-merge run `33197571622` passed on synthetic merge `ec65f532c311e374f1593b7d32a365794aa1bd47`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
 - SEC-20 vulnerability audit: `0 critical / 0 high / 0 moderate / 0 low / 0 info`.
 - Dependency inventory validation: passed.
 - Contracts and event-store typechecks: passed.
-- Contracts: **312/312** across 52 files.
+- Contracts: **313/313** across 52 files.
 - Event store: **525/525** across 95 files.
-- Total: **837/837**.
+- Total: **838/838**.
 - Durable recovery-ownership adapter boundary: **10/10 green**.
-- Durable candidate authorization: **6/6 green**.
+- Durable candidate authorization: **7/7 green**.
 - Day-7 operational evidence: **16/16 green**.
 - Day-7 release-readiness composition: **17/17 green**.
 - Readiness-artifact repository: **4/4 green**.
@@ -45,11 +44,11 @@ Corrected head-associated PR-merge run `33194885622` passed on synthetic merge `
 
 ### Architecture, security, trace, and evidence boundary
 
-The durable candidate authorization and candidate-to-adapter registration binding are admission boundaries only. They do **not** select a provider, prove provider transaction/consistency semantics, authorize credentials/networking/deployment, authorize production enablement, or constitute real durability/provider-failover evidence.
+The durable candidate authorization and candidate-to-adapter registration binding remain admission/completeness boundaries only. The new disabled-default invariant prevents an approved non-production candidate from being admitted as enabled, but it does **not** select a provider, prove transaction/consistency semantics, authorize credentials/networking/deployment, authorize production enablement, or constitute real durability/provider-failover evidence.
 
 `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** and its architecture/operations decision remains **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the canonical record is fully populated with non-secret evidence, and explicit architecture/operations approval is obtained.
 
-The correction introduces no event-store runtime change, trace-schema change, persistence-ordering change, production credential, network path, deployment authority, provider/database binding, or workflow-permission expansion. Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, external-artifact, browser, telemetry, self-improvement, and Day-7 operational foundations remain unchanged except for the hardened adapter-admission containment.
+Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, external-artifact, browser, telemetry, self-improvement, and Day-7 operational foundations are unchanged by this slice.
 
 ### Current release blockers
 
@@ -66,4 +65,4 @@ Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to choose exactly one con
 
 ### Integration rule
 
-Do not repeat completed provider-neutral contracts, candidate authorization, candidate-to-adapter binding, conformance definitions, gate construction, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, process-local fixtures, capability declarations, or documentation records as real durability or provider-selection proof. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed provider-neutral contracts, candidate authorization, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, gate construction, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, process-local fixtures, capability declarations, or documentation records as real durability or provider-selection proof. Nothing is complete without build, test, execution, and trace evidence.
