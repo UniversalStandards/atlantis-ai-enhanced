@@ -7,24 +7,27 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `b01366ab434cb2972c9d7cf193df2e661816ac54`.
-- Incoming implementation head: `c54540bcbc0562a5ae074259581508178f0a9e0b`.
+- Prior verified documentation head: `0d3663a7dc984cc6daa98f522de703da7e4d1082`.
+- Latest incoming documentation head: `e203b4d2b1a01ff91ee233642f475625a6a1310d`.
+- Verified implementation evidence anchor: `c54540bcbc0562a5ae074259581508178f0a9e0b`.
 
-Since the prior verification, the sprint advanced three commits confined to self-improvement operational candidate authorization: a provider-neutral authorization validator, five direct fail-closed regressions, and the supported `@atlantis/contracts/self-improvement-operational-candidate-authorization` export.
+Since the prior verification, the sprint advanced exactly one documentation-only commit / zero behind: `e203b4d2b1a01ff91ee233642f475625a6a1310d` (`docs: make durable persistence decision gate executable`). Only `docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` changed (+33 / -0).
 
 ### Independent verification findings
 
-The self-improvement operational candidate admission boundary is consistent with the established durable-persistence, external-artifact, browser, and telemetry authorization patterns. It accepts runtime input as `unknown`, rejects arrays/non-objects, rejects undeclared fields including secret-bearing runtime extensions, reconstructs only explicitly allowed fields, requires `executionEnvironment: "non-production"`, requires `featureGateDefault: "disabled"`, enforces `authorityBoundary: "no-prohibited-authority"`, enforces canonical UTC ISO approval timestamps, and requires exactly one architecture, operations, and security-network approval.
+The incoming durable-persistence decision-gate change is consistent with the existing architecture and security boundaries. It adds deterministic selection acceptance criteria covering atomic authority mutation, authoritative settlement after ambiguous outcomes, durability posture, independent-client topology, genuine failover topology, conflict/error mapping, credential/network classes without secret values, reversibility, conformance feasibility, and exact approval identity.
 
-The boundary is admission/completeness evidence only. It does not grant merge, protected-branch, deployment, credential, infrastructure, policy, or production-mutation authority, and it does not prove that a real isolated workspace, patch/test/evaluation/security-review path has executed. The self-improvement operational candidate remains unselected until one concrete non-production candidate is populated and explicitly approved.
+It also adds explicit sprint disqualifiers and constrains the architecture/operations handoff to exactly four outcomes: `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate`.
 
-No runtime defect, security weakening, provider binding, credential expansion, persistence-ordering change, trace-schema change, deployment authority, or workflow-permission expansion was found in this slice. The supported package subpath is present.
+The change does **not** select a provider, authorize credentials or connection strings, grant network/deployment/production authority, weaken persistence uncertainty semantics, permit blind replay after ambiguous writes, or claim real durability/failover evidence. A valid selection remains limited to disabled-by-default non-production adapter implementation and conformance execution after the canonical candidate record is fully populated and approved.
 
-The concrete integration defect was canonical status drift: this document, PR #10, and Issue #8 still described the preceding telemetry-authorization cycle and **854/854** baseline after self-improvement candidate authorization had landed.
+No runtime, architecture, security, persistence-ordering, trace-schema, provider/database binding, credential expansion, deployment-authority, workflow-permission, or approval-weakening defect was found in the incoming slice. No duplicate critical-path implementation was introduced.
+
+The concrete integration defect was canonical status drift: this document still described the earlier self-improvement candidate-authorization cycle even though subsequent documentation verification and the executable durable-persistence decision gate had landed. This reconciliation updates the canonical status record without changing runtime behavior.
 
 ### Verified CI evidence
 
-Implementation head `c54540bcbc0562a5ae074259581508178f0a9e0b` passed head-associated PR-merge run `33222114426`, validating synthetic merge `3e408df4dbb4ae94214c348c1158728d1abe1590`.
+Incoming documentation head `e203b4d2b1a01ff91ee233642f475625a6a1310d` passed head-associated PR-merge Contracts run `33227921395`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
@@ -34,49 +37,39 @@ Implementation head `c54540bcbc0562a5ae074259581508178f0a9e0b` passed head-assoc
 - Contracts: **334/334** across 56 files.
 - Event store: **525/525** across 95 files.
 - Total: **859/859**.
-- Self-improvement operational candidate authorization: **5/5 green**.
-- Telemetry SDK/collector candidate authorization: **5/5 green**.
-- Browser release-adapter candidate authorization: **5/5 green**.
-- External release-artifact candidate authorization: **5/5 green**.
-- Durable recovery-ownership adapter boundary: **10/10 green**.
 - Durable candidate authorization: **8/8 green**.
+- Durable recovery-ownership adapter boundary: **10/10 green**.
 - Day-7 operational evidence: **16/16 green**.
 - Day-7 release-readiness composition: **17/17 green**.
-- Readiness-artifact repository: **4/4 green**.
-- Readiness-artifact durability self-test: **4/4 green**.
 - Browser-observer conformance: **6/6 green**.
 - Actions permissions remain `contents: read`, `metadata: read`.
 - PR #10 has zero unresolved inline review threads.
 
+The latest runtime implementation evidence remains anchored to `c54540bcbc0562a5ae074259581508178f0a9e0b` at **859/859** tests. Documentation-only heads inherit that runtime evidence only while their own head-associated CI remains green; they are not new runtime evidence.
+
 ### Architecture, security, trace, and evidence boundary
 
-Self-improvement operational candidate authorization proves only that a non-production candidate record satisfies the required admission fields and prohibited-authority boundary. It does **not** prove operational isolated-workspace creation, patch generation, test execution, follow-up evaluation, security review, evidence persistence, teardown, or the final mandatory `awaiting-human-review` stop through real adapters.
+`DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** with architecture/operations decision **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the exact deployment mode/configuration revision is captured with non-secret evidence, the existing authorization validator passes, and explicit architecture/operations approval covers that same identity.
 
-`TELEMETRY_SDK_COLLECTOR_CANDIDATE_RECORD.md` remains unselected until one concrete non-production telemetry candidate is populated and explicitly approved. Telemetry authorization remains admission evidence only.
+Candidate authorization proves admission/completeness only. It does not prove real durable execution, acknowledged-write survival, independent-client operation, restart persistence, genuine provider/replica failover, external artifact durability, live browser/telemetry/self-improvement execution, or complete same-run release evidence.
 
-`BROWSER_RELEASE_ADAPTER_CANDIDATE_RECORD.md` remains unselected until one concrete non-production browser adapter is populated and explicitly approved. Browser authorization remains admission evidence only.
-
-`RELEASE_ARTIFACT_EXTERNAL_ADAPTER_CANDIDATE_RECORD.md` remains unselected until one concrete non-production artifact-storage candidate is populated and explicitly approved. External-artifact authorization remains admission evidence only.
-
-`DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** and its architecture/operations decision remains **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the canonical record is fully populated with non-secret evidence, and explicit architecture/operations approval is obtained.
-
-Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, browser-observer, telemetry export, self-improvement proposal/generator, and Day-7 operational foundations remain unchanged by this slice.
+Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, browser-observer, telemetry export, self-improvement proposal/generator, and Day-7 operational foundations remain unchanged by this documentation-only slice.
 
 ### Current release blockers
 
-1. Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to select exactly one concrete non-production durable-persistence candidate, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval.
-2. After approval, implement the first disabled-by-default durable `RecoveryOwnershipStore` / append persistence adapter and execute ownership baseline + durability/failure-injection + provider-failover + fairness + applicable retention/compaction + immutable-writer + append-uncertainty gates across genuine independent clients and restart/failover state.
-3. Select and approve exactly one external artifact-storage candidate using the already-landed candidate record, provider evidence matrix, and external-artifact authorization boundary; then implement only the thin adapter and execute external conformance against genuine independent clients and restart state.
-4. Populate and authorize exactly one concrete browser candidate using the landed browser candidate record and authorization boundary; then execute browser-observer conformance unchanged against the actual driver/session/navigation path.
-5. Populate and authorize exactly one concrete telemetry SDK/exporter/collector candidate using the landed telemetry candidate record and authorization boundary; then execute real receiver/failure/shutdown/substitution scenarios while keeping telemetry non-authoritative.
-6. Populate and authorize one concrete self-improvement operational candidate using the landed candidate record and authorization boundary; execute one real failed-evaluation → isolated patch → tests → follow-up evaluation → security review → immutable proposal → `awaiting-human-review` flow with no prohibited authority.
-7. Execute one actual governed Day-7 repository-improvement run through live integrations.
-8. Execute clean release-candidate deployment/reproduction, rollback rehearsal, and real non-vacuous burn-in with real durable ownership, persistence ambiguity/reconciliation, provider-failover, and durable release/readiness artifact evidence.
+1. Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one bounded decision outcome, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval for the exact candidate/configuration revision.
+2. After approval, implement the first disabled-by-default durable `RecoveryOwnershipStore` / append persistence adapter and execute ownership baseline + durability/failure-injection + genuine provider-failover + fairness + applicable retention/compaction + immutable-writer + append-uncertainty gates across independent clients and restart/failover state.
+3. Select and approve exactly one external artifact-storage candidate and execute genuine external durability conformance.
+4. Populate and authorize one concrete browser candidate and execute browser-observer conformance against the real driver/session/navigation path.
+5. Populate and authorize one concrete telemetry SDK/exporter/collector candidate and execute real receiver/failure/shutdown/substitution scenarios while keeping telemetry non-authoritative.
+6. Populate and authorize one concrete self-improvement operational candidate and execute one real isolated-development flow through the mandatory `awaiting-human-review` stop with no prohibited authority.
+7. Complete Issue #6 real-provider benchmark acceptance and Issue #7 real isolated-development evidence.
+8. Execute one actual governed Day-7 repository-improvement run through live integrations, then clean deployment/reproduction, rollback rehearsal, and real non-vacuous burn-in.
 
 ### Single next highest-leverage action
 
-Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to choose exactly one concrete non-production durable-persistence candidate, complete `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval. Do not begin provider-specific durable-persistence implementation before that approval record is complete.
+Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one outcome — `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate` — then fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and obtain matching architecture and operations approvals. Do **not** begin provider-specific durable-persistence implementation before that approval record is complete.
 
 ### Integration rule
 
-Do not repeat completed provider-neutral contracts, durable/external/browser/telemetry/self-improvement candidate authorization, non-production admission, canonical approval timestamp validation, disabled-default enforcement, prohibited-authority admission, candidate-to-adapter binding, conformance definitions, gate construction, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, process-local fixtures, capability declarations, or documentation records as real durability, provider selection, live browser/telemetry/self-improvement execution, or operational proof. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed provider-neutral contracts, candidate authorization, non-production admission, canonical approval timestamp validation, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, process-local fixtures, capability declarations, or documentation records as real durability, provider selection, live execution, or operational proof. Nothing is complete without build, test, execution, and trace evidence.
