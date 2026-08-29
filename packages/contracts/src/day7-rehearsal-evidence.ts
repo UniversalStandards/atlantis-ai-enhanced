@@ -73,6 +73,9 @@ function requireStringArray(subject: string, value: unknown): readonly string[] 
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
     throw new InvalidDay7RehearsalEvidenceError(`${subject} must contain only non-empty evidence identities`);
   }
+  if (new Set(value).size !== value.length) {
+    throw new InvalidDay7RehearsalEvidenceError(`${subject} must not contain duplicate evidence identities`);
+  }
   return Object.freeze([...value]) as readonly string[];
 }
 
