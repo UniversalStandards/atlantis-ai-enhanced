@@ -105,8 +105,10 @@ export function validateDay7RehearsalEvidence(value: unknown): Day7RehearsalEvid
   }
   if (record.kind !== "deployment" && record.kind !== "rollback") throw new InvalidDay7RehearsalEvidenceError("rehearsalEvidence.kind is invalid");
   if (record.result !== "PASS" && record.result !== "FAIL" && record.result !== "BLOCKED") throw new InvalidDay7RehearsalEvidenceError("rehearsalEvidence.result is invalid");
+  const candidateIdentity = validateDay7CandidateIdentity(record.candidateIdentity);
   const startedAtEpochMs = requireEpoch("rehearsalEvidence.startedAtEpochMs", record.startedAtEpochMs);
   const completedAtEpochMs = requireEpoch("rehearsalEvidence.completedAtEpochMs", record.completedAtEpochMs);
+  if (candidateIdentity.recordedAtEpochMs > startedAtEpochMs) throw new InvalidDay7RehearsalEvidenceError("rehearsalEvidence candidate identity must be recorded before execution starts");
   if (completedAtEpochMs < startedAtEpochMs) throw new InvalidDay7RehearsalEvidenceError("rehearsalEvidence completion precedes start");
   const evidenceIdentities = requireStringArray("rehearsalEvidence.evidenceIdentities", record.evidenceIdentities);
   if (evidenceIdentities.length === 0) throw new InvalidDay7RehearsalEvidenceError("rehearsalEvidence.evidenceIdentities must contain non-empty evidence identities");
@@ -115,7 +117,7 @@ export function validateDay7RehearsalEvidence(value: unknown): Day7RehearsalEvid
     if (record.failureReason !== null) throw new InvalidDay7RehearsalEvidenceError("PASS rehearsal evidence must not contain failureReason");
     failureReason = null;
   } else failureReason = requireString("rehearsalEvidence.failureReason", record.failureReason);
-  return Object.freeze({ rehearsalId: requireString("rehearsalEvidence.rehearsalId", record.rehearsalId), kind: record.kind, candidateIdentity: validateDay7CandidateIdentity(record.candidateIdentity), startedAtEpochMs, completedAtEpochMs, evidenceIdentities, result: record.result, failureReason });
+  return Object.freeze({ rehearsalId: requireString("rehearsalEvidence.rehearsalId", record.rehearsalId), kind: record.kind, candidateIdentity, startedAtEpochMs, completedAtEpochMs, evidenceIdentities, result: record.result, failureReason });
 }
 
 export function validateDay7BurnInEvidence(value: unknown): Day7BurnInEvidence {
@@ -128,9 +130,11 @@ export function validateDay7BurnInEvidence(value: unknown): Day7BurnInEvidence {
     if (error instanceof InvalidExactDataRecordError) throw new InvalidDay7RehearsalEvidenceError(error.message);
     throw error;
   }
+  const candidateIdentity = validateDay7CandidateIdentity(record.candidateIdentity);
   const plannedDurationMs = requireEpoch("burnInEvidence.plannedDurationMs", record.plannedDurationMs);
   if (plannedDurationMs === 0) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.plannedDurationMs must be greater than zero");
   const startedAtEpochMs = requireEpoch("burnInEvidence.startedAtEpochMs", record.startedAtEpochMs);
+  if (candidateIdentity.recordedAtEpochMs > startedAtEpochMs) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence candidate identity must be recorded before execution starts");
   const endedAtEpochMs = record.endedAtEpochMs === null ? null : requireEpoch("burnInEvidence.endedAtEpochMs", record.endedAtEpochMs);
   if (endedAtEpochMs !== null && endedAtEpochMs < startedAtEpochMs) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence end precedes start");
   if (record.finalDisposition !== "PASS" && record.finalDisposition !== "FAIL" && record.finalDisposition !== "BLOCKED" && record.finalDisposition !== "IN_PROGRESS") throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.finalDisposition is invalid");
@@ -172,5 +176,5 @@ export function validateDay7BurnInEvidence(value: unknown): Day7BurnInEvidence {
     if (securityFindings.length > 0 || incidents.length > 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires zero unresolved security findings and incidents");
   }
 
-  return Object.freeze({ burnInId: requireString("burnInEvidence.burnInId", record.burnInId), candidateIdentity: validateDay7CandidateIdentity(record.candidateIdentity), plannedDurationMs, startedAtEpochMs, endedAtEpochMs, executionCounts, approvalOutcomes, injectedFailures, ownershipEvents, persistenceUncertaintyEvents, telemetryFailures, securityFindings, regressionEvidence, traceCompletenessEvidence, incidents, finalDisposition: record.finalDisposition });
+  return Object.freeze({ burnInId: requireString("burnInEvidence.burnInId", record.burnInId), candidateIdentity, plannedDurationMs, startedAtEpochMs, endedAtEpochMs, executionCounts, approvalOutcomes, injectedFailures, ownershipEvents, persistenceUncertaintyEvents, telemetryFailures, securityFindings, regressionEvidence, traceCompletenessEvidence, incidents, finalDisposition: record.finalDisposition });
 }
