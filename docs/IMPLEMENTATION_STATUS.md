@@ -10,16 +10,19 @@
 - Prior verified head: `5480e80e1d85db2657fcde010aff501f777fa928`.
 - Incoming change: `f5e6714bcef39616d8928bdc127d0454610bc21b` — `docs(artifacts): bound external durability candidate decision`.
 - Corrective change: `b9d3c6c91836745a95a991f25cf66fa2c7d94587` — `docs(artifacts): add external durability candidate record`.
+- Reconciliation head before this documentation correction: `46109ad67e2b301045209188da93780403e54cb0` — `docs: reconcile external artifact candidate gate`.
 
 The incoming slice is documentation-only and adds `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_EVIDENCE_MATRIX.md`. It explicitly preserves **NO CANDIDATE SELECTED. NO IMPLEMENTATION AUTHORIZED.**
 
 ### Independent verification findings
 
-Live GitHub access was independently reverified. PR #10 is open, draft, and mergeable, with zero unresolved inline review threads.
+Live GitHub access was independently reverified with admin/maintain/push/pull/triage permissions. PR #10 is open, draft, and mergeable, with zero unresolved inline review threads at the latest verified review cycle.
 
 The incoming matrix is architecture/security consistent: external artifact storage remains non-authoritative for execution and release decisions; credentials, endpoints, network permissions, provider choice, retention/destruction policy, deployment authority, and production storage remain unselected.
 
-One integration defect was found: the matrix requires a companion candidate record before implementation/approval, but no `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_RECORD.md` existed. That left the decision gate structurally incomplete. The correction adds that record as **UNSELECTED / BLOCKED FOR IMPLEMENTATION**, with all concrete provider, SDK, credential, endpoint, topology, immutability, digest, retention, teardown, and approval fields `PENDING`. No provider-specific implementation or authority expansion was introduced.
+One integration defect was found in the incoming slice: the matrix requires a companion candidate record before implementation/approval, but no `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_RECORD.md` existed. That left the decision gate structurally incomplete. The correction adds that record as **UNSELECTED / BLOCKED FOR IMPLEMENTATION**, with all concrete provider, SDK, credential, endpoint, topology, immutability, digest, retention, teardown, and approval fields `PENDING`. No provider-specific implementation or authority expansion was introduced.
+
+This verification cycle found one additional documentation reconciliation defect: this file still stated that the corrective documentation head was awaiting CI even though Contracts run `33268390638` had already completed successfully. That stale statement is corrected here; no runtime implementation is repeated.
 
 No runtime, test, trace-schema, persistence-ordering, security-control, release-semantic, or duplication defect requiring runtime code correction was found.
 
@@ -27,16 +30,22 @@ No runtime, test, trace-schema, persistence-ordering, security-control, release-
 
 Incoming head `f5e6714bcef39616d8928bdc127d0454610bc21b` passed Contracts run `33267201270`.
 
+Reconciliation head `46109ad67e2b301045209188da93780403e54cb0` passed Contracts run `33268390638`.
+
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed.
 - SEC-20 structured vulnerability audit: passed.
 - Dependency inventory validation: passed.
 - Typecheck: passed.
 - Tests: passed.
-- Existing verified test baseline remains **370/370 contracts + 526/526 event-store = 896/896 tests** because the incoming change is documentation-only.
-- Actions validation job completed successfully on the sprint head.
+- Verified test baseline remains **370/370 contracts + 526/526 event-store = 896/896 tests**.
+- Day-7 rehearsal evidence remains **36/36**.
+- Day-7 release readiness remains **18/18**.
+- SEC-20 lockfile integrity remains **102 external package records / 102 integrity records**.
+- Structured vulnerability audit remains **0 critical / 0 high / 0 moderate / 0 low / 0 info**.
+- Actions token permissions remain read-only (`contents: read`, `metadata: read`).
 
-The corrective documentation head must also complete CI before it is promoted to the completed evidence anchor.
+The current documentation-only reconciliation commit must complete its own CI before it becomes the newest completed evidence anchor; until then, `46109ad...` + run `33268390638` remains the completed CI anchor.
 
 ### Architecture, security, trace, and evidence boundary
 
@@ -62,7 +71,7 @@ Green CI and candidate records are not deployment, rollback, burn-in, durable pe
 
 The highest-leverage action remains the durable-persistence decision. Use `docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one outcome, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain matching architecture and operations approvals before provider-specific implementation begins.
 
-External-artifact candidate selection can now proceed independently through the repaired matrix + candidate-record gate, but it does not supersede durable persistence on the critical path.
+External-artifact candidate selection can proceed independently through the repaired matrix + candidate-record gate, but it does not supersede durable persistence on the critical path.
 
 ### Integration rule
 
