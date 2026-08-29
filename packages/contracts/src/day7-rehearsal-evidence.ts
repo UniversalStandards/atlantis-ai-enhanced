@@ -79,6 +79,16 @@ function requireStringArray(subject: string, value: unknown): readonly string[] 
   return Object.freeze([...value]) as readonly string[];
 }
 
+function requireDisjointEvidenceIdentities(subject: string, groups: readonly (readonly string[])[]): void {
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const identity of group) {
+      if (seen.has(identity)) throw new InvalidDay7RehearsalEvidenceError(`${subject} must not reuse an evidence identity across evidence categories`);
+      seen.add(identity);
+    }
+  }
+}
+
 export function validateDay7CandidateIdentity(value: unknown): Day7CandidateIdentity {
   let record;
   try {
@@ -165,6 +175,7 @@ export function validateDay7BurnInEvidence(value: unknown): Day7BurnInEvidence {
   const regressionEvidence = requireStringArray("burnInEvidence.regressionEvidence", record.regressionEvidence);
   const traceCompletenessEvidence = requireStringArray("burnInEvidence.traceCompletenessEvidence", record.traceCompletenessEvidence);
   const incidents = requireStringArray("burnInEvidence.incidents", record.incidents);
+  requireDisjointEvidenceIdentities("burnInEvidence", [approvalOutcomes, injectedFailures, ownershipEvents, persistenceUncertaintyEvents, telemetryFailures, securityFindings, regressionEvidence, traceCompletenessEvidence, incidents]);
 
   if (regressionEvidence.length === 0) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.regressionEvidence must contain evidence");
   if (traceCompletenessEvidence.length === 0) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.traceCompletenessEvidence must contain evidence");
