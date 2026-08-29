@@ -149,5 +149,28 @@ export function validateDay7BurnInEvidence(value: unknown): Day7BurnInEvidence {
   const executionCounts = Object.freeze({ attempted: requireEpoch("executionCounts.attempted", counts.attempted), completed: requireEpoch("executionCounts.completed", counts.completed), failed: requireEpoch("executionCounts.failed", counts.failed), waitingApproval: requireEpoch("executionCounts.waitingApproval", counts.waitingApproval) });
   if (executionCounts.completed + executionCounts.failed + executionCounts.waitingApproval > executionCounts.attempted) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.executionCounts outcomes exceed attempted executions");
 
-  return Object.freeze({ burnInId: requireString("burnInEvidence.burnInId", record.burnInId), candidateIdentity: validateDay7CandidateIdentity(record.candidateIdentity), plannedDurationMs, startedAtEpochMs, endedAtEpochMs, executionCounts, approvalOutcomes: requireStringArray("burnInEvidence.approvalOutcomes", record.approvalOutcomes), injectedFailures: requireStringArray("burnInEvidence.injectedFailures", record.injectedFailures), ownershipEvents: requireStringArray("burnInEvidence.ownershipEvents", record.ownershipEvents), persistenceUncertaintyEvents: requireStringArray("burnInEvidence.persistenceUncertaintyEvents", record.persistenceUncertaintyEvents), telemetryFailures: requireStringArray("burnInEvidence.telemetryFailures", record.telemetryFailures), securityFindings: requireStringArray("burnInEvidence.securityFindings", record.securityFindings), regressionEvidence: requireStringArray("burnInEvidence.regressionEvidence", record.regressionEvidence), traceCompletenessEvidence: requireStringArray("burnInEvidence.traceCompletenessEvidence", record.traceCompletenessEvidence), incidents: requireStringArray("burnInEvidence.incidents", record.incidents), finalDisposition: record.finalDisposition });
+  const approvalOutcomes = requireStringArray("burnInEvidence.approvalOutcomes", record.approvalOutcomes);
+  const injectedFailures = requireStringArray("burnInEvidence.injectedFailures", record.injectedFailures);
+  const ownershipEvents = requireStringArray("burnInEvidence.ownershipEvents", record.ownershipEvents);
+  const persistenceUncertaintyEvents = requireStringArray("burnInEvidence.persistenceUncertaintyEvents", record.persistenceUncertaintyEvents);
+  const telemetryFailures = requireStringArray("burnInEvidence.telemetryFailures", record.telemetryFailures);
+  const securityFindings = requireStringArray("burnInEvidence.securityFindings", record.securityFindings);
+  const regressionEvidence = requireStringArray("burnInEvidence.regressionEvidence", record.regressionEvidence);
+  const traceCompletenessEvidence = requireStringArray("burnInEvidence.traceCompletenessEvidence", record.traceCompletenessEvidence);
+  const incidents = requireStringArray("burnInEvidence.incidents", record.incidents);
+
+  if (regressionEvidence.length === 0) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.regressionEvidence must contain evidence");
+  if (traceCompletenessEvidence.length === 0) throw new InvalidDay7RehearsalEvidenceError("burnInEvidence.traceCompletenessEvidence must contain evidence");
+
+  if (record.finalDisposition === "PASS") {
+    if (executionCounts.attempted === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires at least one attempted execution");
+    if (executionCounts.failed !== 0 || executionCounts.waitingApproval !== 0 || executionCounts.completed !== executionCounts.attempted) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires every attempted execution to complete successfully with no failures or pending approvals");
+    if (approvalOutcomes.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires governed approval evidence");
+    if (injectedFailures.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires approved reversible failure-injection evidence");
+    if (ownershipEvents.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires ownership evidence");
+    if (persistenceUncertaintyEvents.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires persistence uncertainty/reconciliation evidence");
+    if (securityFindings.length > 0 || incidents.length > 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires zero unresolved security findings and incidents");
+  }
+
+  return Object.freeze({ burnInId: requireString("burnInEvidence.burnInId", record.burnInId), candidateIdentity: validateDay7CandidateIdentity(record.candidateIdentity), plannedDurationMs, startedAtEpochMs, endedAtEpochMs, executionCounts, approvalOutcomes, injectedFailures, ownershipEvents, persistenceUncertaintyEvents, telemetryFailures, securityFindings, regressionEvidence, traceCompletenessEvidence, incidents, finalDisposition: record.finalDisposition });
 }
