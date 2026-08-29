@@ -173,6 +173,7 @@ export function validateDay7BurnInEvidence(value: unknown): Day7BurnInEvidence {
     if (injectedFailures.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires approved reversible failure-injection evidence");
     if (ownershipEvents.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires ownership evidence");
     if (persistenceUncertaintyEvents.length === 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires persistence uncertainty/reconciliation evidence");
+    if (telemetryFailures.length > 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires zero unresolved telemetry failures");
     if (securityFindings.length > 0 || incidents.length > 0) throw new InvalidDay7RehearsalEvidenceError("PASS burn-in evidence requires zero unresolved security findings and incidents");
   }
 
