@@ -91,6 +91,39 @@ Open evidence before selection: whether a single-host topology can satisfy the r
 | ATLANTIS uncertainty reconciliation still required | Yes | Yes | Yes |
 | Ready to implement without approval | **No** | **No** | **No** |
 
+## Deterministic selection acceptance criteria
+
+Architecture/operations may select a candidate only when every item below is answered in the canonical candidate record with non-secret, reviewable evidence. A missing or ambiguous answer is a **no-select** result, not permission for adapter code to invent the answer.
+
+1. **Atomic authority mutation:** identify the exact transaction/conditional primitive that can atomically preserve ownership, monotonic fencing, and append authority for the approved data model.
+2. **Authoritative settlement:** identify the exact read path used after an ambiguous client outcome and demonstrate that settlement never requires blind replay of the mutation.
+3. **Durability posture:** name the exact durability/consistency settings relied upon and explicitly prohibit weaker settings that would invalidate ATLANTIS acknowledgement semantics.
+4. **Independent-client topology:** define how at least two genuinely independent clients reach the same authoritative state and what restart boundary the durability gate will cross.
+5. **Failover topology:** define the concrete alternate replica/provider/failover path, the authoritative-state rule during transition, and the failure injection that proves it. A topology with no credible path to the existing provider-failover gate is not selectable for Day-7.
+6. **Conflict/error mapping:** map serialization, conditional-write, timeout, disconnect, and unknown-completion outcomes into the existing ATLANTIS success/conflict/uncertain contract without weakening it.
+7. **Credential/network class:** identify classes and boundaries only; do not place credential values, tokens, connection strings, or permission grants in the record.
+8. **Reversibility:** document disabled-by-default registration, teardown, rollback, and removal without changing production authority.
+9. **Conformance feasibility:** show how the unchanged ownership, durability, failure-injection, failover, fairness, retention/compaction, immutable-writer, and append-uncertainty harnesses will execute against the candidate.
+10. **Approval identity:** exactly one architecture approval and one operations approval must cover the same candidate identity/configuration revision admitted by the machine validator.
+
+## Explicit disqualifiers for this sprint
+
+A candidate is not selectable for the Day-7 durable adapter when any of the following remains true:
+
+- atomic ownership/fence/append authority would require a second unapproved coordination system;
+- acknowledged writes can be lost under the proposed normal configuration without ATLANTIS receiving an `uncertain` outcome;
+- ambiguous completion can only be handled by retrying the original mutation rather than authoritative readback;
+- the proposed topology cannot exercise the already-required genuine failover gate;
+- required transaction scope depends on an unresolved schema/partition decision;
+- the candidate requires production credentials, production networking, protected deployment authority, or irreversible infrastructure mutation merely to run non-production conformance;
+- the adapter would need to weaken an existing ATLANTIS contract or validator to pass.
+
+## Decision handoff
+
+The architecture/operations decision should be recorded as one of exactly four outcomes: `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate`. A selection is valid only when the exact deployment mode/configuration revision is simultaneously captured in `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and passes the existing candidate-authorization validator. The selection authorizes only disabled-by-default non-production adapter implementation and conformance execution.
+
+This handoff deliberately does not rank or choose a provider. It makes the next human architecture decision bounded, auditable, and directly convertible into the already-landed machine admission path.
+
 ## Decision blockers that remain
 
 1. Architecture/operations must select exactly one non-production candidate or explicitly request another candidate for evidence review.
