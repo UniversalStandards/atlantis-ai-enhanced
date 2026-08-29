@@ -7,43 +7,41 @@
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `34575ee905b96d9d4a11e69e19411263f75c6d3a`.
-- Latest verified implementation head: `8f7d5a56bf765902616f30b0521569e1febce979`.
-- Verified implementation evidence anchor: `8f7d5a56bf765902616f30b0521569e1febce979`.
+- Prior verified documentation head: `48d8af888242f8e93c9d5b88e827c1712ba31b22`.
+- Incoming burn-in implementation head: `f573a60ebb3c0a8b8c1780d7385a3053561670d4`.
+- Corrected runtime evidence anchor: `349e468249f1adf34939dfba212ce0ab8953c87c`.
 
-Since the prior verification, the sprint advanced exactly four implementation commits / zero behind:
-- `293eb6dd28504f329c25612f55091bd7a39b349e` — `feat: validate Day-7 rehearsal evidence identity`.
-- `79432e6d1aa0016cee17ab278b44ff7a65e460c2` — `test: cover Day-7 rehearsal evidence validation`.
-- `563af52c1d27fb5a8a80f6cad577b29fdf7d9dd6` — `feat: expose Day-7 rehearsal evidence contract`.
-- `8f7d5a56bf765902616f30b0521569e1febce979` — `fix: normalize rehearsal failure disposition`.
+Since the prior verification, the sprint advanced two incoming implementation commits / zero behind, followed by two scoped corrective commits:
+- `bf0b412180fadd7a0a2242a256377b58994921b8` — `feat: validate Day-7 burn-in evidence`.
+- `f573a60ebb3c0a8b8c1780d7385a3053561670d4` — `test: cover Day-7 burn-in evidence validation`.
+- `05e4a5e0c77de835f074435c72e8aeb6efbce6ba` — `fix(contracts): align Day-7 burn-in PASS semantics`.
+- `349e468249f1adf34939dfba212ce0ab8953c87c` — `test(contracts): reject invalid Day-7 burn-in PASS states`.
 
-The net implementation delta is limited to `packages/contracts/src/day7-rehearsal-evidence.ts`, its direct regression suite, and the supported package subpath export.
+The incoming slice extends the exact Day-7 evidence contract with provider-neutral burn-in evidence validation. It validates exact candidate identity, positive planned duration, monotonic timing, terminal/in-progress state shape, exact execution-count fields, and non-secret evidence identity arrays.
 
-### Independent verification findings
+### Independent verification findings and correction
 
-The new Day-7 rehearsal-evidence contract is consistent with existing architecture, security, trace, and release-evidence boundaries. It validates candidate-bound deployment/rollback rehearsal evidence as exact data and rejects undeclared fields, including secret-bearing or authority-bearing additions. Candidate head/merge identities are constrained to canonical lowercase Git SHAs; the dependency lock identity is constrained to a lowercase SHA-256 digest; rehearsal timestamps must be non-negative safe integers with completion not preceding start; evidence identities must be present and non-empty; and result disposition is limited to `PASS`, `FAIL`, or `BLOCKED`.
+The incoming contracts validator had a real fail-open semantic regression despite green CI: it accepted `finalDisposition: "PASS"` when the burn-in record still contained failed executions and pending approvals. Its positive test fixture itself used `attempted: 4`, `completed: 2`, `failed: 1`, and `waitingApproval: 1` while claiming `PASS`.
 
-Disposition semantics are fail-closed: `PASS` requires `failureReason: null`; `FAIL` and `BLOCKED` require a non-empty failure reason. The final incoming fix normalizes the validated failure disposition before constructing the immutable result rather than returning the untrusted field directly.
+That behavior conflicted with the already-landed event-store burn-in validator and the canonical Day-7 burn-in acceptance contract. The existing runtime semantics require a PASS burn-in to complete its planned duration, exercise non-vacuous governed work, finish every attempted execution without failures or pending approvals, include approval/failure-injection/ownership/persistence-reconciliation evidence, include regression and trace-completeness evidence, and contain no unresolved security findings or incidents.
 
-The contract remains evidence-shape and identity validation only. It does **not** prove that deployment or rollback was actually executed, that the deployment identity is externally authoritative, that referenced evidence exists durably, or that a rehearsal satisfies all Day-7 release thresholds. Those claims still require real execution plus trace/artifact evidence and release-readiness composition.
+The correction is intentionally narrow and reversible. `05e4a5e0…` aligns the contracts-layer PASS checks with those existing semantics; `349e4682…` fixes the valid fixture and adds direct regressions for vacuous PASS, failed or pending executions, missing approval/failure-injection/ownership/persistence evidence, missing regression/trace evidence, and unresolved security findings/incidents.
 
-No runtime, architecture, security, persistence-ordering, trace-schema, provider/database binding, credential expansion, deployment-authority, workflow-permission, approval-weakening, or duplication defect was found in this incoming slice. The concrete integration defect was canonical status drift: this document, PR #10, and Issue #8 still reported the preceding durable-persistence decision-gate cycle and the 859-test baseline after the rehearsal-evidence implementation had landed.
-
-This reconciliation updates the canonical status record without altering runtime behavior.
+No provider/database binding, credential scope, deployment authority, workflow permission, protected-action authority, production mutation capability, trace schema, persistence ordering, or blind-retry behavior was expanded. The two burn-in validators remain separate package-layer implementations; their PASS semantics are now aligned. Consolidating them would be a broader architectural refactor and is not justified in this correction cycle absent further evidence.
 
 ### Verified CI evidence
 
-Implementation head `8f7d5a56bf765902616f30b0521569e1febce979` passed head-associated PR-merge Contracts run `33230406163`.
+Corrected runtime head `349e468249f1adf34939dfba212ce0ab8953c87c` passed head-associated PR Contracts run `33234086276`, validating synthetic merge `7c9ab50e3a5d47b5539c98d345c10bcaa46ef480`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
 - SEC-20 vulnerability audit: `0 critical / 0 high / 0 moderate / 0 low / 0 info`.
 - Dependency inventory validation: passed.
 - Contracts and event-store typechecks: passed.
-- Contracts: **342/342** across 57 files.
+- Contracts: **362/362** across 57 files.
 - Event store: **525/525** across 95 files.
-- Total: **867/867**.
-- Day-7 rehearsal evidence: **8/8 green**.
+- Total: **887/887**.
+- Day-7 rehearsal/burn-in evidence suite: **28/28 green**.
 - Durable candidate authorization: **8/8 green**.
 - Durable recovery-ownership adapter boundary: **10/10 green**.
 - Day-7 operational evidence: **16/16 green**.
@@ -52,15 +50,13 @@ Implementation head `8f7d5a56bf765902616f30b0521569e1febce979` passed head-assoc
 - Actions permissions remain `contents: read`, `metadata: read`.
 - PR #10 has zero unresolved inline review threads.
 
-The latest runtime implementation evidence is now anchored to `8f7d5a56bf765902616f30b0521569e1febce979` at **867/867** tests.
-
 ### Architecture, security, trace, and evidence boundary
+
+The correction makes the machine-readable burn-in admission contract fail closed consistently; it does **not** convert schema validation or process-local tests into actual burn-in evidence. Real burn-in remains open until a candidate-bound run completes the pre-recorded duration under approved real adapters, exercises governed work and reversible failure injection, preserves complete same-run traces and evidence, reconciles persistence uncertainty, and meets the release acceptance rules.
 
 `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** with architecture/operations decision **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the exact deployment mode/configuration revision is captured with non-secret evidence, the existing authorization validator passes, and explicit architecture/operations approval covers that same identity.
 
-Candidate authorization proves admission/completeness only. The new rehearsal-evidence contract likewise proves only exact, candidate-bound evidence shape. Neither proves real durable execution, acknowledged-write survival, independent-client operation, restart persistence, genuine provider/replica failover, external artifact durability, live browser/telemetry/self-improvement execution, actual deployment/rollback success, or complete same-run release evidence.
-
-Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, browser-observer, telemetry export, self-improvement proposal/generator, Day-7 operational evidence, burn-in, and rehearsal scaffolding remain intact.
+Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, browser-observer, telemetry export, self-improvement, Day-7 operational evidence, deployment/rollback, and burn-in scaffolding remain intact.
 
 ### Current release blockers
 
@@ -71,7 +67,7 @@ Existing governed topology, replay, trace, accounting, release-evidence, recover
 5. Populate and authorize one concrete telemetry SDK/exporter/collector candidate and execute real receiver/failure/shutdown/substitution scenarios while keeping telemetry non-authoritative.
 6. Populate and authorize one concrete self-improvement operational candidate and execute one real isolated-development flow through the mandatory `awaiting-human-review` stop with no prohibited authority.
 7. Complete Issue #6 real-provider benchmark acceptance and Issue #7 real isolated-development evidence.
-8. Execute one actual governed Day-7 repository-improvement run through live integrations with complete same-run trace/evidence, then execute clean deployment/reproduction, rollback rehearsal, and real non-vacuous burn-in. Use the new rehearsal-evidence contract to bind deployment and rollback evidence to the exact release candidate rather than treating contract validation itself as rehearsal proof.
+8. Execute one actual governed Day-7 repository-improvement run through live integrations with complete same-run trace/evidence, then execute clean deployment/reproduction, rollback rehearsal, and real non-vacuous burn-in against the exact release candidate.
 
 ### Single next highest-leverage action
 
@@ -79,4 +75,4 @@ Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one out
 
 ### Integration rule
 
-Do not repeat completed provider-neutral contracts, candidate authorization, non-production admission, canonical approval timestamp validation, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, candidate-template/evidence-matrix work, evidence-identity hardening, burn-in/rehearsal hardening, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, admission validation, exact evidence-shape validation, process-local fixtures, capability declarations, or documentation records as real durability, provider selection, live execution, rehearsal completion, or operational proof. Nothing is complete without build, test, execution, and trace evidence.
+Do not repeat completed provider-neutral contracts, candidate authorization, non-production admission, canonical approval timestamp validation, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, candidate-template/evidence-matrix work, evidence-identity hardening, rehearsal/burn-in scaffolding, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, schema/admission validation, process-local fixtures, capability declarations, or documentation records as real durability, provider selection, live execution, rehearsal completion, burn-in completion, or operational proof. Nothing is complete without build, test, execution, and trace evidence.
