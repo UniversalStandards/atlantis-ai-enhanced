@@ -21,9 +21,9 @@ const evidence = {
 const burnIn = {
   burnInId: "burnin-1", candidateIdentity: identity, plannedDurationMs: 60_000,
   startedAtEpochMs: 1_800_000_100_000, endedAtEpochMs: 1_800_000_160_000,
-  executionCounts: { attempted: 4, completed: 2, failed: 1, waitingApproval: 1 },
+  executionCounts: { attempted: 4, completed: 4, failed: 0, waitingApproval: 0 },
   approvalOutcomes: ["approval:1"], injectedFailures: ["failure:restart:1"], ownershipEvents: ["ownership:1"],
-  persistenceUncertaintyEvents: ["uncertainty:1"], telemetryFailures: ["telemetry:1"], securityFindings: [],
+  persistenceUncertaintyEvents: ["uncertainty:1"], telemetryFailures: [], securityFindings: [],
   regressionEvidence: ["regression:1"], traceCompletenessEvidence: ["trace:1"], incidents: [],
   finalDisposition: "PASS" as const,
 };
@@ -43,7 +43,7 @@ describe("Day-7 rehearsal evidence", () => {
   ])("fails closed for %s", (_name, candidate) => expect(() => validateDay7RehearsalEvidence(candidate)).toThrow(InvalidDay7RehearsalEvidenceError));
 
   it("accepts candidate-bound burn-in evidence after the planned duration", () => {
-    expect(validateDay7BurnInEvidence(burnIn)).toMatchObject({ burnInId: "burnin-1", finalDisposition: "PASS", executionCounts: { attempted: 4 } });
+    expect(validateDay7BurnInEvidence(burnIn)).toMatchObject({ burnInId: "burnin-1", finalDisposition: "PASS", executionCounts: { attempted: 4, completed: 4 } });
   });
 
   it.each([
@@ -55,5 +55,16 @@ describe("Day-7 rehearsal evidence", () => {
     ["impossible execution counts", { ...burnIn, executionCounts: { attempted: 1, completed: 1, failed: 1, waitingApproval: 0 } }],
     ["unknown count field", { ...burnIn, executionCounts: { ...burnIn.executionCounts, skipped: 1 } }],
     ["non-evidence array value", { ...burnIn, incidents: [null] }],
+    ["vacuous PASS", { ...burnIn, executionCounts: { attempted: 0, completed: 0, failed: 0, waitingApproval: 0 } }],
+    ["PASS with failed execution", { ...burnIn, executionCounts: { attempted: 4, completed: 3, failed: 1, waitingApproval: 0 } }],
+    ["PASS with pending approval", { ...burnIn, executionCounts: { attempted: 4, completed: 3, failed: 0, waitingApproval: 1 } }],
+    ["PASS without approval evidence", { ...burnIn, approvalOutcomes: [] }],
+    ["PASS without injected failure evidence", { ...burnIn, injectedFailures: [] }],
+    ["PASS without ownership evidence", { ...burnIn, ownershipEvents: [] }],
+    ["PASS without persistence reconciliation evidence", { ...burnIn, persistenceUncertaintyEvents: [] }],
+    ["PASS with unresolved security finding", { ...burnIn, securityFindings: ["security:critical:1"] }],
+    ["PASS with unresolved incident", { ...burnIn, incidents: ["incident:1"] }],
+    ["missing regression evidence", { ...burnIn, regressionEvidence: [] }],
+    ["missing trace completeness evidence", { ...burnIn, traceCompletenessEvidence: [] }],
   ])("fails closed for burn-in %s", (_name, candidate) => expect(() => validateDay7BurnInEvidence(candidate)).toThrow(InvalidDay7RehearsalEvidenceError));
 });
