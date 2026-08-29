@@ -70,8 +70,8 @@ function requireEpoch(subject: string, value: unknown): number {
 }
 
 function requireStringArray(subject: string, value: unknown): readonly string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
-    throw new InvalidDay7RehearsalEvidenceError(`${subject} must contain only non-empty evidence identities`);
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "" || item.trim() !== item)) {
+    throw new InvalidDay7RehearsalEvidenceError(`${subject} must contain only canonical non-empty evidence identities without surrounding whitespace`);
   }
   if (new Set(value).size !== value.length) {
     throw new InvalidDay7RehearsalEvidenceError(`${subject} must not contain duplicate evidence identities`);
