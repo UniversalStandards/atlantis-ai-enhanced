@@ -56,6 +56,16 @@ describe("Day-7 release readiness composition", () => {
     expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: stale })).toThrow("independentGates[0] must be bound to the exact release candidate identity");
   });
 
+  it("rejects whitespace-aliased independent release-gate identities", () => {
+    const whitespaceGateId = gates();
+    whitespaceGateId[0] = { ...whitespaceGateId[0]!, gateId: ` ${whitespaceGateId[0]!.gateId}` };
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: whitespaceGateId })).toThrow("must not contain surrounding whitespace");
+
+    const whitespaceEvidenceId = gates();
+    whitespaceEvidenceId[0] = { ...whitespaceEvidenceId[0]!, evidenceIds: [`${whitespaceEvidenceId[0]!.evidenceIds[0]} `] };
+    expect(() => composeDay7ReleaseReadiness({ candidateIdentity: candidate, deployment: deployment(), rollback: rollback(), burnIn: burnIn(), independentGates: whitespaceEvidenceId })).toThrow("must not contain surrounding whitespace");
+  });
+
   it("rejects evidence identity reuse across independent release gates", () => {
     const aliased = gates();
     const first = aliased[0]!;
