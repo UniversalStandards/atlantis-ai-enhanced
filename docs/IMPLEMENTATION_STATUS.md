@@ -32,6 +32,8 @@ Incoming head `f5e6714bcef39616d8928bdc127d0454610bc21b` passed Contracts run `3
 
 Reconciliation head `46109ad67e2b301045209188da93780403e54cb0` passed Contracts run `33268390638`.
 
+Documentation reconciliation head `297168c28328e7b02b3ea5b3b5c5c3b6f9a2e63c` passed Contracts run `33273619293`.
+
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed.
 - SEC-20 structured vulnerability audit: passed.
@@ -45,7 +47,7 @@ Reconciliation head `46109ad67e2b301045209188da93780403e54cb0` passed Contracts 
 - Structured vulnerability audit remains **0 critical / 0 high / 0 moderate / 0 low / 0 info**.
 - Actions token permissions remain read-only (`contents: read`, `metadata: read`).
 
-The current documentation-only reconciliation commit must complete its own CI before it becomes the newest completed evidence anchor; until then, `46109ad...` + run `33268390638` remains the completed CI anchor.
+A documentation-only commit is promoted to a completed evidence anchor only after its own CI succeeds. The authoritative latest completed CI anchor is tracked in master Issue #8, PR #10, and the canonical readiness record so this file does not create a self-referential pending-CI loop on every reconciliation edit.
 
 ### Architecture, security, trace, and evidence boundary
 
