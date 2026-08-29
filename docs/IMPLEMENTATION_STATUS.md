@@ -9,7 +9,7 @@
 - Primary PR: #10, targeting `main`
 - Prior verified documentation head: `46fbc35495ac872e4782ba68341ffb93f8e7dbcf`.
 - Incoming runtime change: `db4169c13f542db0fcb7727d5d8b4a272cbd114e` — `fix(event-store): canonicalize Day-7 gate evidence identities`.
-- Corrective regression-test head: `434446bddb37bcd4cb9b0d6a78c904d6227e6bac` — `test(event-store): cover canonical Day-7 gate identities`.
+- Corrective runtime evidence head: `434446bddb37bcd4cb9b0d6a78c904d6227e6bac` — `test(event-store): cover canonical Day-7 gate identities`.
 
 Since the prior verification, the sprint advanced one incoming runtime commit / zero behind. The runtime change makes independent Day-7 release-gate identifiers and evidence identities fail closed when they contain surrounding whitespace, closing a whitespace-alias route before uniqueness, gate-catalog, and cross-evidence checks are relied upon.
 
@@ -23,7 +23,9 @@ One integration defect was found: the runtime semantic change landed without a d
 
 ### Verified CI evidence
 
-Incoming runtime head `db4169c13f542db0fcb7727d5d8b4a272cbd114e` passed PR Contracts run `33256420777`.
+Incoming runtime head `db4169c13f542db0fcb7727d5d8b4a272cbd114e` passed PR Contracts run `33256420777` at **370/370 contracts + 525/525 event-store = 895/895 tests**.
+
+Corrective runtime evidence head `434446bddb37bcd4cb9b0d6a78c904d6227e6bac` passed PR Contracts run `33257853259` on synthetic merge `1f7cf80712bfa3288592b32de95d592f3f6a5478`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
@@ -31,12 +33,11 @@ Incoming runtime head `db4169c13f542db0fcb7727d5d8b4a272cbd114e` passed PR Contr
 - Dependency inventory validation: passed.
 - Contracts and event-store typechecks: passed.
 - Contracts: **370/370** across 57 files.
-- Event store: **525/525** across 95 files.
-- Total: **895/895**.
+- Event store: **526/526** across 95 files.
+- Total: **896/896**.
+- `day7-release-readiness.test.ts`: **18/18**, including direct whitespace-alias rejection for independent gate IDs and evidence IDs.
 - Day-7 contracts rehearsal/burn-in suite: **36/36 green**.
 - Actions token permissions remain read-only: `contents: read`, `metadata: read`.
-
-Corrective regression-test run `33257853259` is active on `434446bddb37bcd4cb9b0d6a78c904d6227e6bac`. Frozen install, SEC-20 integrity/source validation, structured vulnerability audit, dependency inventory, and both TypeScript typechecks have passed; the test step is still running at this reconciliation point. Do not promote the corrective head to a completed CI baseline until that run finishes successfully.
 
 ### Architecture, security, trace, and evidence boundary
 
