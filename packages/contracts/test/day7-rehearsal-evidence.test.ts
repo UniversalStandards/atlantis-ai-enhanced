@@ -59,6 +59,7 @@ describe("Day-7 rehearsal evidence", () => {
     ["unknown count field", { ...burnIn, executionCounts: { ...burnIn.executionCounts, skipped: 1 } }],
     ["non-evidence array value", { ...burnIn, incidents: [null] }],
     ["duplicate evidence identity", { ...burnIn, regressionEvidence: ["regression:1", "regression:1"] }],
+    ["evidence identity reused across categories", { ...burnIn, traceCompletenessEvidence: ["regression:1"] }],
     ["vacuous PASS", { ...burnIn, executionCounts: { attempted: 0, completed: 0, failed: 0, waitingApproval: 0 } }],
     ["PASS with failed execution", { ...burnIn, executionCounts: { attempted: 4, completed: 3, failed: 1, waitingApproval: 0 } }],
     ["PASS with pending approval", { ...burnIn, executionCounts: { attempted: 4, completed: 3, failed: 0, waitingApproval: 1 } }],
