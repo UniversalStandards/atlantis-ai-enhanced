@@ -1,32 +1,29 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-08-29 — Verified canonical Day-7 evidence identities
+## 2026-08-29 — Verified Day-7 release-gate identity canonicalization
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `2786b8d36d0ff4a5dbc66e9a82d03854a36bc74b`.
-- Current runtime evidence anchor: `0aec69dede9d7c8824137221fc91ec1e2e06708b`.
+- Prior verified documentation head: `46fbc35495ac872e4782ba68341ffb93f8e7dbcf`.
+- Incoming runtime change: `db4169c13f542db0fcb7727d5d8b4a272cbd114e` — `fix(event-store): canonicalize Day-7 gate evidence identities`.
+- Corrective regression-test head: `434446bddb37bcd4cb9b0d6a78c904d6227e6bac` — `test(event-store): cover canonical Day-7 gate identities`.
 
-Since the prior verification, the sprint advanced exactly two implementation commits / zero behind:
-- `609ccb7b5e481c46e83dda064bbe2a378ff9084b` — `fix(contracts): canonicalize Day-7 evidence identities`.
-- `0aec69dede9d7c8824137221fc91ec1e2e06708b` — `test(contracts): reject whitespace-aliased Day-7 evidence`.
-
-The change makes Day-7 evidence identities canonical by rejecting surrounding whitespace before duplicate and cross-category isolation checks are relied upon. This closes a whitespace-alias route where logically identical evidence such as `regression:1` and ` regression:1 ` could otherwise evade evidence-identity uniqueness/isolation semantics.
+Since the prior verification, the sprint advanced one incoming runtime commit / zero behind. The runtime change makes independent Day-7 release-gate identifiers and evidence identities fail closed when they contain surrounding whitespace, closing a whitespace-alias route before uniqueness, gate-catalog, and cross-evidence checks are relied upon.
 
 ### Independent verification findings
 
-Live GitHub access was independently reverified with admin/maintain/push/pull/triage permissions. PR #10 remains open, draft, and mergeable. There are zero unresolved inline review threads.
+Live GitHub access was independently reverified with admin/maintain/push/pull/triage permissions and branch mutation succeeded. PR #10 remains open, draft, and mergeable with zero unresolved inline review threads.
 
-Independent review found no additional runtime, architecture, security, trace-schema, persistence-ordering, provider-binding, credential, workflow-permission, approval-authority, duplication, or release-semantic defect requiring another implementation correction. The incoming change is narrow, fail-closed, and does not expand deployment, provider, production-mutation, protected-branch, credential, or workflow-write authority.
+The incoming implementation is narrow and preserves architecture boundaries: it changes only release-readiness validation and does not expand deployment, provider, credential, production-mutation, protected-branch, workflow-write, or approval authority. Existing trace, persistence-ordering, recovery-ownership, immutable-writer, acknowledgement-uncertainty, release-artifact, browser, telemetry, self-improvement, deployment/rollback, and burn-in boundaries remain unchanged.
 
-The integration defect was canonical sprint-record drift: Issue #8, PR #10, the readiness record, and this status document still described the preceding 893-test cross-category-isolation cycle after the whitespace-alias hardening landed. This document-only correction reconciles the evidence without repeating completed runtime work.
+One integration defect was found: the runtime semantic change landed without a direct event-store regression proving whitespace-aliased independent gate IDs/evidence IDs are rejected. That gap was corrected reversibly in `434446bddb37bcd4cb9b0d6a78c904d6227e6bac`; no broader implementation work was repeated.
 
 ### Verified CI evidence
 
-Runtime head `0aec69dede9d7c8824137221fc91ec1e2e06708b` passed PR Contracts run `33251372782` on synthetic merge `5ab3306b16da1ca9ff7c3d9cdff3541d61011251`.
+Incoming runtime head `db4169c13f542db0fcb7727d5d8b4a272cbd114e` passed PR Contracts run `33256420777`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
@@ -36,23 +33,23 @@ Runtime head `0aec69dede9d7c8824137221fc91ec1e2e06708b` passed PR Contracts run 
 - Contracts: **370/370** across 57 files.
 - Event store: **525/525** across 95 files.
 - Total: **895/895**.
-- Day-7 rehearsal/burn-in evidence suite: **36/36 green**.
+- Day-7 contracts rehearsal/burn-in suite: **36/36 green**.
 - Actions token permissions remain read-only: `contents: read`, `metadata: read`.
+
+Corrective regression-test run `33257853259` is active on `434446bddb37bcd4cb9b0d6a78c904d6227e6bac`. Frozen install, SEC-20 integrity/source validation, structured vulnerability audit, dependency inventory, and both TypeScript typechecks have passed; the test step is still running at this reconciliation point. Do not promote the corrective head to a completed CI baseline until that run finishes successfully.
 
 ### Architecture, security, trace, and evidence boundary
 
-Canonical identity validation strengthens evidence integrity only. It remains evidence-shape and release-semantic proof, not evidence that deployment, rollback, burn-in, durable persistence, genuine provider failover, external artifact durability, live browser execution, telemetry export, self-improvement execution, or a complete same-run operational trace actually occurred.
+Canonical release-gate identity validation strengthens evidence integrity only. It is not evidence that deployment, rollback, burn-in, durable persistence, genuine provider failover, external artifact durability, live browser execution, telemetry export, self-improvement execution, or a complete same-run operational trace actually occurred.
 
-`docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** with architecture/operations decision **PENDING**. It still selects no database, service, credential model, network path, deployment topology, or production authority.
-
-Existing governed topology, replay, trace, accounting, recovery ownership, immutable-writer, persistence-uncertainty, release-evidence, browser-observer, telemetry, self-improvement, deployment/rollback, and burn-in scaffolding remain intact. Blind retry after ambiguous persistence remains prohibited.
+`docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` remains **NO CANDIDATE SELECTED. NO IMPLEMENTATION AUTHORIZED.** `docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**, with architecture/operations decision **PENDING** and no database, service, credential model, network path, topology, or production authority selected.
 
 ### Current release blockers
 
 1. Record exactly one bounded durable-persistence candidate decision, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain matching architecture/operations approval.
 2. After approval, implement the first disabled-by-default durable recovery-ownership / append persistence adapter and execute real independent-client durability, restart/failover, failure-injection, fairness, immutable-writer, and uncertainty-settlement gates.
 3. Select and prove one genuine external artifact-storage durability path.
-4. Authorize and execute one concrete browser candidate, one concrete telemetry candidate, and one concrete self-improvement operational candidate against real adapters.
+4. Authorize and execute one concrete browser candidate, telemetry candidate, and self-improvement operational candidate against real adapters.
 5. Complete Issue #6 real-provider benchmark acceptance and Issue #7 real isolated-development evidence.
 6. Execute one actual governed Day-7 repository-improvement run through live integrations with complete same-run traces/evidence.
 7. Execute clean release-candidate deployment/reproduction, rollback rehearsal, and real non-vacuous candidate-bound burn-in.
@@ -69,4 +66,4 @@ Do not repeat completed provider-neutral contracts, candidate authorization, evi
 
 ## Prior verified baseline
 
-The preceding runtime anchor was `78156a0e0fbb7a66425e204e5350e4eacd2dc053`, green at **368/368 contracts + 525/525 event-store = 893/893 tests**, with Day-7 rehearsal/burn-in **34/34**. That cycle established cross-category evidence-identity isolation and remains historical evidence only.
+The preceding runtime anchor was `0aec69dede9d7c8824137221fc91ec1e2e06708b`, green at **370/370 contracts + 525/525 event-store = 895/895 tests**, with Day-7 rehearsal/burn-in **36/36**. That cycle established contract-layer canonical Day-7 evidence identities and remains historical evidence.
