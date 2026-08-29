@@ -44,7 +44,9 @@ function invalid(message: string): never {
 }
 
 function nonEmpty(value: string, field: string): string {
-  if (value.trim().length === 0) invalid(`${field} must be non-empty.`);
+  const canonical = value.trim();
+  if (canonical.length === 0) invalid(`${field} must be non-empty.`);
+  if (canonical !== value) invalid(`${field} must not contain surrounding whitespace.`);
   return value;
 }
 
