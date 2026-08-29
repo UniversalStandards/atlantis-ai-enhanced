@@ -64,6 +64,7 @@ describe("Day-7 rehearsal evidence", () => {
     ["PASS without injected failure evidence", { ...burnIn, injectedFailures: [] }],
     ["PASS without ownership evidence", { ...burnIn, ownershipEvents: [] }],
     ["PASS without persistence reconciliation evidence", { ...burnIn, persistenceUncertaintyEvents: [] }],
+    ["PASS with unresolved telemetry failure", { ...burnIn, telemetryFailures: ["telemetry:export-timeout:1"] }],
     ["PASS with unresolved security finding", { ...burnIn, securityFindings: ["security:critical:1"] }],
     ["PASS with unresolved incident", { ...burnIn, incidents: ["incident:1"] }],
     ["missing regression evidence", { ...burnIn, regressionEvidence: [] }],
