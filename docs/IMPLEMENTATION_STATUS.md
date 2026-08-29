@@ -1,56 +1,58 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-08-29 — Verified telemetry candidate decision evidence
+## 2026-08-29 — External artifact candidate decision gate corrected
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `cece1ab4854a216d8e689f5b3ff513fa5d7d71e0`.
-- Incoming change: `38e9ee79499a354f83bf0a6956c5f91e84859a67` — `docs(telemetry): bound Day-7 collector candidate decision`.
+- Prior verified head: `5480e80e1d85db2657fcde010aff501f777fa928`.
+- Incoming change: `f5e6714bcef39616d8928bdc127d0454610bc21b` — `docs(artifacts): bound external durability candidate decision`.
+- Corrective change: `b9d3c6c91836745a95a991f25cf66fa2c7d94587` — `docs(artifacts): add external durability candidate record`.
 
-Since the prior verification, the sprint advanced exactly one documentation-only commit / zero behind. The new `TELEMETRY_SDK_COLLECTOR_CANDIDATE_EVIDENCE_MATRIX.md` bounds three non-production telemetry candidate families while explicitly preserving **NO CANDIDATE SELECTED. NO IMPLEMENTATION AUTHORIZED.**
+The incoming slice is documentation-only and adds `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_EVIDENCE_MATRIX.md`. It explicitly preserves **NO CANDIDATE SELECTED. NO IMPLEMENTATION AUTHORIZED.**
 
 ### Independent verification findings
 
-Live GitHub access was independently reverified with admin/maintain/push/pull/triage permissions. PR #10 remains open, draft, and mergeable with zero unresolved inline review threads.
+Live GitHub access was independently reverified. PR #10 is open, draft, and mergeable, with zero unresolved inline review threads.
 
-The incoming matrix is consistent with the existing `TELEMETRY_SDK_COLLECTOR_BINDING_GATE.md` and `TELEMETRY_SDK_COLLECTOR_CANDIDATE_RECORD.md`: telemetry remains behind `OpenTelemetryReleaseSpanSink`, best-effort and non-authoritative; candidate selection remains architecture/operations gated; no dependency, credential, network, provider, deployment, protected-branch, workflow-write, production-mutation, or approval authority is granted.
+The incoming matrix is architecture/security consistent: external artifact storage remains non-authoritative for execution and release decisions; credentials, endpoints, network permissions, provider choice, retention/destruction policy, deployment authority, and production storage remain unselected.
 
-No runtime, test, trace-schema, persistence-ordering, security-control, release-semantic, or duplication defect requiring code correction was found in the incoming slice. The integration defect was canonical sprint-record drift: this status file, Issue #8, and PR #10 still described the preceding release-gate identity cycle.
+One integration defect was found: the matrix requires a companion candidate record before implementation/approval, but no `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_RECORD.md` existed. That left the decision gate structurally incomplete. The correction adds that record as **UNSELECTED / BLOCKED FOR IMPLEMENTATION**, with all concrete provider, SDK, credential, endpoint, topology, immutability, digest, retention, teardown, and approval fields `PENDING`. No provider-specific implementation or authority expansion was introduced.
+
+No runtime, test, trace-schema, persistence-ordering, security-control, release-semantic, or duplication defect requiring runtime code correction was found.
 
 ### Verified CI evidence
 
-Incoming documentation head `38e9ee79499a354f83bf0a6956c5f91e84859a67` passed PR Contracts run `33261746806` on synthetic merge `f8855b36a1bb49e9ee411cca165a691fed6f4c60`.
+Incoming head `f5e6714bcef39616d8928bdc127d0454610bc21b` passed Contracts run `33267201270`.
 
 - `pnpm install --frozen-lockfile`: passed.
-- SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
-- SEC-20 vulnerability audit: `0 critical / 0 high / 0 moderate / 0 low / 0 info`.
+- SEC-20 lockfile/source integrity gate: passed.
+- SEC-20 structured vulnerability audit: passed.
 - Dependency inventory validation: passed.
-- Contracts and event-store typechecks: passed.
-- Contracts: **370/370** across 57 files.
-- Event store: **526/526** across 95 files.
-- Total: **896/896**.
-- `day7-release-readiness.test.ts`: **18/18**.
-- Day-7 contracts rehearsal/burn-in suite: **36/36 green**.
-- Existing OpenTelemetry exporter regressions: **3/3 green**.
-- Telemetry candidate-authorization regressions: **5/5 green**.
-- Actions token permissions remain read-only: `contents: read`, `metadata: read`.
+- Typecheck: passed.
+- Tests: passed.
+- Existing verified test baseline remains **370/370 contracts + 526/526 event-store = 896/896 tests** because the incoming change is documentation-only.
+- Actions validation job completed successfully on the sprint head.
+
+The corrective documentation head must also complete CI before it is promoted to the completed evidence anchor.
 
 ### Architecture, security, trace, and evidence boundary
 
-The telemetry evidence matrix is decision support only. It is not proof of a real SDK/Collector binding, receiver observation, failure injection, external egress, production telemetry, durable persistence, genuine provider failover, external artifact durability, live browser execution, self-improvement execution, deployment/rollback, burn-in, or a complete same-run operational trace.
+`EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_EVIDENCE_MATRIX.md` and `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_RECORD.md` are decision/admission artifacts only. They are not proof of genuine external durability, fresh-client read-after-writer-exit, immutable conflict handling, digest verification, failure injection, acknowledgement-uncertainty settlement, secret-safety, or teardown against a real external service.
 
-`docs/architecture/TELEMETRY_SDK_COLLECTOR_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**. The existing telemetry binding gate remains unchanged and must be executed against a specifically approved concrete candidate before `telemetry-binding` can become PASS.
+`DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` remains **NO CANDIDATE SELECTED. NO IMPLEMENTATION AUTHORIZED.** `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**, with architecture/operations approval pending.
 
-`docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` also remains **NO CANDIDATE SELECTED. NO IMPLEMENTATION AUTHORIZED.** `docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**, with architecture/operations decision **PENDING**.
+Telemetry remains behind its existing non-authoritative boundary and `TELEMETRY_SDK_COLLECTOR_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**.
+
+Green CI and candidate records are not deployment, rollback, burn-in, durable persistence, genuine provider failover, external artifact durability, live browser/telemetry/self-improvement execution, or complete same-run operational trace proof.
 
 ### Current release blockers
 
 1. Record exactly one bounded durable-persistence candidate decision, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain matching architecture/operations approval.
 2. After approval, implement the first disabled-by-default durable recovery-ownership / append persistence adapter and execute real independent-client durability, restart/failover, failure-injection, fairness, immutable-writer, and uncertainty-settlement gates.
-3. Select and prove one genuine external artifact-storage durability path.
+3. Select exactly one bounded external artifact-storage candidate, fully populate `EXTERNAL_ARTIFACT_STORAGE_CANDIDATE_RECORD.md`, obtain required approvals, then run the shared provider-neutral conformance harness against a real isolated external service path.
 4. Authorize and execute one concrete browser candidate, telemetry candidate, and self-improvement operational candidate against real adapters.
 5. Complete Issue #6 real-provider benchmark acceptance and Issue #7 real isolated-development evidence.
 6. Execute one actual governed Day-7 repository-improvement run through live integrations with complete same-run traces/evidence.
@@ -58,22 +60,10 @@ The telemetry evidence matrix is decision support only. It is not proof of a rea
 
 ### Single next highest-leverage action
 
-The highest-leverage action remains the durable-persistence decision because it unlocks the durable execution/recovery/failover evidence required by the sprint. Use `docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one outcome — `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate` — then fully populate `docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and obtain matching architecture and operations approvals. Do **not** begin provider-specific durable-persistence implementation before that approval record is complete.
+The highest-leverage action remains the durable-persistence decision. Use `docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one outcome, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain matching architecture and operations approvals before provider-specific implementation begins.
 
-Telemetry candidate selection can proceed independently using `TELEMETRY_SDK_COLLECTOR_CANDIDATE_EVIDENCE_MATRIX.md`, but it does not supersede the durable-persistence critical path.
+External-artifact candidate selection can now proceed independently through the repaired matrix + candidate-record gate, but it does not supersede durable persistence on the critical path.
 
 ### Integration rule
 
-Do not repeat completed provider-neutral contracts, candidate authorization, evidence-identity hardening, conformance definitions, rehearsal/burn-in scaffolding, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not promote decision matrices, green CI, or schema validation into operational proof. Nothing is complete without build, test, execution, and trace evidence.
-
----
-
-## Prior verified baseline — release-gate identity canonicalization
-
-- Runtime correction head: `434446bddb37bcd4cb9b0d6a78c904d6227e6bac` — `test(event-store): cover canonical Day-7 gate identities`.
-- Documentation reconciliation head: `cece1ab4854a216d8e689f5b3ff513fa5d7d71e0` — `docs: finalize Day-7 gate identity evidence`.
-- Verified runtime baseline: **370/370 contracts + 526/526 event-store = 896/896 tests**.
-- `day7-release-readiness.test.ts`: **18/18**.
-- Day-7 contracts rehearsal/burn-in suite: **36/36 green**.
-
-That cycle established fail-closed canonical independent Day-7 gate/evidence identities and remains historical evidence. No part of that completed implementation was repeated in this cycle.
+Do not repeat completed provider-neutral contracts, evidence-identity hardening, candidate authorization, conformance definitions, rehearsal/burn-in scaffolding, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not promote documentation, green CI, or mocked transport into operational proof. Nothing is complete without build, test, execution, and trace evidence.
