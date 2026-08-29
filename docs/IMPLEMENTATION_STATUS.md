@@ -1,47 +1,47 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-08-29 — Verified duplicate Day-7 evidence-identity rejection
+## 2026-08-29 — Verified cross-category Day-7 evidence isolation
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `775b60974baf645561920dad493365797d0f2473`.
-- Current runtime evidence anchor: `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90`.
+- Prior verified documentation head: `24c3f0cc1773c88caaaf675c0c66cce4888acc11`.
+- Current runtime evidence anchor: `78156a0e0fbb7a66425e204e5350e4eacd2dc053`.
 
 Since the prior verification, the sprint advanced exactly two implementation commits / zero behind:
-- `a79706cc9f39001238b881dc9c727e9e046bde90` — `fix(contracts): reject duplicate Day-7 evidence identities`.
-- `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90` — `test(contracts): cover duplicate Day-7 evidence identities`.
+- `b548714d2b9449734eec58680e2171cccdfd26d2` — `fix(contracts): require disjoint Day-7 burn-in evidence`.
+- `78156a0e0fbb7a66425e204e5350e4eacd2dc053` — `test(contracts): cover cross-category Day-7 evidence reuse`.
 
-The change is deliberately narrow. The shared Day-7 string-array validator now rejects duplicate evidence identities, preventing one artifact/evidence reference from satisfying a multiplicity requirement more than once. Direct regressions cover both rehearsal `evidenceIdentities` and burn-in `regressionEvidence` duplicate cases.
+The change extends the existing duplicate-identity guard so a single burn-in evidence identity cannot be reused across different evidence categories such as approval outcomes, failure injection, ownership, persistence uncertainty, telemetry failures, security findings, regression evidence, trace completeness, or incidents. The direct regression reuses one regression identity as trace-completeness evidence and verifies fail-closed rejection.
 
 ### Independent verification findings
 
-No additional runtime, architecture, security, trace-schema, persistence-ordering, provider-binding, credential, workflow-permission, approval-authority, or duplication defect was found in the incoming implementation. Centralizing uniqueness in the existing `requireStringArray` helper applies the invariant consistently to Day-7 evidence arrays without expanding authority or changing provider-neutral boundaries.
+No additional runtime, architecture, security, trace-schema, persistence-ordering, provider-binding, credential, workflow-permission, approval-authority, or duplication defect was found in the incoming implementation. The stricter disjointness invariant is consistent with the event-store operational evidence layer, which already rejects identity reuse across distinct deployment and rollback evidence roles. This prevents one artifact from masquerading as independent proof for multiple release criteria without expanding authority.
 
-The concrete integration defect was canonical sprint-record drift: Issue #8, PR #10, and this status document still described the preceding 890-test telemetry-failure cycle after duplicate-evidence rejection had landed.
+The concrete integration defect was canonical sprint-record drift: Issue #8, PR #10, the canonical readiness record, and this status document still described the preceding 892-test duplicate-within-array cycle after cross-category evidence isolation had landed.
 
 No provider-specific runtime implementation was repeated. No production provider/database selection, credential scope expansion, deployment authority, protected-branch authority, workflow write permission, blind retry after ambiguous persistence, or irreversible infrastructure mutation was introduced.
 
 ### Verified CI evidence
 
-Runtime head `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90` passed PR Contracts run `33239948606`, validating synthetic merge `4ac7f5d78373f4d38cd7aface653fea0d372206d`.
+Runtime head `78156a0e0fbb7a66425e204e5350e4eacd2dc053` passed PR Contracts run `33244596027`, validating synthetic merge `b0421b296e92d5a5c71dbd2368d47e5195268b31`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
 - SEC-20 vulnerability audit: `0 critical / 0 high / 0 moderate / 0 low / 0 info`.
 - Dependency inventory validation: passed.
 - Contracts and event-store typechecks: passed.
-- Contracts: **367/367** across 57 files.
+- Contracts: **368/368** across 57 files.
 - Event store: **525/525** across 95 files.
-- Total: **892/892**.
-- Day-7 rehearsal/burn-in evidence suite: **33/33 green**.
+- Total: **893/893**.
+- Day-7 rehearsal/burn-in evidence suite: **34/34 green**.
 - Actions permissions remain `contents: read`, `metadata: read`.
 
 ### Architecture, security, trace, and evidence boundary
 
-Day-7 rehearsal and burn-in evidence arrays now fail closed when the same evidence identity is repeated. This prevents duplicate references from masquerading as independent evidence and aligns the contracts layer with the already-established uniqueness expectations in operational evidence handling.
+Day-7 burn-in evidence now fails closed when one evidence identity is reused across distinct evidence categories. This strengthens independence of release evidence and aligns contract-level burn-in evidence with existing operational deployment/rollback identity-isolation expectations.
 
 This remains evidence-shape and release-semantic validation, not proof that telemetry export, deployment, rollback, continuous burn-in, provider failover, real durable persistence, external durability, browser execution, or self-improvement execution actually occurred. Operational proof still requires candidate-bound execution against approved real adapters with complete same-run traces and evidence.
 
@@ -70,9 +70,15 @@ Do not repeat completed provider-neutral contracts, candidate authorization, non
 
 ---
 
+## 2026-08-29 — Prior verified duplicate Day-7 evidence-identity rejection
+
+The preceding verified runtime anchor was `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90`, with **367/367 contracts + 525/525 event-store = 892/892 tests**. That cycle rejected duplicate identities within individual Day-7 evidence arrays. It remains historical evidence only; the current verified runtime anchor is recorded above.
+
+---
+
 ## 2026-08-29 — Prior verified telemetry-failure PASS hardening
 
-The preceding verified runtime anchor was `33d5506a1df9dfc43272ec341573774b118f9779`, with **365/365 contracts + 525/525 event-store = 890/890 tests**. That cycle made Day-7 burn-in PASS fail closed when unresolved telemetry failures are present. It remains historical evidence only; the current verified runtime anchor is recorded above.
+The preceding verified runtime anchor was `33d5506a1df9dfc43272ec341573774b118f9779`, with **365/365 contracts + 525/525 event-store = 890/890 tests**. That cycle made Day-7 burn-in PASS fail closed when unresolved telemetry failures are present. It remains historical evidence only.
 
 ---
 
