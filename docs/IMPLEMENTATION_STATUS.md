@@ -1,58 +1,50 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-08-28 — Verified sprint state
+## 2026-08-29 — Verified candidate-identity pre-recording hardening
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `48d8af888242f8e93c9d5b88e827c1712ba31b22`.
-- Incoming burn-in implementation head: `f573a60ebb3c0a8b8c1780d7385a3053561670d4`.
-- Corrected runtime evidence anchor: `349e468249f1adf34939dfba212ce0ab8953c87c`.
+- Prior verified documentation head: `46bf1f487a7e66765ea0c275a30546fa456dd8cb`.
+- Current runtime evidence anchor: `baba56e3e02f9fa7e58bc4ea605e43fcd0a7c395`.
 
-Since the prior verification, the sprint advanced two incoming implementation commits / zero behind, followed by two scoped corrective commits:
-- `bf0b412180fadd7a0a2242a256377b58994921b8` — `feat: validate Day-7 burn-in evidence`.
-- `f573a60ebb3c0a8b8c1780d7385a3053561670d4` — `test: cover Day-7 burn-in evidence validation`.
-- `05e4a5e0c77de835f074435c72e8aeb6efbce6ba` — `fix(contracts): align Day-7 burn-in PASS semantics`.
-- `349e468249f1adf34939dfba212ce0ab8953c87c` — `test(contracts): reject invalid Day-7 burn-in PASS states`.
+Since the prior verification, the sprint advanced exactly two implementation commits / zero behind:
+- `9b6d3c51cff5bb56db19d9e1db65f0c91c222dd2` — `fix(contracts): bind Day-7 evidence to pre-recorded candidate identity`.
+- `baba56e3e02f9fa7e58bc4ea605e43fcd0a7c395` — `test(contracts): reject post-hoc Day-7 candidate identity`.
 
-The incoming slice extends the exact Day-7 evidence contract with provider-neutral burn-in evidence validation. It validates exact candidate identity, positive planned duration, monotonic timing, terminal/in-progress state shape, exact execution-count fields, and non-secret evidence identity arrays.
+The change is deliberately narrow. Both Day-7 deployment/rollback rehearsal evidence and Day-7 burn-in evidence now validate candidate identity once, bind it into the returned immutable record, and reject evidence when `candidateIdentity.recordedAtEpochMs` is later than execution start. Direct regressions cover post-hoc candidate identity for both evidence paths.
 
-### Independent verification findings and correction
+### Independent verification findings
 
-The incoming contracts validator had a real fail-open semantic regression despite green CI: it accepted `finalDisposition: "PASS"` when the burn-in record still contained failed executions and pending approvals. Its positive test fixture itself used `attempted: 4`, `completed: 2`, `failed: 1`, and `waitingApproval: 1` while claiming `PASS`.
+No runtime, architecture, security, trace-schema, persistence-ordering, provider-binding, credential, workflow-permission, approval-authority, or duplication defect was found in the incoming implementation. Requiring the candidate identity to exist no later than execution start closes a provenance gap without granting any new authority or converting conformance evidence into operational proof.
 
-That behavior conflicted with the already-landed event-store burn-in validator and the canonical Day-7 burn-in acceptance contract. The existing runtime semantics require a PASS burn-in to complete its planned duration, exercise non-vacuous governed work, finish every attempted execution without failures or pending approvals, include approval/failure-injection/ownership/persistence-reconciliation evidence, include regression and trace-completeness evidence, and contain no unresolved security findings or incidents.
+The concrete integration defect was canonical sprint-record drift: Issue #8, PR #10, and this status document still described the preceding corrected burn-in cycle and its 887-test baseline after the new runtime hardening had landed.
 
-The correction is intentionally narrow and reversible. `05e4a5e0…` aligns the contracts-layer PASS checks with those existing semantics; `349e4682…` fixes the valid fixture and adds direct regressions for vacuous PASS, failed or pending executions, missing approval/failure-injection/ownership/persistence evidence, missing regression/trace evidence, and unresolved security findings/incidents.
-
-No provider/database binding, credential scope, deployment authority, workflow permission, protected-action authority, production mutation capability, trace schema, persistence ordering, or blind-retry behavior was expanded. The two burn-in validators remain separate package-layer implementations; their PASS semantics are now aligned. Consolidating them would be a broader architectural refactor and is not justified in this correction cycle absent further evidence.
+No provider-specific runtime implementation was repeated. No production provider/database selection, credential scope expansion, deployment authority, protected-branch authority, workflow write permission, blind retry after ambiguous persistence, or irreversible infrastructure mutation was introduced.
 
 ### Verified CI evidence
 
-Corrected runtime head `349e468249f1adf34939dfba212ce0ab8953c87c` passed head-associated PR Contracts run `33234086276`, validating synthetic merge `7c9ab50e3a5d47b5539c98d345c10bcaa46ef480`.
+Runtime head `baba56e3e02f9fa7e58bc4ea605e43fcd0a7c395` passed PR Contracts run `33235172018`, validating synthetic merge `44c76022b5943fa574c125299c5c1c25dc6c37c0`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
 - SEC-20 vulnerability audit: `0 critical / 0 high / 0 moderate / 0 low / 0 info`.
 - Dependency inventory validation: passed.
 - Contracts and event-store typechecks: passed.
-- Contracts: **362/362** across 57 files.
+- Contracts: **364/364** across 57 files.
 - Event store: **525/525** across 95 files.
-- Total: **887/887**.
-- Day-7 rehearsal/burn-in evidence suite: **28/28 green**.
-- Durable candidate authorization: **8/8 green**.
-- Durable recovery-ownership adapter boundary: **10/10 green**.
-- Day-7 operational evidence: **16/16 green**.
-- Day-7 release-readiness composition: **17/17 green**.
-- Browser-observer conformance: **6/6 green**.
+- Total: **889/889**.
+- Day-7 rehearsal/burn-in evidence suite: **30/30 green**.
 - Actions permissions remain `contents: read`, `metadata: read`.
 - PR #10 has zero unresolved inline review threads.
 
 ### Architecture, security, trace, and evidence boundary
 
-The correction makes the machine-readable burn-in admission contract fail closed consistently; it does **not** convert schema validation or process-local tests into actual burn-in evidence. Real burn-in remains open until a candidate-bound run completes the pre-recorded duration under approved real adapters, exercises governed work and reversible failure injection, preserves complete same-run traces and evidence, reconciles persistence uncertainty, and meets the release acceptance rules.
+Candidate identity is now required to be pre-recorded relative to execution start for the Day-7 rehearsal and burn-in evidence contracts. This prevents a run from retroactively selecting or rebinding the candidate identity after execution begins. Equality is intentionally admitted, so an identity recorded at the exact execution-start epoch is not rejected.
+
+This remains evidence-shape/provenance validation, not proof that deployment, rollback, continuous burn-in, provider failover, real durable persistence, external durability, browser execution, telemetry export, or self-improvement execution actually occurred. Operational proof still requires candidate-bound execution against approved real adapters with complete same-run traces and evidence.
 
 `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** with architecture/operations decision **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the exact deployment mode/configuration revision is captured with non-secret evidence, the existing authorization validator passes, and explicit architecture/operations approval covers that same identity.
 
@@ -76,3 +68,24 @@ Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one out
 ### Integration rule
 
 Do not repeat completed provider-neutral contracts, candidate authorization, non-production admission, canonical approval timestamp validation, disabled-default enforcement, candidate-to-adapter binding, conformance definitions, candidate-template/evidence-matrix work, evidence-identity hardening, rehearsal/burn-in scaffolding, or release-evidence scaffolding unless a verified defect/regression requires correction. Do not treat green CI, schema/admission validation, process-local fixtures, capability declarations, or documentation records as real durability, provider selection, live execution, rehearsal completion, burn-in completion, or operational proof. Nothing is complete without build, test, execution, and trace evidence.
+
+---
+
+## 2026-08-28 — Prior verified sprint state
+
+### Canonical sprint baseline
+
+- Repository: `UniversalStandards/atlantis-ai-enhanced`
+- Sprint branch: `sprint/7-day-operational-alpha`
+- Primary PR: #10, targeting `main`
+- Prior verified documentation head: `48d8af888242f8e93c9d5b88e827c1712ba31b22`.
+- Incoming burn-in implementation head: `f573a60ebb3c0a8b8c1780d7385a3053561670d4`.
+- Corrected runtime evidence anchor: `349e468249f1adf34939dfba212ce0ab8953c87c`.
+
+Since that verification, the sprint advanced two incoming implementation commits / zero behind, followed by two scoped corrective commits:
+- `bf0b412180fadd7a0a2242a256377b58994921b8` — `feat: validate Day-7 burn-in evidence`.
+- `f573a60ebb3c0a8b8c1780d7385a3053561670d4` — `test: cover Day-7 burn-in evidence validation`.
+- `05e4a5e0c77de835f074435c72e8aeb6efbce6ba` — `fix(contracts): align Day-7 burn-in PASS semantics`.
+- `349e468249f1adf34939dfba212ce0ab8953c87c` — `test(contracts): reject invalid Day-7 burn-in PASS states`.
+
+The corrected runtime head passed 362/362 contracts + 525/525 event-store = 887/887 tests, and the contracts/event-store burn-in PASS semantics were aligned. That cycle remains historical evidence only; the current verified runtime anchor is recorded above.
