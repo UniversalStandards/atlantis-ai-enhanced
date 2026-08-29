@@ -119,9 +119,13 @@ export function validateDay7RehearsalEvidence(value: unknown): Day7RehearsalEvid
   if (!Array.isArray(record.evidenceIdentities) || record.evidenceIdentities.length === 0 || record.evidenceIdentities.some((item) => typeof item !== "string" || item.trim() === "")) {
     throw new InvalidDay7RehearsalEvidenceError("rehearsalEvidence.evidenceIdentities must contain non-empty evidence identities");
   }
-  const failureReason = record.failureReason;
-  if (record.result === "PASS" && failureReason !== null) throw new InvalidDay7RehearsalEvidenceError("PASS rehearsal evidence must not contain failureReason");
-  if (record.result !== "PASS" && (typeof failureReason !== "string" || failureReason.trim() === "")) throw new InvalidDay7RehearsalEvidenceError("non-PASS rehearsal evidence requires failureReason");
+  let failureReason: string | null;
+  if (record.result === "PASS") {
+    if (record.failureReason !== null) throw new InvalidDay7RehearsalEvidenceError("PASS rehearsal evidence must not contain failureReason");
+    failureReason = null;
+  } else {
+    failureReason = requireString("rehearsalEvidence.failureReason", record.failureReason);
+  }
 
   return Object.freeze({
     rehearsalId: requireString("rehearsalEvidence.rehearsalId", record.rehearsalId),
