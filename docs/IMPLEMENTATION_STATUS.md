@@ -1,57 +1,57 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-08-29 — Verified Day-7 telemetry-failure PASS hardening
+## 2026-08-29 — Verified duplicate Day-7 evidence-identity rejection
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Prior verified documentation head: `4a454390e9dfd12ecb55a3d515da014230551b8e`.
-- Current runtime evidence anchor: `33d5506a1df9dfc43272ec341573774b118f9779`.
+- Prior verified documentation head: `775b60974baf645561920dad493365797d0f2473`.
+- Current runtime evidence anchor: `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90`.
 
 Since the prior verification, the sprint advanced exactly two implementation commits / zero behind:
-- `f8b33ba3bc67f8f248623dac46f95b0c1100261b` — `fix(contracts): fail closed on telemetry failures in Day-7 PASS`.
-- `33d5506a1df9dfc43272ec341573774b118f9779` — `test(contracts): reject telemetry failures in Day-7 PASS`.
+- `a79706cc9f39001238b881dc9c727e9e046bde90` — `fix(contracts): reject duplicate Day-7 evidence identities`.
+- `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90` — `test(contracts): cover duplicate Day-7 evidence identities`.
 
-The change is deliberately narrow. Day-7 burn-in evidence can no longer receive `PASS` when `telemetryFailures` contains unresolved telemetry/export failures. A direct regression now exercises that fail-closed behavior.
+The change is deliberately narrow. The shared Day-7 string-array validator now rejects duplicate evidence identities, preventing one artifact/evidence reference from satisfying a multiplicity requirement more than once. Direct regressions cover both rehearsal `evidenceIdentities` and burn-in `regressionEvidence` duplicate cases.
 
 ### Independent verification findings
 
-No additional runtime, architecture, security, trace-schema, persistence-ordering, provider-binding, credential, workflow-permission, approval-authority, or duplication defect was found in the incoming implementation. The new guard closes a release-semantic gap without granting new authority or turning telemetry into an authoritative control plane.
+No additional runtime, architecture, security, trace-schema, persistence-ordering, provider-binding, credential, workflow-permission, approval-authority, or duplication defect was found in the incoming implementation. Centralizing uniqueness in the existing `requireStringArray` helper applies the invariant consistently to Day-7 evidence arrays without expanding authority or changing provider-neutral boundaries.
 
-The concrete integration defect was canonical sprint-record drift: Issue #8, PR #10, and this status document still described the preceding 889-test candidate-identity hardening cycle after the telemetry-failure guard had landed.
+The concrete integration defect was canonical sprint-record drift: Issue #8, PR #10, and this status document still described the preceding 890-test telemetry-failure cycle after duplicate-evidence rejection had landed.
 
 No provider-specific runtime implementation was repeated. No production provider/database selection, credential scope expansion, deployment authority, protected-branch authority, workflow write permission, blind retry after ambiguous persistence, or irreversible infrastructure mutation was introduced.
 
 ### Verified CI evidence
 
-Runtime head `33d5506a1df9dfc43272ec341573774b118f9779` passed PR Contracts run `33237555707`, validating synthetic merge `f6393358586b18e1c8b88caaf5d29175bf6c3201`.
+Runtime head `7ca7ad7d394fcfd6e878e322cb0d1f806584aa90` passed PR Contracts run `33239948606`, validating synthetic merge `4ac7f5d78373f4d38cd7aface653fea0d372206d`.
 
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed (`102` external package records / `102` integrity records; no direct unpinned HTTP/Git/file specifiers).
 - SEC-20 vulnerability audit: `0 critical / 0 high / 0 moderate / 0 low / 0 info`.
 - Dependency inventory validation: passed.
 - Contracts and event-store typechecks: passed.
-- Contracts: **365/365** across 57 files.
+- Contracts: **367/367** across 57 files.
 - Event store: **525/525** across 95 files.
-- Total: **890/890**.
-- Day-7 rehearsal/burn-in evidence suite: **31/31 green**.
+- Total: **892/892**.
+- Day-7 rehearsal/burn-in evidence suite: **33/33 green**.
 - Actions permissions remain `contents: read`, `metadata: read`.
 
 ### Architecture, security, trace, and evidence boundary
 
-A Day-7 burn-in `PASS` now requires zero unresolved telemetry failures in addition to the previously enforced non-vacuous execution, approval, reversible failure-injection, ownership, persistence-reconciliation, regression, trace-completeness, security, and incident conditions. Telemetry remains evidence/observability support and is not promoted to authoritative workflow state.
+Day-7 rehearsal and burn-in evidence arrays now fail closed when the same evidence identity is repeated. This prevents duplicate references from masquerading as independent evidence and aligns the contracts layer with the already-established uniqueness expectations in operational evidence handling.
 
 This remains evidence-shape and release-semantic validation, not proof that telemetry export, deployment, rollback, continuous burn-in, provider failover, real durable persistence, external durability, browser execution, or self-improvement execution actually occurred. Operational proof still requires candidate-bound execution against approved real adapters with complete same-run traces and evidence.
 
-`DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** with architecture/operations decision **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the exact deployment mode/configuration revision is captured with non-secret evidence, the existing authorization validator passes, and explicit architecture/operations approval covers that same identity.
+`docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION** with architecture/operations decision **PENDING**. Provider-specific durable-persistence implementation must not begin until one concrete non-production candidate is selected, the exact deployment mode/configuration revision is captured with non-secret evidence, the existing authorization validator passes, and explicit architecture/operations approval covers that same identity.
 
 Existing governed topology, replay, trace, accounting, release-evidence, recovery-ownership, immutable-writer, persistence-uncertainty, provider-failover, browser-observer, telemetry export, self-improvement, Day-7 operational evidence, deployment/rollback, and burn-in scaffolding remain intact.
 
 ### Current release blockers
 
-1. Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one bounded decision outcome, fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval for the exact candidate/configuration revision.
+1. Use `docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one bounded decision outcome, fully populate `docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval for the exact candidate/configuration revision.
 2. After approval, implement the first disabled-by-default durable `RecoveryOwnershipStore` / append persistence adapter and execute ownership baseline + durability/failure-injection + genuine provider-failover + fairness + applicable retention/compaction + immutable-writer + append-uncertainty gates across independent clients and restart/failover state.
 3. Select and approve exactly one external artifact-storage candidate and execute genuine external durability conformance.
 4. Populate and authorize one concrete browser candidate and execute browser-observer conformance against the real driver/session/navigation path.
@@ -62,7 +62,7 @@ Existing governed topology, replay, trace, accounting, release-evidence, recover
 
 ### Single next highest-leverage action
 
-Use `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one outcome — `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate` — then fully populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and obtain matching architecture and operations approvals. Do **not** begin provider-specific durable-persistence implementation before that approval record is complete.
+Use `docs/architecture/DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md` to record exactly one outcome — `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate` — then fully populate `docs/architecture/DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and obtain matching architecture and operations approvals. Do **not** begin provider-specific durable-persistence implementation before that approval record is complete.
 
 ### Integration rule
 
@@ -70,9 +70,15 @@ Do not repeat completed provider-neutral contracts, candidate authorization, non
 
 ---
 
+## 2026-08-29 — Prior verified telemetry-failure PASS hardening
+
+The preceding verified runtime anchor was `33d5506a1df9dfc43272ec341573774b118f9779`, with **365/365 contracts + 525/525 event-store = 890/890 tests**. That cycle made Day-7 burn-in PASS fail closed when unresolved telemetry failures are present. It remains historical evidence only; the current verified runtime anchor is recorded above.
+
+---
+
 ## 2026-08-29 — Prior verified candidate-identity pre-recording hardening
 
-The preceding verified runtime anchor was `baba56e3e02f9fa7e58bc4ea605e43fcd0a7c395`, with **364/364 contracts + 525/525 event-store = 889/889 tests**. That cycle established fail-closed pre-recording of Day-7 candidate identity relative to rehearsal/burn-in execution start. It remains historical evidence only; the current verified runtime anchor is recorded above.
+The preceding verified runtime anchor was `baba56e3e02f9fa7e58bc4ea605e43fcd0a7c395`, with **364/364 contracts + 525/525 event-store = 889/889 tests**. That cycle established fail-closed pre-recording of Day-7 candidate identity relative to rehearsal/burn-in execution start. It remains historical evidence only.
 
 ---
 
