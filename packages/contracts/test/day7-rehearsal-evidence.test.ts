@@ -36,6 +36,7 @@ describe("Day-7 rehearsal evidence", () => {
     ["unknown authority-bearing fields", { ...evidence, credential: "secret" }],
     ["noncanonical candidate SHA", { ...evidence, candidateIdentity: { ...identity, candidateHeadSha: "HEAD" } }],
     ["noncanonical lock digest", { ...evidence, candidateIdentity: { ...identity, dependencyLockDigest: "sha256:abc" } }],
+    ["post-hoc candidate identity", { ...evidence, candidateIdentity: { ...identity, recordedAtEpochMs: evidence.startedAtEpochMs + 1 } }],
     ["time reversal", { ...evidence, completedAtEpochMs: evidence.startedAtEpochMs - 1 }],
     ["PASS with failure reason", { ...evidence, failureReason: "ignored failure" }],
     ["BLOCKED without reason", { ...evidence, result: "BLOCKED", failureReason: null }],
@@ -48,6 +49,7 @@ describe("Day-7 rehearsal evidence", () => {
 
   it.each([
     ["unknown fields", { ...burnIn, token: "secret" }],
+    ["post-hoc candidate identity", { ...burnIn, candidateIdentity: { ...identity, recordedAtEpochMs: burnIn.startedAtEpochMs + 1 } }],
     ["zero planned duration", { ...burnIn, plannedDurationMs: 0 }],
     ["shortened PASS duration", { ...burnIn, endedAtEpochMs: burnIn.startedAtEpochMs + 59_999 }],
     ["terminal record without end", { ...burnIn, endedAtEpochMs: null }],
