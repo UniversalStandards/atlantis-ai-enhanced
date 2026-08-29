@@ -41,6 +41,7 @@ describe("Day-7 rehearsal evidence", () => {
     ["PASS with failure reason", { ...evidence, failureReason: "ignored failure" }],
     ["BLOCKED without reason", { ...evidence, result: "BLOCKED", failureReason: null }],
     ["missing evidence identities", { ...evidence, evidenceIdentities: [] }],
+    ["duplicate evidence identities", { ...evidence, evidenceIdentities: ["artifact:release-1", "artifact:release-1"] }],
   ])("fails closed for %s", (_name, candidate) => expect(() => validateDay7RehearsalEvidence(candidate)).toThrow(InvalidDay7RehearsalEvidenceError));
 
   it("accepts candidate-bound burn-in evidence after the planned duration", () => {
@@ -57,6 +58,7 @@ describe("Day-7 rehearsal evidence", () => {
     ["impossible execution counts", { ...burnIn, executionCounts: { attempted: 1, completed: 1, failed: 1, waitingApproval: 0 } }],
     ["unknown count field", { ...burnIn, executionCounts: { ...burnIn.executionCounts, skipped: 1 } }],
     ["non-evidence array value", { ...burnIn, incidents: [null] }],
+    ["duplicate evidence identity", { ...burnIn, regressionEvidence: ["regression:1", "regression:1"] }],
     ["vacuous PASS", { ...burnIn, executionCounts: { attempted: 0, completed: 0, failed: 0, waitingApproval: 0 } }],
     ["PASS with failed execution", { ...burnIn, executionCounts: { attempted: 4, completed: 3, failed: 1, waitingApproval: 0 } }],
     ["PASS with pending approval", { ...burnIn, executionCounts: { attempted: 4, completed: 3, failed: 0, waitingApproval: 1 } }],
