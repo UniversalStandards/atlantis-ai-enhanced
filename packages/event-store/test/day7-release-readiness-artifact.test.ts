@@ -50,7 +50,12 @@ describe("Day-7 release readiness artifact repository", () => {
     const original = backing.get("readiness-1")!;
     const parsed = JSON.parse(original) as Record<string, unknown>;
     const candidateIdentity = parsed.candidateIdentity as Record<string, unknown>;
-    backing.put("readiness-1", JSON.stringify({ ...parsed, candidateIdentity: { ...candidateIdentity, candidateHeadSha: "stale-head" } }));
-    expect(() => repository.load("readiness-1")).toThrow();
+    const substituted = JSON.stringify({ ...parsed, candidateIdentity: { ...candidateIdentity, candidateHeadSha: "stale-head" } });
+    const substitutedStorage: ExecutionReleaseArtifactStorage = {
+      put: (artifactId, serializedEvidence) => backing.put(artifactId, serializedEvidence),
+      get: (artifactId) => artifactId === "readiness-1" ? substituted : backing.get(artifactId),
+    };
+    const substitutedRepository = new Day7ReleaseReadinessArtifactRepository(substitutedStorage);
+    expect(() => substitutedRepository.load("readiness-1")).toThrow();
   });
 });
