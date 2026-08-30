@@ -3,6 +3,12 @@ import type { ExecutionReleaseEvidence } from "./execution-release-evidence.js";
 import { serializeExecutionReleaseEvidence } from "./execution-release-service.js";
 
 export interface ExecutionReleaseArtifactStorage {
+  /**
+   * Persist immutable governed bytes for artifactId. Implementations may treat
+   * an exact same-identity/same-content write as idempotent, but MUST return
+   * false (or fail) rather than overwrite an existing identity with divergent
+   * content.
+   */
   put(artifactId: string, serializedEvidence: string): boolean;
   get(artifactId: string): string | null;
 }
@@ -64,6 +70,10 @@ export class InMemoryExecutionReleaseArtifactStorage implements ExecutionRelease
   readonly #artifacts = new Map<string, string>();
 
   public put(artifactId: string, serializedEvidence: string): boolean {
+    const existing = this.#artifacts.get(artifactId);
+    if (existing !== undefined) {
+      return existing === serializedEvidence;
+    }
     this.#artifacts.set(artifactId, serializedEvidence);
     return true;
   }
