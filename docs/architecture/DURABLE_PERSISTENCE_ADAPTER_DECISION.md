@@ -2,13 +2,21 @@
 
 ## Status
 
-Decision-preparation artifact for the ATLANTIS seven-day operational-alpha sprint. This document does **not** select a provider, database, cloud service, credential model, network path, deployment topology, transaction primitive, or production authority.
+Decision-preparation artifact for the ATLANTIS seven-day operational-alpha sprint. This document does **not** select a provider, database, cloud service, credential model, network path, deployment topology, transaction primitive, workflow framework, or production authority.
 
 ## Decision required
 
 The next concrete durable recovery-ownership / append adapter must select an implementation substrate capable of satisfying the already-landed provider-neutral contracts. That production choice is architecture-gated because it affects durability semantics, atomicity, failure modes, credentials, network permissions, operations, and deployment.
 
 The decision is not whether ATLANTIS needs durability; that requirement is already fixed. The decision is which approved substrate can prove the required semantics with the least additional trusted surface.
+
+## Orchestration / persistence separation
+
+`DURABLE_PROGRAM_MODEL.md` is now an explicit companion architecture constraint. Its central rule is that normal program control flow should remain the preferred source of orchestration meaning where feasible, while persistence, scheduling, recovery, hooks, queues, and version-safe execution remain behind provider-neutral runtime boundaries.
+
+Accordingly, this decision gate selects only a durable persistence substrate. It MUST NOT silently select a workflow authoring framework, hosted orchestration control plane, vendor-specific DAG/history format, compiler transform, or worker topology. PostgreSQL, Azure Cosmos DB, or any future storage candidate is infrastructure behind ATLANTIS contracts rather than the workflow language or ATLANTIS itself.
+
+Any later workflow-runtime candidate must independently prove that it preserves ATLANTIS authorization, approval, execution identity, bounded retry, cancellation, uncertainty reconciliation, immutable evidence, independent verification, and version-safe recovery. Convenience features do not supersede those invariants.
 
 ## Mandatory acceptance criteria
 
@@ -61,11 +69,11 @@ Before a candidate can be called the first durable adapter, the decision record 
 
 ## Rejection conditions
 
-Reject a candidate if correctness depends on blind retry after ambiguous writes, wall-clock-only ownership without fencing, process-local memory for authoritative state, eventual observation that cannot prove exact settlement within the required operation model, destructive reconciliation, secret-bearing evidence, privileged workflow permissions not separately approved, or weakening an existing conformance assertion to make the adapter pass.
+Reject a candidate if correctness depends on blind retry after ambiguous writes, wall-clock-only ownership without fencing, process-local memory for authoritative state, eventual observation that cannot prove exact settlement within the required operation model, destructive reconciliation, secret-bearing evidence, privileged workflow permissions not separately approved, hidden workflow-runtime semantics that bypass canonical ATLANTIS contracts, or weakening an existing conformance assertion to make the adapter pass.
 
 ## Reversible integration shape
 
-Provider-specific code should implement the existing provider-neutral ports behind an explicit disabled-by-default registration boundary. Provider selection must not alter the canonical contracts. Tests should register the concrete adapter into the existing conformance suites. A provider-specific supplement may contain configuration names and non-secret topology, while credentials remain outside the repository.
+Provider-specific code should implement the existing provider-neutral ports behind an explicit disabled-by-default registration boundary. Provider selection must not alter the canonical contracts or workflow source semantics. Tests should register the concrete adapter into the existing conformance suites. A provider-specific supplement may contain configuration names and non-secret topology, while credentials remain outside the repository.
 
 ## Decision exit criterion
 
