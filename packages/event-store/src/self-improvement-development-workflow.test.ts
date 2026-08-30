@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   InvalidSelfImprovementPatchEvidenceError,
   SelfImprovementEvaluationDidNotFailError,
+  SelfImprovementOperationalFeatureGateDisabledError,
+  proposeSelfImprovementFromAuthorizedOperationalCandidate,
   proposeSelfImprovementFromFailedEvaluation,
   type SelfImprovementPatchEvidence,
   type SelfImprovementPatchRequest,
@@ -36,6 +38,38 @@ function patchEvidence(overrides: Partial<SelfImprovementPatchEvidence> = {}): S
     securityReviewPassed: true,
     ...overrides,
   };
+}
+
+function operationalAuthorization() {
+  return Object.freeze({
+    candidateId: "self-improvement-nonprod-candidate-1",
+    executionEnvironment: "non-production" as const,
+    repository: "UniversalStandards/atlantis-ai-enhanced",
+    baseRevision: "test-base-revision",
+    isolatedWorkspaceNamespace: "proposal/",
+    workspaceMechanism: "isolated development workspace adapter",
+    patchGenerationMechanism: "evidence-backed patch generator",
+    testExecutionMechanism: "bounded package test runner",
+    followUpEvaluationMechanism: "deterministic follow-up evaluator",
+    securityReviewMechanism: "bounded security review adapter",
+    evidenceStorageMechanism: "immutable proposal evidence artifact set",
+    configurationDigest: "sha256:test-configuration-digest",
+    credentialClass: "non-production repository development credential",
+    networkBoundary: "repository-only non-production development boundary",
+    timeoutCancellationMechanism: "bounded timeout with cancellation",
+    teardownCleanupMechanism: "discard isolated workspace and branch",
+    disableRollbackProcedure: "disable feature gate and discard isolated workspace",
+    verificationGates: "tests, follow-up evaluation, security review, human review stop",
+    failureInjectionPlan: "adapter timeout, test failure, evaluation failure, security review failure",
+    featureGateDefault: "disabled" as const,
+    authorityBoundary: "no-prohibited-authority" as const,
+    decisionEvidence: "test fixture exercising canonical operational admission contract",
+    approvals: Object.freeze([
+      Object.freeze({ role: "architecture" as const, approvedBy: "test-architecture", approvedAt: "2026-08-30T00:00:00.000Z" }),
+      Object.freeze({ role: "operations" as const, approvedBy: "test-operations", approvedAt: "2026-08-30T00:00:00.000Z" }),
+      Object.freeze({ role: "security-network" as const, approvedBy: "test-security-network", approvedAt: "2026-08-30T00:00:00.000Z" }),
+    ]),
+  });
 }
 
 describe("proposeSelfImprovementFromFailedEvaluation", () => {
@@ -107,5 +141,47 @@ describe("proposeSelfImprovementFromFailedEvaluation", () => {
         generate: async () => Object.freeze(patchEvidence({ isolatedBranch: "main" })),
       }),
     ).rejects.toThrow("isolatedBranch must use an isolated sprint/ or proposal/ branch namespace");
+  });
+});
+
+describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
+  it("reuses canonical operational authorization and still stops at human review", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+
+    const proposal = await proposeSelfImprovementFromAuthorizedOperationalCandidate(
+      failedRequest,
+      { generate },
+      { authorization: operationalAuthorization(), featureGateEnabled: true },
+    );
+
+    expect(generate).toHaveBeenCalledOnce();
+    expect(proposal.status).toBe("awaiting-human-review");
+  });
+
+  it("fails closed while the operational feature gate remains disabled", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        { authorization: operationalAuthorization(), featureGateEnabled: false },
+      ),
+    ).rejects.toBeInstanceOf(SelfImprovementOperationalFeatureGateDisabledError);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed authorization before patch generation", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const malformed = { ...operationalAuthorization(), approvals: [] };
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        { authorization: malformed, featureGateEnabled: true },
+      ),
+    ).rejects.toThrow("exactly one architecture approval is required");
+    expect(generate).not.toHaveBeenCalled();
   });
 });
