@@ -58,4 +58,13 @@ describe("Day-7 burn-in release evidence", () => {
       "burn-in evidence identities must be unique across evidence roles",
     );
   });
+
+  it("preserves incident evidence on PASS when all terminal release conditions are satisfied", () => {
+    const evidence: BurnInEvidence = {
+      ...completeBurnIn(),
+      incidents: ["incident-resolved-1"],
+    };
+
+    expect(validateBurnInEvidence(evidence).incidents).toEqual(["incident-resolved-1"]);
+  });
 });
