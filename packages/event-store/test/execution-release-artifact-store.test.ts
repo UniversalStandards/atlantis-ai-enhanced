@@ -22,6 +22,14 @@ describe("execution release artifact repository", () => {
     expect(JSON.parse(serialized)).toEqual(evidence);
   });
 
+  it("preserves immutable identities while allowing exact idempotent writes", () => {
+    const storage = new InMemoryExecutionReleaseArtifactStorage();
+    expect(storage.put("artifact-immutable", "governed-bytes")).toBe(true);
+    expect(storage.put("artifact-immutable", "governed-bytes")).toBe(true);
+    expect(storage.put("artifact-immutable", "substituted-bytes")).toBe(false);
+    expect(storage.get("artifact-immutable")).toBe("governed-bytes");
+  });
+
   it("fails closed when storage does not acknowledge persistence", () => {
     const storage: ExecutionReleaseArtifactStorage = {
       put: () => false,
