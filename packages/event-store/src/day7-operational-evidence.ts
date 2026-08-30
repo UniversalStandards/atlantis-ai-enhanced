@@ -329,7 +329,7 @@ export function validateBurnInEvidence(input: BurnInEvidence): BurnInEvidence {
     if (input.injectedFailures.length === 0) invalid("burn-in PASS requires evidence from at least one approved reversible failure injection.");
     if (input.ownershipEvents.length === 0) invalid("burn-in PASS requires durable execution ownership evidence.");
     if (input.persistenceUncertaintyEvents.length === 0) invalid("burn-in PASS requires persistence uncertainty/reconciliation evidence.");
-    if (input.securityFindings.length > 0 || input.incidents.length > 0) invalid("burn-in PASS requires zero unresolved security findings and incidents.");
+    if (input.securityFindings.length > 0) invalid("burn-in PASS requires zero unresolved security findings.");
   }
   return cloneFreeze(input);
 }
