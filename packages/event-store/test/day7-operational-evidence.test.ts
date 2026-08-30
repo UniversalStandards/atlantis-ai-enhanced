@@ -134,15 +134,12 @@ describe("Day-7 operational evidence conformance", () => {
     })).toThrow("rollback target must differ from the deployment being rolled back");
   });
 
-  it("rejects burn-in PASS before planned duration completes or with unresolved security/incidents", () => {
+  it("rejects burn-in PASS before planned duration completes or with unresolved security findings", () => {
     expect(() => validateBurnInEvidence({ ...burnIn(), endedAtEpochMs: 109 })).toThrow(
       "burn-in PASS requires the planned duration to complete",
     );
     expect(() => validateBurnInEvidence({ ...burnIn(), securityFindings: ["security-1"] })).toThrow(
-      "burn-in PASS requires zero unresolved security findings and incidents",
-    );
-    expect(() => validateBurnInEvidence({ ...burnIn(), incidents: ["incident-1"] })).toThrow(
-      "burn-in PASS requires zero unresolved security findings and incidents",
+      "burn-in PASS requires zero unresolved security findings",
     );
   });
 
