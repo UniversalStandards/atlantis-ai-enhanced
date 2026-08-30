@@ -76,7 +76,11 @@ Evidence-supported observations:
 | Failover | Native WAL documentation does not establish a remote replica/failover mechanism | This is a major gap against the sprint's provider-failover threshold unless another approved durable/failover layer is introduced |
 | Ambiguous client outcome | Local transactional semantics do not remove process/crash ambiguity at the adapter boundary | Unknown completion must still settle through authoritative readback without blind retry |
 
-Open evidence before selection: whether a single-host topology can satisfy the required provider-failover threshold at all, exact SQLite version/driver, journal/synchronous settings, host-storage durability, fencing representation, failure injection, restart boundary, and any separately approved replication/failover layer.
+### Day-7 disposition
+
+**NOT SELECTABLE FOR THE CURRENT DAY-7 DURABLE-PERSISTENCE GATE AS EVIDENCED.** The sprint requires a credible concrete alternate replica/provider/failover path, while the reviewed SQLite WAL topology is same-host and provides no native remote failover proof. Adding a replication, coordination, or failover layer would itself introduce another unresolved major architecture choice. Candidate C may be reconsidered only if an explicit additional architecture is separately proposed, evidenced, and approved; that reconsideration does not authorize implementation.
+
+This disposition is a threshold application, not a production-provider choice: it follows the matrix's existing deterministic acceptance criterion and explicit disqualifier that a candidate with no credible path to the required genuine failover gate is not selectable for Day-7.
 
 ## Comparative decision matrix
 
@@ -89,6 +93,7 @@ Open evidence before selection: whether a single-host topology can satisfy the r
 | Architecture-sensitive partition/schema choice | Schema/constraints/transaction design | Logical partition key is transaction boundary | File/host topology and schema |
 | Durability configuration can materially weaken guarantees | Yes | Consistency/topology choices materially affect guarantees | Yes (`synchronous`, journal/checkpoint/storage choices) |
 | ATLANTIS uncertainty reconciliation still required | Yes | Yes | Yes |
+| Day-7 selectable on current evidence | **Pending approval/evidence** | **Pending approval/evidence** | **No — failover threshold unmet** |
 | Ready to implement without approval | **No** | **No** | **No** |
 
 ## Deterministic selection acceptance criteria
@@ -120,19 +125,21 @@ A candidate is not selectable for the Day-7 durable adapter when any of the foll
 
 ## Decision handoff
 
-The architecture/operations decision should be recorded as one of exactly four outcomes: `SELECT Candidate A`, `SELECT Candidate B`, `SELECT Candidate C`, or `NO SELECTION — request additional evidence/candidate`. A selection is valid only when the exact deployment mode/configuration revision is simultaneously captured in `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and passes the existing candidate-authorization validator. The selection authorizes only disabled-by-default non-production adapter implementation and conformance execution.
+The architecture/operations decision should now be recorded as one of exactly three current Day-7 outcomes: `SELECT Candidate A`, `SELECT Candidate B`, or `NO SELECTION — request additional evidence/candidate`. Candidate C is not a current selection outcome because its reviewed native topology fails the existing failover threshold; it can return to the decision set only with separately approved evidence for an additional architecture layer.
 
-This handoff deliberately does not rank or choose a provider. It makes the next human architecture decision bounded, auditable, and directly convertible into the already-landed machine admission path.
+A selection is valid only when the exact deployment mode/configuration revision is simultaneously captured in `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md` and passes the existing candidate-authorization validator. The selection authorizes only disabled-by-default non-production adapter implementation and conformance execution.
+
+This handoff deliberately does not rank or choose between the remaining provider families. It makes the next human architecture decision bounded, auditable, and directly convertible into the already-landed machine admission path.
 
 ## Decision blockers that remain
 
-1. Architecture/operations must select exactly one non-production candidate or explicitly request another candidate for evidence review.
+1. Architecture/operations must select exactly one of the two currently admissible non-production candidate families or explicitly request another candidate for evidence review.
 2. The selected candidate's exact service/deployment mode, version, driver/SDK, topology, transaction/conditional primitive, consistency/durability settings, credential class, network boundary, failure-injection method, and reversible teardown path must populate `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`.
 3. Any topology relying on failover must document what constitutes authoritative state before, during, and after failover and how an ambiguous append is settled without replaying the mutation.
 4. Selection authorizes only disabled-by-default non-production adapter implementation and conformance execution. It does not authorize production deployment.
 
 ## Current conclusion
 
-The evidence is sufficient to make the next architecture review concrete but **not** to select a winner automatically. PostgreSQL and Cosmos DB each expose documented primitives that could plausibly support the ATLANTIS invariants with different topology/semantic tradeoffs. SQLite provides strong local transactional properties but its documented WAL topology leaves the sprint's remote/provider-failover requirement unresolved without an additional architecture layer.
+The evidence now narrows the current Day-7 decision set to PostgreSQL 18-class, Azure Cosmos DB for NoSQL, or no selection/request-more-evidence. PostgreSQL and Cosmos DB each expose documented primitives that could plausibly support the ATLANTIS invariants with different topology/semantic tradeoffs. SQLite retains useful local transactional properties but, on the reviewed native WAL evidence, does not meet the sprint's required genuine failover threshold without an additional unapproved architecture layer.
 
 Until an explicit selection is recorded, continue independent browser, telemetry, self-improvement, external-artifact, governed-run, deployment/rollback, and burn-in workstreams.
