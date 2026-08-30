@@ -34,13 +34,14 @@ Reconciliation head `46109ad67e2b301045209188da93780403e54cb0` passed Contracts 
 
 Documentation reconciliation head `297168c28328e7b02b3ea5b3b5c5c3b6f9a2e63c` passed Contracts run `33273619293`.
 
+The current independently verified runtime baseline is **370/370 contracts + 529/529 event-store = 899/899 tests**, confirmed by exact-head Contracts run `33291575590` for `bfcf82c63b02d0f586577a163ff43ab23135802f`. Later documentation-only reconciliation commits must pass their own CI before becoming completed evidence anchors; they do not change the runtime test count unless runtime/tests change.
+
 - `pnpm install --frozen-lockfile`: passed.
 - SEC-20 lockfile/source integrity gate: passed.
 - SEC-20 structured vulnerability audit: passed.
 - Dependency inventory validation: passed.
 - Typecheck: passed.
 - Tests: passed.
-- Verified test baseline remains **370/370 contracts + 526/526 event-store = 896/896 tests**.
 - Day-7 rehearsal evidence remains **36/36**.
 - Day-7 release readiness remains **18/18**.
 - SEC-20 lockfile integrity remains **102 external package records / 102 integrity records**.
@@ -57,7 +58,7 @@ A documentation-only commit is promoted to a completed evidence anchor only afte
 
 Telemetry remains behind its existing non-authoritative boundary and `TELEMETRY_SDK_COLLECTOR_CANDIDATE_RECORD.md` remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**.
 
-Green CI and candidate records are not deployment, rollback, burn-in, durable persistence, genuine provider failover, external artifact durability, live browser/telemetry/self-improvement execution, or complete same-run operational trace proof.
+Green CI and candidate records are not deployment, rollback, burn-in, durable persistence, genuine provider failover, external artifact durability, live browser/telemetry/self-improvement execution, real-provider benchmark evidence, or complete same-run operational trace proof.
 
 ### Current release blockers
 
