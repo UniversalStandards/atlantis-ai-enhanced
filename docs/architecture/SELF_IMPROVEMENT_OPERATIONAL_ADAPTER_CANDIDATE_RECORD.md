@@ -17,28 +17,40 @@ The selected bundle MUST reuse these existing ports unchanged:
 - `SelfImprovementPatchEvaluator`
 - `SelfImprovementPatchSecurityReviewer`
 
-## Candidate identity
+## Prepared Candidate A dossier — non-authorizing
 
-Complete every field before approval. Do not include secrets.
+The following values narrow Candidate A for review without selecting or authorizing it. Values marked `PENDING APPROVAL/EXECUTION BINDING` must be resolved before implementation or execution.
 
-| Field | Candidate value |
+| Field | Candidate A prepared value |
 | --- | --- |
-| Candidate ID | UNSELECTED |
+| Candidate ID | `candidate-a-local-worktree-v1` — PROPOSED, NOT SELECTED |
 | Repository | `UniversalStandards/atlantis-ai-enhanced` |
-| Base revision | UNSELECTED |
-| Isolated branch/workspace namespace | `proposal/` or `sprint/` |
-| Workspace mechanism + version | UNSELECTED |
-| Patch-generation mechanism/runtime + version | UNSELECTED |
-| Test execution mechanism + version | UNSELECTED |
-| Follow-up evaluation mechanism + version | UNSELECTED |
-| Security-review mechanism + version | UNSELECTED |
-| Evidence/artifact storage mechanism | UNSELECTED |
-| Configuration digest | UNSELECTED |
-| Credential class required | UNSELECTED |
-| Network boundary required | UNSELECTED |
-| Timeout/cancellation mechanism | UNSELECTED |
-| Teardown/cleanup mechanism | UNSELECTED |
-| Disable/rollback procedure | UNSELECTED |
+| Base revision | `f65e15039fa889e9e25791cbd91d1311a6b496ea` for this decision snapshot; acceptance run MUST bind the then-approved immutable base SHA |
+| Isolated branch/workspace namespace | `proposal/<run-id>` only |
+| Workspace mechanism + version | repository-local `git worktree`; exact Git version recorded at execution — PENDING APPROVAL/EXECUTION BINDING |
+| Patch-generation mechanism/runtime + version | existing `EvidenceBackedSelfImprovementPatchGenerator`; exact source revision = approved base SHA; no alternate generator |
+| Test execution mechanism + version | repository-native Node 22 + pnpm 10.14.0 verification bundle |
+| Follow-up evaluation mechanism + version | exact triggering evaluation or existing canonical acceptance equivalent at approved base SHA |
+| Security-review mechanism + version | existing SEC-20 source/lock integrity, structured audit when authorized/available, dependency inventory, and existing self-improvement security-review port at approved base SHA |
+| Evidence/artifact storage mechanism | non-secret local run evidence only; external/durable publication remains separately gated |
+| Configuration digest | SHA-256 over canonical candidate configuration + approved base SHA; calculated before execution — PENDING EXECUTION BINDING |
+| Credential class required | none for bounded local harness; any GitHub/private-package/external-evidence credential is OUT OF SCOPE pending separate approval |
+| Network boundary required | no new destinations; package installation/audit network use only if explicitly approved, otherwise affected network-dependent gate = BLOCKED |
+| Timeout/cancellation mechanism | bounded child-process timeout/cancellation with fail-closed disposition; exact numeric bounds — PENDING APPROVAL |
+| Teardown/cleanup mechanism | finalize non-secret evidence, remove isolated worktree, abandon/delete only `proposal/<run-id>` branch, preserve protected branch unchanged |
+| Disable/rollback procedure | adapter off by default and absent from production composition; abandon candidate worktree/branch and retain only non-secret evidence |
+
+### Candidate A authority invariants
+
+The prepared candidate is admissible only with all of these values fixed as `false`/absent:
+
+- `protectedBranchWriteAuthority=false`
+- `mergeAuthority=false`
+- `deploymentAuthority=false`
+- `credentialMutationAuthority=false`
+- `infrastructureMutationAuthority=false`
+- `policyMutationAuthority=false`
+- `productionRuntimeMutationAuthority=false`
 
 ## Authority boundary
 
@@ -62,18 +74,24 @@ The authorized candidate MUST preserve the existing operational sequence without
 
 The operational run MUST use the repository's existing validators, generator, proposal contract, and applicable test/security gates. Caller-supplied PASS text is not evidence.
 
-## Verification commands and gates
+## Prepared verification sequence
 
-Before approval, populate the exact commands or repository-native gate identifiers that the candidate will execute for:
+Candidate A reuses the repository-native verification path already exercised by the Contracts workflow:
 
-1. workspace/repository integrity;
-2. applicable typecheck;
-3. applicable regression tests;
-4. applicable security gates, including existing SEC-20 supply-chain admission where dependencies change;
-5. follow-up evaluation corresponding to the triggering failed evaluation;
-6. immutable proposal validation.
+1. bind repository, approved immutable base SHA, `proposal/<run-id>` branch, worktree path, runtime versions, and configuration digest;
+2. verify worktree HEAD equals the approved base before patching and protected branch remains untouched;
+3. `pnpm install --frozen-lockfile`;
+4. `node scripts/sec20-supply-chain-gate.mjs`;
+5. run `pnpm audit --json` followed by the existing SEC-20 audit gate only when package-registry network access is explicitly approved/available; otherwise record **BLOCKED**, never PASS;
+6. run the Contracts-workflow-equivalent dependency inventory validation;
+7. `pnpm typecheck`;
+8. `pnpm test`;
+9. execute the exact triggering follow-up evaluation or its existing canonical acceptance equivalent;
+10. execute the existing self-improvement security review and immutable proposal validation;
+11. verify final disposition is `awaiting-human-review` and all prohibited-authority invariants remain false;
+12. finalize non-secret evidence, then perform bounded teardown.
 
-Commands MUST be bounded to the isolated candidate workspace and MUST NOT mutate protected branches or production state.
+No new verification model is introduced. Exact numeric timeout/cancellation bounds and any network-enabled step remain approval-bound.
 
 ## Evidence contract
 
@@ -114,17 +132,30 @@ Failure injection MUST reuse existing generator/proposal validators and reposito
 
 ## Secret and network safety
 
-Before approval, document the minimum credential class and network destinations, if any, without committing token values, environment secrets, private keys, or sensitive process state. Any new credential, hosted execution authority, workflow-token permission, or network expansion requires explicit security/operations approval before that mutation occurs.
+Candidate A's bounded local harness requires no credential by default. Before any network-enabled installation/audit step, hosted execution, private dependency access, GitHub write, or external evidence publication is introduced, the minimum credential class and exact network destinations must be documented and explicitly approved without committing token values, environment secrets, private keys, or sensitive process state.
+
+Any new credential, hosted execution authority, workflow-token permission, or network expansion requires explicit security/operations approval before that mutation occurs.
 
 ## Reversibility
 
 The candidate MUST be disabled by default. Its isolated branch/workspace MUST be abandonable without changing protected branches or production state. Teardown MUST leave enough immutable evidence to diagnose a failed run without retaining credentials or sensitive runtime state.
 
+## Remaining decisions before Candidate A can be selected
+
+1. architecture/operations approval for local Git worktree and bounded local process execution;
+2. exact numeric timeout and cancellation bounds;
+3. explicit decision on package-registry network access for install/audit during the acceptance run, or acceptance that the affected network-dependent gate remains BLOCKED;
+4. exact approved immutable base SHA for the acceptance run;
+5. confirmation that the triggering evaluation/canonical equivalent to be used is the repository-native one bound to that base SHA;
+6. security/network approval confirming no credentials and no network expansion beyond any explicitly allowed package-registry path.
+
+These are decision inputs, not implicit authorization.
+
 ## Acceptance criteria
 
 Approval may be granted only when:
 
-1. every candidate identity field is populated from authoritative mechanism/runtime documentation;
+1. every execution-bound candidate identity field is populated from authoritative mechanism/runtime evidence;
 2. architecture/operations owners explicitly accept the workspace/runtime and lifecycle model;
 3. security/network owners explicitly accept any credential or network boundary;
 4. prohibited authorities remain absent;
@@ -138,9 +169,10 @@ Approval may be granted only when:
 
 - Architecture/operations decision: **PENDING**
 - Security/network decision: **PENDING**
+- Candidate selection: **NO SELECTION**
 - Candidate implementation authorized: **NO**
 - Operational execution authorized: **NO**
 
 ## Exit criterion
 
-This record becomes implementation-ready only after exactly one candidate is fully populated and explicitly approved. It does not itself satisfy Issue #7 or the Day-7 self-improvement gate. Completion requires a real isolated run with immutable evidence proving the existing generator reached `awaiting-human-review` and exercised no prohibited authority.
+This record becomes implementation-ready only after exactly one candidate is fully execution-bound and explicitly approved. It does not itself satisfy Issue #7 or the Day-7 self-improvement gate. Completion requires a real isolated run with immutable evidence proving the existing generator reached `awaiting-human-review` and exercised no prohibited authority.
