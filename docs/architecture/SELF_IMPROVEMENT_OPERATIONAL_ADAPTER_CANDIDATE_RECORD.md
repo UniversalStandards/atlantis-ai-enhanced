@@ -25,7 +25,7 @@ The following values narrow Candidate A for review without selecting or authoriz
 | --- | --- |
 | Candidate ID | `candidate-a-local-worktree-v1` — PROPOSED, NOT SELECTED |
 | Repository | `UniversalStandards/atlantis-ai-enhanced` |
-| Base revision | `f65e15039fa889e9e25791cbd91d1311a6b496ea` for this decision snapshot; acceptance run MUST bind the then-approved immutable base SHA |
+| Base revision | `8a7275e43ac9def1a528dc6d9874af2233b7058b` for this decision snapshot (exact-head Contracts run `33332495970` / #875 successful); acceptance run MUST bind the then-approved immutable base SHA and MUST NOT infer execution authorization from this snapshot |
 | Isolated branch/workspace namespace | `proposal/<run-id>` only |
 | Workspace mechanism + version | repository-local `git worktree`; exact Git version recorded at execution — PENDING APPROVAL/EXECUTION BINDING |
 | Patch-generation mechanism/runtime + version | existing `EvidenceBackedSelfImprovementPatchGenerator`; exact source revision = approved base SHA; no alternate generator |
