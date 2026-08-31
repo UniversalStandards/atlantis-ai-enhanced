@@ -110,6 +110,16 @@ An authorized reviewer must select exactly one candidate and approve its non-pro
 
 Selection is not production authorization and is not Day-7 release proof. Production enablement remains separately approval gated.
 
+## Bounded decision outcome
+
+To prevent the architecture gate from becoming an ambiguous build-cycle stop, the next authorized decision must record exactly one of these outcomes:
+
+1. `SELECT Candidate A` — adopt the current PostgreSQL proposal only for disabled-by-default, approved non-production conformance implementation; this does not authorize production enablement, credentials, infrastructure provisioning, or deployment.
+2. `SELECT Candidate B` — identify the alternative candidate and fully populate the same identity, semantic, error, failure-injection, credential/network, rollback, and executable-admission evidence requirements before provider-specific implementation.
+3. `NO SELECTION — request additional evidence/candidate` — state the exact missing evidence or candidate property. Provider-specific implementation remains blocked, but all independent safe workstreams continue.
+
+A selection is valid only when architecture and operations approval identify the same candidate and non-production execution boundary. Any mismatch remains `PENDING`. Security-sensitive permissions, credentials, network expansion, production deployment authority, and irreversible semantics remain separate approvals and cannot be inferred from this outcome.
+
 ## Rejection triggers
 
 Reject the candidate if it requires blind retry after ambiguity, wall-clock-only ownership without fencing, process-local authoritative state, eventual observation incapable of exact settlement, destructive reconciliation, secret-bearing evidence, privileged workflow permissions not separately approved, hidden provider-specific semantics in canonical contracts, or weakening any existing conformance assertion.
