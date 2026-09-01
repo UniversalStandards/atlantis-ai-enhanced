@@ -37,7 +37,9 @@ jobs:
         run: |
           pnpm list --json --depth Infinity > sec20-dependency-inventory.json
           node -e 'const fs=require("node:fs"); const inventory=JSON.parse(fs.readFileSync("sec20-dependency-inventory.json","utf8")); if (!Array.isArray(inventory) || inventory.length === 0) process.exit(1); console.log(`SEC-20 dependency inventory generated for ${inventory.length} workspace root(s).`);'
-      - name: Release-control evidence probe syntax gate
-        run: node --check scripts/release-control-evidence.mjs
+      - name: Release-control evidence probe contract
+        run: |
+          node --check scripts/release-control-evidence.mjs
+          node scripts/release-control-evidence.mjs --self-test
       - run: pnpm typecheck
       - run: pnpm test
