@@ -79,6 +79,8 @@ Immediately after mutation:
 5. run the applicable release-control enforcement probe;
 6. update Issue #8 and PR #10 with mechanism, exact configuration, verification evidence, and rollback state.
 
-## Current live evidence
+## Evidence freshness rule
 
-As of 2026-09-01, `main` remains unprotected and required-status-check enforcement is off. The current PR head is `f3275daca2a3cf9293a4f6300b3db6e4620ac2a4`; its `validate` check from GitHub Actions app id `15368` completed successfully. No mechanism is selected by this document.
+Do not treat a commit SHA or check-run id recorded in this document as live repository state. `main` protection, repository rulesets, PR #10 head/state, and the exact `validate` check identity MUST be re-queried immediately before any repository-settings mutation.
+
+Last captured verification before this maintenance correction (2026-09-01): `main` was unprotected, required-status enforcement was off, repository rulesets were empty, PR #10 was open/draft/mergeable, and the then-current sprint head `6a1ac1c9e8fa38fba574402444409a1afd6353ef` had a successful `validate` check from GitHub Actions app id `15368`. This paragraph is historical evidence only and must not be used as a substitute for the pre-mutation checklist above.
