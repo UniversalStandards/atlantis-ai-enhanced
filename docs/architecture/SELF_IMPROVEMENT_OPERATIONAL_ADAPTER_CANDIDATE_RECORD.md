@@ -25,7 +25,7 @@ The following values narrow Candidate A for review without selecting or authoriz
 | --- | --- |
 | Candidate ID | `candidate-a-local-worktree-v1` — PROPOSED, NOT SELECTED |
 | Repository | `UniversalStandards/atlantis-ai-enhanced` |
-| Base revision | `8a7275e43ac9def1a528dc6d9874af2233b7058b` for this decision snapshot (exact-head Contracts run `33332495970` / #875 successful); acceptance run MUST bind the then-approved immutable base SHA and MUST NOT infer execution authorization from this snapshot |
+| Base revision | `f9c89e2ad5af93afcbd05947c97f4b493b1d2549` for this decision snapshot (exact-head Contracts run `33529294577` / #893 successful); acceptance run MUST bind the then-approved immutable base SHA and MUST NOT infer execution authorization from this snapshot |
 | Isolated branch/workspace namespace | `proposal/<run-id>` only |
 | Workspace mechanism + version | repository-local `git worktree`; exact Git version recorded at execution — PENDING APPROVAL/EXECUTION BINDING |
 | Patch-generation mechanism/runtime + version | existing `EvidenceBackedSelfImprovementPatchGenerator`; exact source revision = approved base SHA; no alternate generator |
@@ -36,7 +36,7 @@ The following values narrow Candidate A for review without selecting or authoriz
 | Configuration digest | SHA-256 over canonical candidate configuration + approved base SHA; calculated before execution — PENDING EXECUTION BINDING |
 | Credential class required | none for bounded local harness; any GitHub/private-package/external-evidence credential is OUT OF SCOPE pending separate approval |
 | Network boundary required | no new destinations; package installation/audit network use only if explicitly approved, otherwise affected network-dependent gate = BLOCKED |
-| Timeout/cancellation mechanism | bounded child-process timeout/cancellation with fail-closed disposition; exact numeric bounds — PENDING APPROVAL |
+| Timeout/cancellation mechanism | bounded child-process timeout/cancellation with fail-closed disposition; exact numeric bounds — PENDING APPROVAL. The current repository-native Contracts job has a 10-minute job timeout, recorded only as existing operational evidence and **not** as implicit acceptance-harness authorization. |
 | Teardown/cleanup mechanism | finalize non-secret evidence, remove isolated worktree, abandon/delete only `proposal/<run-id>` branch, preserve protected branch unchanged |
 | Disable/rollback procedure | adapter off by default and absent from production composition; abandon candidate worktree/branch and retain only non-secret evidence |
 
@@ -51,6 +51,20 @@ The prepared candidate is admissible only with all of these values fixed as `fal
 - `infrastructureMutationAuthority=false`
 - `policyMutationAuthority=false`
 - `productionRuntimeMutationAuthority=false`
+
+## Current-head repository-native evidence snapshot
+
+This section records observed evidence only; it does not select Candidate A or authorize process/network execution.
+
+- sprint branch head observed for this dossier refresh: `f9c89e2ad5af93afcbd05947c97f4b493b1d2549`;
+- exact-head Contracts run: `33529294577` (#893), successful;
+- repository-native required-check candidate identity: `validate` from GitHub Actions app id `15368`;
+- workflow runtime: Node 22 + pnpm 10.14.0;
+- workflow job timeout: 10 minutes;
+- workflow permissions: `contents: read` with checkout `persist-credentials: false`;
+- verification path: frozen-lockfile install → SEC-20 supply-chain gate → structured audit gate → dependency inventory validation → release-control probe syntax → typecheck → tests.
+
+The acceptance execution MUST re-query all mutable identities immediately before any approved run and MUST fail closed if the approved base, verification commands, or required evidence identity changes unexpectedly.
 
 ## Authority boundary
 
