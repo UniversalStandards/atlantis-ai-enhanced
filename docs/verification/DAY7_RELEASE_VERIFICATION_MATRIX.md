@@ -11,6 +11,7 @@ A gate is **green** only when the listed evidence exists from the same applicabl
 | Gate | Required evidence | Current verified state | Release rule |
 | --- | --- | --- | --- |
 | Regression suite | Frozen-lockfile install, SEC-20 supply-chain gates, contracts/event-store typecheck and tests | Latest verified runtime-equivalent baseline is **370/370 contracts + 531/531 event-store = 901/901 tests**. The authoritative current-head or head-associated PR-merge CI identity belongs in the sprint record / PR checks rather than being hard-coded into this branch document, because committing a literal head SHA here would immediately create a newer head and make the anchor stale by construction. Frozen install, SEC-20 gates, both TypeScript workspaces, read-only Actions permissions, and zero vulnerability findings at every severity remain required. This CI evidence does not manufacture additional operational capability. | Must remain 100% green on the release candidate |
+| Repository release control | Fresh live repository-settings evidence showing PR-only integration, at least one approving review, and the exact ATLANTIS required check enforced on `main`; deterministic proof that pending/failing required checks block integration; captured pre-change rollback state | `main` is currently reported unprotected with required-status-check enforcement off and repository rulesets empty. The repository-native ATLANTIS check identity is `validate` from GitHub Actions app id `15368`, but that identity MUST be re-queried immediately before any settings mutation. The connected integration currently exposes reads but not the bounded repository-settings write required to close this gate. | Must PASS before PR #10 can be release-ready or integrated; green CI without repository enforcement is insufficient |
 | Unauthorized protected actions | Approval and policy tests plus adversarial attempts demonstrating no protected mutation without authorization | Existing fail-closed approval/policy foundations and SEC-19/SEC-20 component evidence are green; final same-candidate operational proof remains open | Zero unauthorized protected actions |
 | Repository-improvement reference workflow | One execution: request → authorization → normalization → planning → routing → durable execution → tool use → independent verification → memory/evidence → response | Controlled/provider-neutral composition exists; live operational run remains open | One complete same-execution trace and release artifact required |
 | Self-improvement review gate | Failing evaluation → isolated patch → tests → follow-up evaluation → security review → immutable proposal → human-review stop | Orchestration, evidence-backed generator, operational acceptance gate, candidate record, and machine-verifiable candidate authorization are landed; real operational adapters/execution remain open | Must stop at `awaiting-human-review`; no merge/deploy/production mutation capability |
@@ -41,29 +42,33 @@ A gate is **green** only when the listed evidence exists from the same applicabl
 10. Provider-failover evidence MUST come from the approved candidate's actual alternate provider/replica/failover path and MUST NOT be inferred from restart-only tests, process-local fixtures, or documentation.
 11. Burn-in `PASS` MUST NOT be accepted when executions failed or remain pending, required regression/trace evidence is absent, governed approval/failure-injection/ownership/persistence evidence is absent, unresolved security findings remain, or independent incident-disposition evidence shows an unresolved incident. Because `BurnInEvidence.incidents` is currently an opaque list of evidence references, machine validation of that field alone does not prove incident resolution.
 12. Branch documentation MUST NOT hard-code itself as the current exact-head CI anchor. Exact-head/head-associated CI identities belong in mutable sprint records, PR checks, or other evidence stores that can be updated without creating a new code/documentation head.
+13. Successful CI MUST NOT be promoted to release-control evidence unless repository settings independently prove the required PR/review/check policy is enforced. The required-check identity MUST be re-queried immediately before repository-settings mutation, and the prior settings state MUST be preserved for rollback evidence.
 
 ## Release-candidate evidence bundle
 
 Before PR #10 can be considered ready for release review, the sprint record should identify one candidate commit and link or record:
 
 1. literal branch-head CI or head-associated PR-merge CI, with the tested commit/synthetic merge commit and test totals identified explicitly;
-2. complete governed Day-7 reference-workflow trace;
-3. runner-bound budget/usage/cost summary;
-4. deterministic replay evidence;
-5. exact authoritative release artifact and durable-storage conformance result;
-6. independent verification result;
-7. recovery ownership cross-process/restart conformance result;
-8. provider-failover conformance result from the genuine alternate provider/replica/failover path;
-9. ownership/writer atomicity or reconciliation evidence;
-10. operational browser-runtime evidence for `text`, `html`, and `accessibility-tree` from the exact candidate;
-11. OpenTelemetry export evidence, if bound;
-12. deployment and rollback rehearsal evidence;
-13. consolidated adversarial security report with zero unresolved critical findings;
-14. explicit operator-runbook gate evidence tied to the recorded runbook revision;
-15. burn-in start/end, incidents, injected failures, independently adjudicated incident disposition, and final result.
+2. repository release-control evidence identifying the enforcement mechanism, required approving-review rule, exact required check identity, blocking verification result, and captured rollback state;
+3. complete governed Day-7 reference-workflow trace;
+4. runner-bound budget/usage/cost summary;
+5. deterministic replay evidence;
+6. exact authoritative release artifact and durable-storage conformance result;
+7. independent verification result;
+8. recovery ownership cross-process/restart conformance result;
+9. provider-failover conformance result from the genuine alternate provider/replica/failover path;
+10. ownership/writer atomicity or reconciliation evidence;
+11. operational browser-runtime evidence for `text`, `html`, and `accessibility-tree` from the exact candidate;
+12. OpenTelemetry export evidence, if bound;
+13. deployment and rollback rehearsal evidence;
+14. consolidated adversarial security report with zero unresolved critical findings;
+15. explicit operator-runbook gate evidence tied to the recorded runbook revision;
+16. burn-in start/end, incidents, injected failures, independently adjudicated incident disposition, and final result.
 
 ## Current next safe work
 
-The matrix is reconciled with the canonical Day-7 readiness catalog and the verified runtime-equivalent CI baseline; the mutable sprint record / PR checks carry the literal current-head CI identity. The next concrete durable-persistence mutation remains approval-bound: select exactly one non-production candidate from `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md`, complete `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval before provider-specific implementation. The external artifact, browser, telemetry, and self-improvement candidates remain similarly approval-bound.
+The matrix is reconciled with the canonical Day-7 readiness catalog and now explicitly carries the repository integration boundary as a release gate rather than leaving it only in the sprint record/runbook supplement. The next highest-leverage mutation remains applying exactly one reversible `main` enforcement mechanism through a repository-settings-capable admin channel, requiring PR integration, at least one approving review, and the re-queried exact `validate` check identity. Use the existing release-control evidence/enforcement probe before and after the mutation and preserve the pre-change state for rollback.
+
+If that specific settings mutation is unavailable, keep the release-control gate BLOCKED and continue independent safe work. The next concrete durable-persistence mutation remains approval-bound: select exactly one non-production candidate from `DURABLE_PERSISTENCE_CANDIDATE_EVIDENCE_MATRIX.md`, complete `DURABLE_PERSISTENCE_ADAPTER_CANDIDATE_RECORD.md`, and obtain explicit architecture/operations approval before provider-specific implementation. The external artifact, browser, telemetry, and self-improvement candidates remain similarly approval-bound.
 
 Until those choices are authorized, continue independent governed-run, deployment/rollback/burn-in preparation and current-head CI/review inspection. Do not create more readiness scaffolding in place of execution evidence, and do not treat an architecture gate as a reason to disable the build cycle.
