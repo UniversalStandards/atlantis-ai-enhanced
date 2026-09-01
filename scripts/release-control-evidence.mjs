@@ -38,13 +38,12 @@ async function github(path, { allow = [] } = {}) {
 }
 
 function configuredCheck(requiredStatusChecks) {
-  const contexts = requiredStatusChecks?.contexts ?? [];
   const checks = requiredStatusChecks?.checks ?? [];
-  return contexts.includes(requiredCheck) || checks.some((check) => {
-    const context = typeof check === "string" ? check : check?.context;
-    const appId = typeof check === "object" ? check?.app_id : undefined;
-    return context === requiredCheck && (appId == null || Number(appId) === requiredAppId);
-  });
+  return checks.some((check) =>
+    typeof check === "object" &&
+    check?.context === requiredCheck &&
+    Number(check?.app_id) === requiredAppId
+  );
 }
 
 const branchResult = await github(`/branches/${encodeURIComponent(branch)}`);
