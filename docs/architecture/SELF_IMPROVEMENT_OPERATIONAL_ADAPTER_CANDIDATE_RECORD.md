@@ -52,13 +52,13 @@ The prepared candidate is admissible only with all of these values fixed as `fal
 - `policyMutationAuthority=false`
 - `productionRuntimeMutationAuthority=false`
 
-## Current-head repository-native evidence snapshot
+## Decision-base repository-native evidence snapshot
 
-This section records observed evidence only; it does not select Candidate A or authorize process/network execution.
+This section records evidence observed for the immutable decision base identified above only; it does not select Candidate A or authorize process/network execution. The dossier commit that records this snapshot may itself advance the sprint branch, so the values below MUST NOT be interpreted as the repository's current head without a fresh live query.
 
-- sprint branch head observed for this dossier refresh: `f9c89e2ad5af93afcbd05947c97f4b493b1d2549`;
-- exact-head Contracts run: `33529294577` (#893), successful;
-- repository-native required-check candidate identity: `validate` from GitHub Actions app id `15368`;
+- decision-base sprint revision observed for this dossier refresh: `f9c89e2ad5af93afcbd05947c97f4b493b1d2549`;
+- exact-head Contracts run for that decision base: `33529294577` (#893), successful;
+- repository-native required-check candidate identity observed for that decision base: `validate` from GitHub Actions app id `15368`;
 - workflow runtime: Node 22 + pnpm 10.14.0;
 - workflow job timeout: 10 minutes;
 - workflow permissions: `contents: read` with checkout `persist-credentials: false`;
