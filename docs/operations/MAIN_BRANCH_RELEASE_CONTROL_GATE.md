@@ -8,6 +8,8 @@ Define the minimum repository-level integration control required before the ATLA
 
 As of 2026-09-01, live GitHub inspection reports `main` with `protected: false`, branch protection disabled, required-status-check enforcement off, and no required checks. PR #10 is open, draft, mergeable, and its current sprint head has a successful `Contracts` workflow run. Successful CI therefore exists as evidence but is not enforced at the repository integration boundary.
 
+For sprint head `090d4d22060173500f83118c2a30b6e06093a499`, GitHub's check-runs API reports the repository-native ATLANTIS workflow job as check name `validate`, produced by the `github-actions` app (app id `15368`), with successful check run `99768100716` from Contracts workflow run `33480269452` (#882). The same head also has independent `CodeQL` and Socket Security checks. This observation removes check-name guesswork; it does not by itself decide whether additional independent checks should also be required.
+
 ## Required invariant
 
 Before release integration, `main` MUST reject an integration attempt that does not satisfy all of the following:
@@ -24,7 +26,7 @@ Either GitHub branch protection or a repository ruleset may implement the invari
 
 ## Check-name discovery
 
-Do not guess a required check name. Inspect the successful workflow/check evidence for the exact PR head and bind the repository control to the check GitHub actually reports for that integration path. If the check identity is unstable or ambiguous, stop that specific settings mutation and correct the workflow/check identity first.
+Do not guess a required check name. Inspect the successful workflow/check evidence for the exact PR head and bind the repository control to the check GitHub actually reports for that integration path. The currently observed ATLANTIS repository-native candidate is `validate` from GitHub Actions app id `15368`; re-query the check-runs API immediately before the settings mutation and require the identity to remain stable. If the check identity changes, disappears, or becomes ambiguous, stop that specific settings mutation and correct the workflow/check identity first.
 
 ## Verification procedure
 
