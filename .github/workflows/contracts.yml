@@ -2,28 +2,8 @@ name: Contracts
 
 on:
   pull_request:
-    paths:
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/contracts/**"
-      - "packages/event-store/**"
-      - "scripts/release-control-evidence.mjs"
-      - "scripts/sec20-supply-chain-gate.mjs"
-      - "scripts/sec20-audit-gate.mjs"
-      - ".github/workflows/contracts.yml"
   push:
     branches: [main]
-    paths:
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/contracts/**"
-      - "packages/event-store/**"
-      - "scripts/release-control-evidence.mjs"
-      - "scripts/sec20-supply-chain-gate.mjs"
-      - "scripts/sec20-audit-gate.mjs"
-      - ".github/workflows/contracts.yml"
 
 permissions:
   contents: read
