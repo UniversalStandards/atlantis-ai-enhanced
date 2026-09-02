@@ -4,6 +4,7 @@ import type { ExecutionReleaseArtifactStorage } from "../src/execution-release-a
 import {
   Day7ReleaseReadinessArtifactRepository,
 } from "../src/day7-release-readiness-artifact.js";
+import { DAY7_REQUIRED_RELEASE_GATE_IDS } from "../src/day7-release-gate-catalog.js";
 import type {
   Day7ReleaseReadinessEvidence,
 } from "../src/day7-release-readiness.js";
@@ -41,22 +42,6 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
     result: "PASS" as const,
     evidenceId: `${stepId}-evidence`,
   });
-  const independentGateIds = [
-    "regression-ci",
-    "unauthorized-protected-actions",
-    "governed-repository-improvement",
-    "self-improvement-human-review",
-    "external-artifact-durability",
-    "recovery-ownership-durability",
-    "ownership-writer-atomicity",
-    "provider-failover",
-    "trace-completeness",
-    "telemetry-binding",
-    "adversarial-security",
-    "browser-runtime",
-    "operator-runbook",
-    "deployment-reproducibility",
-  ] as const;
 
   return {
     candidateIdentity,
@@ -108,7 +93,7 @@ function readinessEvidence(): Day7ReleaseReadinessEvidence {
       incidents: [],
       finalDisposition: "PASS",
     },
-    independentGates: independentGateIds.map((gateId) => ({
+    independentGates: DAY7_REQUIRED_RELEASE_GATE_IDS.map((gateId) => ({
       gateId,
       candidateIdentity,
       disposition: "PASS" as const,
