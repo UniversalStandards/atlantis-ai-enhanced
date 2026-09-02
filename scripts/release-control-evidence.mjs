@@ -81,6 +81,12 @@ function evaluateRuleset(ruleset, branchName) {
   };
 }
 
+function enforceModeReady(evidence) {
+  return evidence.check_identity_stable === true
+    && evidence.current_required_check_successful === true
+    && evidence.release_control_enforced === true;
+}
+
 function runSelfTest() {
   const fixture = {
     id: 1, name: "main-release-control", target: "branch", enforcement: "active", bypass_actors: [],
@@ -121,6 +127,11 @@ function runSelfTest() {
       enforce_admins: { enabled: false },
     },
   });
+  const enforcePositive = {
+    check_identity_stable: true,
+    current_required_check_successful: true,
+    release_control_enforced: true,
+  };
 
   const assertions = [
     [positive.release_control_enforced === true, "positive ruleset fixture must enforce release control"],
@@ -132,6 +143,9 @@ function runSelfTest() {
     [classicPositive.release_control_enforced === true, "positive classic protection fixture must enforce release control"],
     [classicZeroReview.release_control_enforced === false, "classic protection with zero approving reviews must fail closed"],
     [classicAdminBypass.release_control_enforced === false, "classic protection without admin enforcement must fail closed"],
+    [enforceModeReady(enforcePositive) === true, "enforce mode must accept only a successful exact required check with release control"],
+    [enforceModeReady({ ...enforcePositive, current_required_check_successful: false }) === false, "pending or failed required check must fail enforce mode"],
+    [enforceModeReady({ ...enforcePositive, check_identity_stable: false }) === false, "ambiguous required check identity must fail enforce mode"],
   ];
   for (const [ok, message] of assertions) if (!ok) throw new Error(`release-control self-test failed: ${message}`);
   console.log(JSON.stringify({ self_test: "passed", assertions: assertions.length }, null, 2));
@@ -178,5 +192,16 @@ evidence.current_required_check_successful = matchingChecks.length === 1 && matc
 evidence.release_control_mechanism = classicEvidence.release_control_enforced ? "classic_branch_protection" : enforcingRulesets.length > 0 ? "ruleset" : null;
 evidence.release_control_enforced = Boolean(classicEvidence.release_control_enforced || enforcingRulesets.length > 0);
 console.log(JSON.stringify(evidence, null, 2));
-if (!evidence.check_identity_stable) { console.error(`Expected exactly one ${requiredCheck} check from app ${requiredAppId}; observed ${matchingChecks.length}.`); process.exitCode = 2; }
-if (enforce && !evidence.release_control_enforced) { console.error("ATLANTIS release-control invariant is not yet enforced on the target branch."); process.exitCode = 3; }
+if (!evidence.check_identity_stable) {
+  console.error(`Expected exactly one ${requiredCheck} check from app ${requiredAppId}; observed ${matchingChecks.length}.`);
+  process.exitCode = 2;
+}
+if (enforce && !evidence.release_control_enforced) {
+  console.error("ATLANTIS release-control invariant is not yet enforced on the target branch.");
+  if (!process.exitCode) process.exitCode = 3;
+}
+if (enforce && !evidence.current_required_check_successful) {
+  console.error(`ATLANTIS enforce mode requires a fresh successful ${requiredCheck} check from app ${requiredAppId} on the current PR head.`);
+  if (!process.exitCode) process.exitCode = 4;
+}
+if (enforce && !enforceModeReady(evidence) && !process.exitCode) process.exitCode = 5;
