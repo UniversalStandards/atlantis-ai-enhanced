@@ -39,6 +39,8 @@ export interface SelfImprovementPatchGenerator {
 export interface AuthorizedSelfImprovementOperationalAdmission {
   readonly authorization: unknown;
   readonly featureGateEnabled: boolean;
+  readonly repository: string;
+  readonly baseRevision: string;
 }
 
 export class SelfImprovementEvaluationDidNotFailError extends Error {
@@ -66,6 +68,25 @@ function requireBound(actual: string, expected: string, field: string): void {
   if (actual.trim() !== expected.trim()) {
     throw new InvalidSelfImprovementPatchEvidenceError(`${field} must remain bound to the failing evaluation request.`);
   }
+}
+
+function requireOperationalBinding(actual: string, expected: string, field: string): void {
+  const normalizedExpected = expected.trim();
+  if (normalizedExpected.length === 0 || actual.trim() !== normalizedExpected) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      `operational candidate ${field} must match the admitted execution context.`,
+    );
+  }
+}
+
+function requireAuthorizedWorkspaceNamespace(namespace: string): string {
+  const normalized = namespace.trim();
+  if (normalized.length === 0 || !normalized.endsWith("/")) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      "operational candidate isolatedWorkspaceNamespace must be a non-empty branch namespace ending in '/'.",
+    );
+  }
+  return normalized;
 }
 
 /**
@@ -108,9 +129,12 @@ export async function proposeSelfImprovementFromFailedEvaluation(
  * Provider-neutral operational admission wrapper for Issue #7.
  *
  * This is intentionally disabled-by-default and reuses the canonical candidate
- * authorization validator. Successful admission does not add merge, deployment,
- * credential, infrastructure, policy, protected-branch, or production mutation
- * authority; it only permits the already-bounded development workflow to run.
+ * authorization validator. The admitted repository and base revision are bound
+ * to the approved candidate record, and generated work must stay inside that
+ * record's isolated workspace namespace. Successful admission does not add
+ * merge, deployment, credential, infrastructure, policy, protected-branch, or
+ * production mutation authority; it only permits the already-bounded
+ * development workflow to run.
  */
 export async function proposeSelfImprovementFromAuthorizedOperationalCandidate(
   request: Readonly<SelfImprovementPatchRequest>,
@@ -130,5 +154,21 @@ export async function proposeSelfImprovementFromAuthorizedOperationalCandidate(
     );
   }
 
-  return proposeSelfImprovementFromFailedEvaluation(request, generator);
+  requireOperationalBinding(authorization.repository, admission.repository, "repository");
+  requireOperationalBinding(authorization.baseRevision, admission.baseRevision, "baseRevision");
+  const isolatedWorkspaceNamespace = requireAuthorizedWorkspaceNamespace(authorization.isolatedWorkspaceNamespace);
+
+  const scopedGenerator: SelfImprovementPatchGenerator = Object.freeze({
+    async generate(scopedRequest: Readonly<SelfImprovementPatchRequest>): Promise<Readonly<SelfImprovementPatchEvidence>> {
+      const generated = await generator.generate(scopedRequest);
+      if (!generated.isolatedBranch.trim().startsWith(isolatedWorkspaceNamespace)) {
+        throw new InvalidSelfImprovementPatchEvidenceError(
+          "generated isolatedBranch must remain inside the authorized isolated workspace namespace.",
+        );
+      }
+      return generated;
+    },
+  });
+
+  return proposeSelfImprovementFromFailedEvaluation(request, scopedGenerator);
 }
