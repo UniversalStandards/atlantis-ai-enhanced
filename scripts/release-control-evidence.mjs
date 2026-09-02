@@ -31,6 +31,24 @@ function configuredClassicCheck(requiredStatusChecks) {
   return checks.some((check) => typeof check === "object" && check?.context === requiredCheck && Number(check?.app_id) === requiredAppId);
 }
 
+function evaluateClassicProtection({ branchProtected, detailedProtection, summaryChecks }) {
+  const reviewCount = Number(detailedProtection?.required_pull_request_reviews?.required_approving_review_count ?? 0);
+  const evidence = {
+    branch_protected: branchProtected === true,
+    pull_request_reviews_required: Number.isFinite(reviewCount) && reviewCount >= 1,
+    required_approving_review_count: Number.isFinite(reviewCount) ? reviewCount : 0,
+    required_check_configured: configuredClassicCheck(detailedProtection?.required_status_checks ?? summaryChecks),
+    admins_enforced: detailedProtection?.enforce_admins?.enabled === true,
+  };
+  evidence.release_control_enforced = Boolean(
+    evidence.branch_protected
+    && evidence.required_check_configured
+    && evidence.pull_request_reviews_required
+    && evidence.admins_enforced
+  );
+  return evidence;
+}
+
 function exactRulesetAppliesToBranch(ruleset, branchName) {
   if (ruleset?.target !== "branch" || ruleset?.enforcement !== "active") return false;
   const refName = ruleset?.conditions?.ref_name;
@@ -78,13 +96,42 @@ function runSelfTest() {
   const excluded = evaluateRuleset({ ...fixture, conditions: { ref_name: { include: ["~ALL"], exclude: ["refs/heads/main"] } } }, "main");
   const insufficientReview = evaluateRuleset({ ...fixture, rules: fixture.rules.map((rule) => rule.type === "pull_request" ? { ...rule, parameters: { required_approving_review_count: 0 } } : rule) }, "main");
   const bypassed = evaluateRuleset({ ...fixture, bypass_actors: [{ actor_id: 1, actor_type: "OrganizationAdmin", bypass_mode: "always" }] }, "main");
+
+  const classicFixture = {
+    branchProtected: true,
+    detailedProtection: {
+      required_pull_request_reviews: { required_approving_review_count: 1 },
+      required_status_checks: { checks: [{ context: requiredCheck, app_id: requiredAppId }] },
+      enforce_admins: { enabled: true },
+    },
+    summaryChecks: null,
+  };
+  const classicPositive = evaluateClassicProtection(classicFixture);
+  const classicZeroReview = evaluateClassicProtection({
+    ...classicFixture,
+    detailedProtection: {
+      ...classicFixture.detailedProtection,
+      required_pull_request_reviews: { required_approving_review_count: 0 },
+    },
+  });
+  const classicAdminBypass = evaluateClassicProtection({
+    ...classicFixture,
+    detailedProtection: {
+      ...classicFixture.detailedProtection,
+      enforce_admins: { enabled: false },
+    },
+  });
+
   const assertions = [
-    [positive.release_control_enforced === true, "positive fixture must enforce release control"],
+    [positive.release_control_enforced === true, "positive ruleset fixture must enforce release control"],
     [inactive.release_control_enforced === false, "disabled ruleset must not enforce"],
     [wrongApp.release_control_enforced === false, "wrong integration id must not satisfy required check"],
     [excluded.release_control_enforced === false, "excluded branch must not satisfy ruleset"],
     [insufficientReview.release_control_enforced === false, "zero approving reviews must not satisfy ruleset"],
     [bypassed.release_control_enforced === false, "ruleset bypass actors must fail closed"],
+    [classicPositive.release_control_enforced === true, "positive classic protection fixture must enforce release control"],
+    [classicZeroReview.release_control_enforced === false, "classic protection with zero approving reviews must fail closed"],
+    [classicAdminBypass.release_control_enforced === false, "classic protection without admin enforcement must fail closed"],
   ];
   for (const [ok, message] of assertions) if (!ok) throw new Error(`release-control self-test failed: ${message}`);
   console.log(JSON.stringify({ self_test: "passed", assertions: assertions.length }, null, 2));
@@ -111,13 +158,11 @@ for (const summary of rulesetSummaries) {
 }
 const evaluatedRulesets = rulesetDetails.map((ruleset) => evaluateRuleset(ruleset, branch));
 const enforcingRulesets = evaluatedRulesets.filter((ruleset) => ruleset.release_control_enforced);
-const classicEvidence = {
-  branch_protected: branchResult.body?.protected === true,
-  pull_request_reviews_required: Boolean(detailedProtection?.required_pull_request_reviews),
-  required_check_configured: configuredClassicCheck(detailedProtection?.required_status_checks ?? summaryChecks),
-  admins_enforced: detailedProtection?.enforce_admins?.enabled === true,
-};
-classicEvidence.release_control_enforced = Boolean(classicEvidence.branch_protected && classicEvidence.required_check_configured && classicEvidence.pull_request_reviews_required && classicEvidence.admins_enforced);
+const classicEvidence = evaluateClassicProtection({
+  branchProtected: branchResult.body?.protected === true,
+  detailedProtection,
+  summaryChecks,
+});
 const evidence = {
   generated_at: new Date().toISOString(), repository, branch, pull_request: pullRequest, pull_request_head: headSha,
   expected_check: { name: requiredCheck, app_id: requiredAppId },
