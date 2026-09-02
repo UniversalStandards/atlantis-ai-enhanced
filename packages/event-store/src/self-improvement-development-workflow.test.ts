@@ -6,6 +6,7 @@ import {
   SelfImprovementOperationalFeatureGateDisabledError,
   proposeSelfImprovementFromAuthorizedOperationalCandidate,
   proposeSelfImprovementFromFailedEvaluation,
+  type AuthorizedSelfImprovementOperationalAdmission,
   type SelfImprovementPatchEvidence,
   type SelfImprovementPatchRequest,
 } from "./self-improvement-development-workflow.js";
@@ -70,6 +71,19 @@ function operationalAuthorization() {
       Object.freeze({ role: "security-network" as const, approvedBy: "test-security-network", approvedAt: "2026-08-30T00:00:00.000Z" }),
     ]),
   });
+}
+
+function operationalAdmission(
+  overrides: Partial<AuthorizedSelfImprovementOperationalAdmission> = {},
+): AuthorizedSelfImprovementOperationalAdmission {
+  const authorization = operationalAuthorization();
+  return {
+    authorization,
+    featureGateEnabled: true,
+    repository: authorization.repository,
+    baseRevision: authorization.baseRevision,
+    ...overrides,
+  };
 }
 
 describe("proposeSelfImprovementFromFailedEvaluation", () => {
@@ -151,7 +165,7 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
     const proposal = await proposeSelfImprovementFromAuthorizedOperationalCandidate(
       failedRequest,
       { generate },
-      { authorization: operationalAuthorization(), featureGateEnabled: true },
+      operationalAdmission(),
     );
 
     expect(generate).toHaveBeenCalledOnce();
@@ -165,7 +179,7 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
       proposeSelfImprovementFromAuthorizedOperationalCandidate(
         failedRequest,
         { generate },
-        { authorization: operationalAuthorization(), featureGateEnabled: false },
+        operationalAdmission({ featureGateEnabled: false }),
       ),
     ).rejects.toBeInstanceOf(SelfImprovementOperationalFeatureGateDisabledError);
     expect(generate).not.toHaveBeenCalled();
@@ -179,9 +193,38 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
       proposeSelfImprovementFromAuthorizedOperationalCandidate(
         failedRequest,
         { generate },
-        { authorization: malformed, featureGateEnabled: true },
+        operationalAdmission({ authorization: malformed }),
       ),
     ).rejects.toThrow("exactly one architecture approval is required");
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["repository", "UniversalStandards/other-repository"],
+    ["baseRevision", "other-base-revision"],
+  ] as const)("rejects authorization replay against a different %s", async (field, value) => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ [field]: value }),
+      ),
+    ).rejects.toThrow(`operational candidate ${field} must match the admitted execution context`);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects generated work outside the authorized isolated workspace namespace", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence({ isolatedBranch: "sprint/unapproved-workspace" })));
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission(),
+      ),
+    ).rejects.toThrow("generated isolatedBranch must remain inside the authorized isolated workspace namespace");
+    expect(generate).toHaveBeenCalledOnce();
   });
 });
