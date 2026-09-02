@@ -95,6 +95,31 @@ function assertNotCancelled(signal?: CancellationSignal): void {
   }
 }
 
+function readDeadlineClock(deadline: ExecutionDeadline): number {
+  const observedAtMs = deadline.nowMs();
+  if (!Number.isSafeInteger(observedAtMs) || observedAtMs < 0) {
+    throw new InvalidExecutionDeadlineError(
+      "Execution deadline clock must return a non-negative safe integer timestamp",
+    );
+  }
+  return observedAtMs;
+}
+
+async function emitTimeout(
+  deadline: ExecutionDeadline,
+  context: ExecutionAttemptContext,
+  hooks: ExecutionControlHooks | undefined,
+  observedAtMs: number,
+): Promise<never> {
+  const timeoutContext = {
+    ...context,
+    deadlineAtMs: deadline.deadlineAtMs,
+    observedAtMs,
+  } as const;
+  await hooks?.onTimedOut?.(timeoutContext);
+  throw new ExecutionTimedOutError(deadline.deadlineAtMs, observedAtMs);
+}
+
 async function assertBeforeDeadline(
   deadline: ExecutionDeadline | undefined,
   context: ExecutionAttemptContext,
@@ -102,20 +127,43 @@ async function assertBeforeDeadline(
 ): Promise<void> {
   if (deadline === undefined) return;
 
-  const observedAtMs = deadline.nowMs();
-  if (!Number.isSafeInteger(observedAtMs) || observedAtMs < 0) {
-    throw new InvalidExecutionDeadlineError(
-      "Execution deadline clock must return a non-negative safe integer timestamp",
-    );
-  }
+  const observedAtMs = readDeadlineClock(deadline);
   if (observedAtMs >= deadline.deadlineAtMs) {
-    const timeoutContext = {
-      ...context,
-      deadlineAtMs: deadline.deadlineAtMs,
-      observedAtMs,
-    } as const;
-    await hooks?.onTimedOut?.(timeoutContext);
-    throw new ExecutionTimedOutError(deadline.deadlineAtMs, observedAtMs);
+    await emitTimeout(deadline, context, hooks, observedAtMs);
+  }
+}
+
+async function executeAttemptWithDeadline<T>(
+  operation: (context: ExecutionAttemptContext) => Promise<T>,
+  context: ExecutionAttemptContext,
+  deadline: ExecutionDeadline | undefined,
+  hooks: ExecutionControlHooks | undefined,
+): Promise<T> {
+  if (deadline === undefined) return operation(context);
+
+  const observedAtMs = readDeadlineClock(deadline);
+  if (observedAtMs >= deadline.deadlineAtMs) {
+    return emitTimeout(deadline, context, hooks, observedAtMs);
+  }
+
+  const remainingMs = deadline.deadlineAtMs - observedAtMs;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      try {
+        const clockAtTimeout = readDeadlineClock(deadline);
+        const enforcedObservedAtMs = Math.max(clockAtTimeout, deadline.deadlineAtMs);
+        void emitTimeout(deadline, context, hooks, enforcedObservedAtMs).catch(reject);
+      } catch (error) {
+        reject(error);
+      }
+    }, remainingMs);
+  });
+
+  try {
+    return await Promise.race([operation(context), timeout]);
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
 }
 
@@ -136,7 +184,12 @@ export async function executeWithControl<T>(
     await options.hooks?.onAttemptStarted?.(context);
 
     try {
-      const result = await operation(context);
+      const result = await executeAttemptWithDeadline(
+        operation,
+        context,
+        options.deadline,
+        options.hooks,
+      );
       assertNotCancelled(options.cancellation);
       await assertBeforeDeadline(options.deadline, context, options.hooks);
       return result;
