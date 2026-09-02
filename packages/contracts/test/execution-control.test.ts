@@ -168,6 +168,32 @@ describe("executeWithControl", () => {
     ).rejects.toEqual(new ExecutionTimedOutError(100, 101));
   });
 
+  it("actively times out an attempt that never settles", async () => {
+    const deadlineAtMs = Date.now() + 25;
+    const timeouts: number[] = [];
+
+    await expect(
+      executeWithControl(
+        async () => new Promise<string>(() => undefined),
+        { maxAttempts: 1 },
+        {
+          deadline: {
+            deadlineAtMs,
+            nowMs: () => Date.now(),
+          },
+          hooks: {
+            onTimedOut: ({ observedAtMs }) => {
+              timeouts.push(observedAtMs);
+            },
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ExecutionTimedOutError);
+
+    expect(timeouts).toHaveLength(1);
+    expect(timeouts[0]).toBeGreaterThanOrEqual(deadlineAtMs);
+  });
+
   it("does not retry a failure after the deadline has elapsed", async () => {
     const times = [10, 100];
     let calls = 0;
