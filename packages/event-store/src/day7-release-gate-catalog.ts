@@ -3,6 +3,7 @@ import type { Day7ReleaseGateEvidence } from "./day7-release-readiness.js";
 
 export const DAY7_REQUIRED_RELEASE_GATE_IDS = Object.freeze([
   "regression-ci",
+  "repository-release-control",
   "unauthorized-protected-actions",
   "governed-repository-improvement",
   "self-improvement-human-review",
