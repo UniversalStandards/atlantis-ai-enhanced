@@ -124,13 +124,14 @@ async function assertBeforeDeadline(
   deadline: ExecutionDeadline | undefined,
   context: ExecutionAttemptContext,
   hooks: ExecutionControlHooks | undefined,
-): Promise<void> {
-  if (deadline === undefined) return;
+): Promise<number | undefined> {
+  if (deadline === undefined) return undefined;
 
   const observedAtMs = readDeadlineClock(deadline);
   if (observedAtMs >= deadline.deadlineAtMs) {
     await emitTimeout(deadline, context, hooks, observedAtMs);
   }
+  return observedAtMs;
 }
 
 async function executeAttemptWithDeadline<T>(
@@ -138,15 +139,11 @@ async function executeAttemptWithDeadline<T>(
   context: ExecutionAttemptContext,
   deadline: ExecutionDeadline | undefined,
   hooks: ExecutionControlHooks | undefined,
+  observedAtStartMs: number | undefined,
 ): Promise<T> {
-  if (deadline === undefined) return operation(context);
+  if (deadline === undefined || observedAtStartMs === undefined) return operation(context);
 
-  const observedAtMs = readDeadlineClock(deadline);
-  if (observedAtMs >= deadline.deadlineAtMs) {
-    return emitTimeout(deadline, context, hooks, observedAtMs);
-  }
-
-  const remainingMs = deadline.deadlineAtMs - observedAtMs;
+  const remainingMs = deadline.deadlineAtMs - observedAtStartMs;
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutHandle = setTimeout(() => {
@@ -180,7 +177,11 @@ export async function executeWithControl<T>(
   for (let attempt = 1; attempt <= policy.maxAttempts; attempt += 1) {
     const context = { attempt, maxAttempts: policy.maxAttempts } as const;
     assertNotCancelled(options.cancellation);
-    await assertBeforeDeadline(options.deadline, context, options.hooks);
+    const observedAtStartMs = await assertBeforeDeadline(
+      options.deadline,
+      context,
+      options.hooks,
+    );
     await options.hooks?.onAttemptStarted?.(context);
 
     try {
@@ -189,6 +190,7 @@ export async function executeWithControl<T>(
         context,
         options.deadline,
         options.hooks,
+        observedAtStartMs,
       );
       assertNotCancelled(options.cancellation);
       await assertBeforeDeadline(options.deadline, context, options.hooks);
