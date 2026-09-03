@@ -27,6 +27,7 @@ import {
   type RetryPolicy,
 } from "./execution-control.js";
 import { coordinateAtomicResumableCompletion } from "./resumable-completion-coordinator.js";
+import { commitAtomicAttemptFailure } from "./resumable-attempt-failure-transition.js";
 import type { ResumableDurabilityPort } from "./step-completion-commit.js";
 
 export interface ResumableWorkflow<I, O> {
@@ -421,19 +422,54 @@ export class ResumableSequentialWorkflowRunner {
               deadline: this.options.deadline,
               hooks: {
                 onAttemptFailed: async ({ attempt, maxAttempts }, error, willRetry) => {
-                  await append("workflow.step.attempt.failed", {
+                  const message = error instanceof Error ? error.message : String(error);
+                  if (!willRetry) {
+                    await append("workflow.step.attempt.failed", {
+                      stepId: step.id,
+                      stepIndex: index,
+                      attempt,
+                      maxAttempts,
+                      willRetry,
+                      error: message,
+                    });
+                    return;
+                  }
+
+                  // Failure evidence and the retry allowance it consumes are one
+                  // authoritative transition. A crash can leave neither or both,
+                  // so durable evidence can never restore spent retry budget.
+                  const consumption = await commitAtomicAttemptFailure({
+                    durability,
+                    executionId: context.executionId,
+                    workflowId: workflow.id,
+                    workflowVersion: workflow.version,
                     stepId: step.id,
                     stepIndex: index,
+                    completedStepIds: workflow.steps
+                      .slice(0, index)
+                      .map((item) => item.id),
                     attempt,
                     maxAttempts,
-                    willRetry,
-                    error: error instanceof Error ? error.message : String(error),
+                    error: message,
+                    value,
+                    usage: copyUsage(context.usage),
+                    cursor: {
+                      sequence,
+                      ...(parentEventId === undefined ? {} : { parentEventId }),
+                    },
+                    expectedCheckpointRevision: checkpoint?.revision,
+                    ...(pendingApproval === undefined ? {} : { pendingApproval }),
+                    ...(approvedApproval === undefined ? {} : { approvedApproval }),
+                    nextEventId: this.options.nextEventId,
+                    actor: this.actor,
+                    occurredAt: this.now(),
                   });
-                  if (willRetry) {
-                    context.usage.retries += 1;
-                    assertWithinBudget(context);
-                    await saveCheckpoint();
-                  }
+
+                  checkpoint = consumption.checkpoint;
+                  restoreUsage(context.usage, checkpoint.usage);
+                  sequence = consumption.cursor.sequence;
+                  parentEventId = consumption.cursor.parentEventId;
+                  assertWithinBudget(context);
                 },
                 onTimedOut: async ({ attempt, maxAttempts, deadlineAtMs, observedAtMs }) => {
                   await append("workflow.step.timed_out", {

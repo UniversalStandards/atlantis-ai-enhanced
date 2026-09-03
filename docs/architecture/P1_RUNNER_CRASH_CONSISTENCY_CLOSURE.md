@@ -54,6 +54,8 @@ Preferred implementation: authoritative atomic failed-attempt transition updates
 
 Required invariant: one durable failed-attempt identity consumes exactly one allowance, including after acknowledgement loss and repeated restart. No crash boundary may restore consumed retry budget; no reconciliation may double-count the same failed-attempt identity.
 
+Implemented shape: `ResumableDurabilityPort` is extended with `commitAttemptFailure`, which publishes the `workflow.step.attempt.failed` evidence and the checkpoint that consumes its allowance in one transition. `validateAttemptFailureCommit` proves the acknowledged transition is identity-bound to execution, step, attempt ordinal, and exact event tail, does not advance workflow position, and consumes exactly one allowance. Acknowledgement loss is resolved by readback-only reconciliation against that same validator, so a lost acknowledgement neither restores nor double-consumes budget. Terminal (non-retrying) attempt failures remain ordinary evidence and consume nothing.
+
 ## Reuse requirements
 
 - Reuse `ResumableDurabilityPort` as the authoritative consistency domain.
