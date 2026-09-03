@@ -72,11 +72,75 @@ function sameCompletedStepIds(left: readonly string[], right: readonly string[])
   return left.length === right.length && left.every((stepId, index) => stepId === right[index]);
 }
 
+function isPlainObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Conservative structural equality for checkpoint data. Persisted plain data
+ * may be deserialized into a distinct object identity, while functions,
+ * accessors, symbols, exotic prototypes, and structurally ambiguous values are
+ * intentionally rejected unless they retain exact identity.
+ */
+function sameCheckpointValue(
+  left: unknown,
+  right: unknown,
+  seen: WeakMap<object, object> = new WeakMap<object, object>(),
+): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== typeof right || left === null || right === null) return false;
+  if (typeof left !== "object" || typeof right !== "object") return false;
+
+  const leftObject = left as object;
+  const rightObject = right as object;
+  const previous = seen.get(leftObject);
+  if (previous !== undefined) return previous === rightObject;
+  seen.set(leftObject, rightObject);
+
+  if (Array.isArray(leftObject) || Array.isArray(rightObject)) {
+    if (!Array.isArray(leftObject) || !Array.isArray(rightObject)) return false;
+    if (leftObject.length !== rightObject.length) return false;
+    return leftObject.every((item, index) =>
+      sameCheckpointValue(item, rightObject[index], seen),
+    );
+  }
+
+  if (!isPlainObject(leftObject) || !isPlainObject(rightObject)) return false;
+  const leftKeys = Reflect.ownKeys(leftObject);
+  const rightKeys = Reflect.ownKeys(rightObject);
+  if (
+    leftKeys.some((key) => typeof key !== "string") ||
+    rightKeys.some((key) => typeof key !== "string") ||
+    leftKeys.length !== rightKeys.length
+  ) {
+    return false;
+  }
+
+  const rightKeySet = new Set(rightKeys as string[]);
+  for (const key of leftKeys as string[]) {
+    if (!rightKeySet.has(key)) return false;
+    const leftDescriptor = Object.getOwnPropertyDescriptor(leftObject, key);
+    const rightDescriptor = Object.getOwnPropertyDescriptor(rightObject, key);
+    if (
+      leftDescriptor === undefined ||
+      rightDescriptor === undefined ||
+      !("value" in leftDescriptor) ||
+      !("value" in rightDescriptor) ||
+      leftDescriptor.enumerable !== rightDescriptor.enumerable ||
+      !sameCheckpointValue(leftDescriptor.value, rightDescriptor.value, seen)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Validates the acknowledgement returned by an atomic completion adapter.
  * This does not manufacture durability; it prevents a provider adapter from
- * acknowledging a commit whose checkpoint/event identity does not match the
- * requested transition.
+ * acknowledging a commit whose checkpoint/event identity or post-step state
+ * does not match the requested transition.
  */
 export function validateStepCompletionCommit(
   request: Readonly<StepCompletionCommitRequest>,
@@ -112,7 +176,10 @@ export function validateStepCompletionCommit(
     !sameCompletedStepIds(committed.completedStepIds, requested.completedStepIds) ||
     committed.lastEventSequence !== requested.lastEventSequence ||
     committed.parentEventId !== requested.parentEventId ||
-    !sameUsage(committed.usage, requested.usage)
+    !sameUsage(committed.usage, requested.usage) ||
+    !sameCheckpointValue(committed.value, requested.value) ||
+    !sameCheckpointValue(committed.pendingApproval, requested.pendingApproval) ||
+    !sameCheckpointValue(committed.approvedApproval, requested.approvedApproval)
   ) {
     throw new InvalidStepCompletionCommitError("acknowledged checkpoint does not match requested completion transition");
   }
