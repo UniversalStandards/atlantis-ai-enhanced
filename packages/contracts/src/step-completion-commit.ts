@@ -50,6 +50,10 @@ function sameUsage(left: ExecutionUsage, right: ExecutionUsage): boolean {
   );
 }
 
+function sameCompletedStepIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((stepId, index) => stepId === right[index]);
+}
+
 /**
  * Validates the acknowledgement returned by an atomic completion adapter.
  * This does not manufacture durability; it prevents a provider adapter from
@@ -87,6 +91,7 @@ export function validateStepCompletionCommit(
     committed.workflowId !== requested.workflowId ||
     committed.workflowVersion !== requested.workflowVersion ||
     committed.nextStepIndex !== requested.nextStepIndex ||
+    !sameCompletedStepIds(committed.completedStepIds, requested.completedStepIds) ||
     committed.lastEventSequence !== requested.lastEventSequence ||
     committed.parentEventId !== requested.parentEventId ||
     !sameUsage(committed.usage, requested.usage)
