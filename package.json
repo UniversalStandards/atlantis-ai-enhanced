@@ -5,7 +5,9 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "typecheck": "pnpm --recursive typecheck",
-    "test": "pnpm --recursive test"
+    "test": "pnpm --recursive test",
+    "release:control:evidence": "node scripts/release-control-evidence.mjs",
+    "release:control:enforce": "node scripts/release-control-evidence.mjs --enforce"
   },
   "devDependencies": {
     "typescript": "^5.9.0",

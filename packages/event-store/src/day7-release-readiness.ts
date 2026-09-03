@@ -1,0 +1,220 @@
+import { InvalidEventError } from "./index.js";
+import { requireCompleteDay7ReleaseGateCatalog } from "./day7-release-gate-catalog.js";
+import {
+  validateBurnInEvidence,
+  validateDeploymentRehearsalEvidence,
+  validateRollbackRehearsalEvidence,
+  type BurnInEvidence,
+  type Day7CandidateIdentity,
+  type DeploymentRehearsalEvidence,
+  type OperationalStepEvidence,
+  type RollbackRehearsalEvidence,
+} from "./day7-operational-evidence.js";
+
+export type Day7ReleaseGateDisposition = "PASS" | "BLOCKED";
+
+export interface Day7ReleaseGateEvidence {
+  readonly gateId: string;
+  readonly candidateIdentity: Day7CandidateIdentity;
+  readonly disposition: Day7ReleaseGateDisposition;
+  readonly evidenceIds: readonly string[];
+  readonly blockerReason: string | null;
+}
+
+export interface Day7ReleaseReadinessInput {
+  readonly candidateIdentity: Day7CandidateIdentity;
+  readonly deployment: DeploymentRehearsalEvidence;
+  readonly rollback: RollbackRehearsalEvidence;
+  readonly burnIn: BurnInEvidence;
+  readonly independentGates: readonly Day7ReleaseGateEvidence[];
+}
+
+export interface Day7ReleaseReadinessEvidence {
+  readonly candidateIdentity: Day7CandidateIdentity;
+  readonly deployment: DeploymentRehearsalEvidence;
+  readonly rollback: RollbackRehearsalEvidence;
+  readonly burnIn: BurnInEvidence;
+  readonly independentGates: readonly Day7ReleaseGateEvidence[];
+  readonly disposition: Day7ReleaseGateDisposition;
+  readonly blockingGateIds: readonly string[];
+}
+
+function invalid(message: string): never {
+  throw new InvalidEventError(message);
+}
+
+function nonEmpty(value: string, field: string): string {
+  const canonical = value.trim();
+  if (canonical.length === 0) invalid(`${field} must be non-empty.`);
+  if (canonical !== value) invalid(`${field} must not contain surrounding whitespace.`);
+  return value;
+}
+
+function sameCandidate(expected: Day7CandidateIdentity, actual: Day7CandidateIdentity): boolean {
+  return expected.candidateHeadSha === actual.candidateHeadSha
+    && expected.candidateMergeSha === actual.candidateMergeSha
+    && expected.workflowRunId === actual.workflowRunId
+    && expected.verificationMatrixRevision === actual.verificationMatrixRevision
+    && expected.operatorRunbookRevision === actual.operatorRunbookRevision
+    && expected.dependencyLockDigest === actual.dependencyLockDigest
+    && expected.configurationSchemaVersion === actual.configurationSchemaVersion
+    && expected.deploymentIdentity === actual.deploymentIdentity
+    && expected.recordedAtEpochMs === actual.recordedAtEpochMs;
+}
+
+function assertSameCandidate(expected: Day7CandidateIdentity, actual: Day7CandidateIdentity, field: string): void {
+  if (!sameCandidate(expected, actual)) invalid(`${field} must be bound to the exact release candidate identity.`);
+}
+
+function assertStepsWithinRehearsalWindow(
+  steps: readonly OperationalStepEvidence[],
+  rehearsalStartedAtEpochMs: number,
+  rehearsalCompletedAtEpochMs: number,
+  field: string,
+): void {
+  for (const [index, step] of steps.entries()) {
+    if (step.startedAtEpochMs < rehearsalStartedAtEpochMs || step.completedAtEpochMs > rehearsalCompletedAtEpochMs) {
+      invalid(`${field}[${index}] must be temporally contained within its rehearsal window.`);
+    }
+  }
+}
+
+function validateGate(gate: Day7ReleaseGateEvidence, index: number, expectedCandidate: Day7CandidateIdentity): Day7ReleaseGateEvidence {
+  nonEmpty(gate.gateId, `independentGates[${index}].gateId`);
+  assertSameCandidate(expectedCandidate, gate.candidateIdentity, `independentGates[${index}]`);
+  if (gate.disposition !== "PASS" && gate.disposition !== "BLOCKED") invalid(`independentGates[${index}].disposition must be PASS or BLOCKED.`);
+  if (gate.evidenceIds.length === 0) invalid(`independentGates[${index}].evidenceIds must contain evidence.`);
+  const evidenceIds = gate.evidenceIds.map((id, evidenceIndex) => nonEmpty(id, `independentGates[${index}].evidenceIds[${evidenceIndex}]`));
+  if (new Set(evidenceIds).size !== evidenceIds.length) invalid(`independentGates[${index}].evidenceIds must be unique.`);
+  if (gate.disposition === "PASS" && gate.blockerReason !== null) invalid(`independentGates[${index}] PASS must not carry a blocker reason.`);
+  if (gate.disposition === "BLOCKED" && (gate.blockerReason === null || gate.blockerReason.trim().length === 0)) invalid(`independentGates[${index}] BLOCKED must carry a blocker reason.`);
+  return Object.freeze(structuredClone(gate));
+}
+
+function assertIndependentGateEvidenceIdentitiesAreUnique(gates: readonly Day7ReleaseGateEvidence[]): void {
+  const owners = new Map<string, string>();
+  for (const gate of gates) {
+    for (const evidenceId of gate.evidenceIds) {
+      const priorGateId = owners.get(evidenceId);
+      if (priorGateId !== undefined) {
+        invalid(`independent release-gate evidence identity ${evidenceId} is reused by ${priorGateId} and ${gate.gateId}.`);
+      }
+      owners.set(evidenceId, gate.gateId);
+    }
+  }
+}
+
+function operationalEvidenceByPhase(
+  deployment: DeploymentRehearsalEvidence,
+  rollback: RollbackRehearsalEvidence,
+  burnIn: BurnInEvidence,
+): Readonly<Record<"deployment" | "rollback" | "burn-in", readonly string[]>> {
+  return {
+    deployment: [
+      ...deployment.immutableArtifactIdentities,
+      ...deployment.migrationPrerequisiteEvidence,
+      ...deployment.steps.map((item) => item.evidenceId),
+      ...deployment.postDeployChecks.map((item) => item.evidenceId),
+      ...(deployment.releaseEvidenceArtifactId === null ? [] : [deployment.releaseEvidenceArtifactId]),
+    ],
+    rollback: [
+      ...rollback.compatibilityEvidence,
+      ...rollback.preservedAuthorityEvidence,
+      ...rollback.steps.map((item) => item.evidenceId),
+      ...rollback.postRollbackChecks.map((item) => item.evidenceId),
+      ...rollback.uncertainOperations.flatMap((item) => [item.authoritativeReadbackId, item.evidenceId]),
+    ],
+    "burn-in": [
+      ...burnIn.approvalOutcomes,
+      ...burnIn.injectedFailures,
+      ...burnIn.ownershipEvents,
+      ...burnIn.persistenceUncertaintyEvents,
+      ...burnIn.telemetryFailures,
+      ...burnIn.securityFindings,
+      ...burnIn.regressionEvidence,
+      ...burnIn.traceCompletenessEvidence,
+      ...burnIn.incidents,
+    ],
+  };
+}
+
+function assertOperationalEvidenceIdentitiesAreUniqueAcrossPhases(
+  deployment: DeploymentRehearsalEvidence,
+  rollback: RollbackRehearsalEvidence,
+  burnIn: BurnInEvidence,
+): void {
+  const owners = new Map<string, string>();
+  for (const [phase, evidenceIds] of Object.entries(operationalEvidenceByPhase(deployment, rollback, burnIn))) {
+    for (const evidenceId of evidenceIds) {
+      const priorPhase = owners.get(evidenceId);
+      if (priorPhase !== undefined && priorPhase !== phase) {
+        invalid(`operational evidence identity ${evidenceId} is reused across ${priorPhase} and ${phase}.`);
+      }
+      owners.set(evidenceId, phase);
+    }
+  }
+}
+
+function assertIndependentGateEvidenceDoesNotAliasOperationalEvidence(
+  gates: readonly Day7ReleaseGateEvidence[],
+  deployment: DeploymentRehearsalEvidence,
+  rollback: RollbackRehearsalEvidence,
+  burnIn: BurnInEvidence,
+): void {
+  const operationalEvidenceIds = new Set<string>(Object.values(operationalEvidenceByPhase(deployment, rollback, burnIn)).flat());
+
+  for (const gate of gates) {
+    for (const evidenceId of gate.evidenceIds) {
+      if (operationalEvidenceIds.has(evidenceId)) {
+        invalid(`independent release-gate evidence identity ${evidenceId} aliases deployment, rollback, or burn-in operational evidence.`);
+      }
+    }
+  }
+}
+
+export function composeDay7ReleaseReadiness(input: Day7ReleaseReadinessInput): Day7ReleaseReadinessEvidence {
+  const deployment = validateDeploymentRehearsalEvidence(input.deployment);
+  const rollback = validateRollbackRehearsalEvidence(input.rollback);
+  const burnIn = validateBurnInEvidence(input.burnIn);
+
+  assertSameCandidate(input.candidateIdentity, deployment.candidateIdentity, "deployment");
+  assertSameCandidate(input.candidateIdentity, rollback.candidateIdentity, "rollback");
+  assertSameCandidate(input.candidateIdentity, burnIn.candidateIdentity, "burnIn");
+  if (input.candidateIdentity.recordedAtEpochMs > deployment.startedAtEpochMs) {
+    invalid("release candidate identity must be recorded no later than the deployment rehearsal starts.");
+  }
+  if (rollback.fromDeploymentIdentity !== deployment.candidateIdentity.deploymentIdentity) {
+    invalid("rollback must rehearse the exact release candidate deployment identity.");
+  }
+  assertStepsWithinRehearsalWindow(deployment.steps, deployment.startedAtEpochMs, deployment.completedAtEpochMs, "deployment.steps");
+  assertStepsWithinRehearsalWindow(rollback.steps, rollback.startedAtEpochMs, rollback.completedAtEpochMs, "rollback.steps");
+  if (rollback.startedAtEpochMs < deployment.completedAtEpochMs) {
+    invalid("rollback rehearsal must not start before the release-candidate deployment rehearsal completes.");
+  }
+  if (burnIn.startedAtEpochMs < deployment.completedAtEpochMs) {
+    invalid("burn-in must not start before the release-candidate deployment rehearsal completes.");
+  }
+  assertOperationalEvidenceIdentitiesAreUniqueAcrossPhases(deployment, rollback, burnIn);
+
+  if (input.independentGates.length === 0) invalid("independentGates must contain release-gate evidence.");
+  const independentGates = requireCompleteDay7ReleaseGateCatalog(input.independentGates.map((gate, index) => validateGate(gate, index, input.candidateIdentity)));
+  assertIndependentGateEvidenceIdentitiesAreUnique(independentGates);
+  assertIndependentGateEvidenceDoesNotAliasOperationalEvidence(independentGates, deployment, rollback, burnIn);
+
+  const blockingGateIds: string[] = [];
+  if (deployment.result !== "PASS") blockingGateIds.push("deployment");
+  if (deployment.releaseEvidenceArtifactId === null) blockingGateIds.push("deployment-release-artifact");
+  if (rollback.result !== "PASS") blockingGateIds.push("rollback");
+  if (burnIn.finalDisposition !== "PASS") blockingGateIds.push("burn-in");
+  for (const gate of independentGates) if (gate.disposition === "BLOCKED") blockingGateIds.push(gate.gateId);
+
+  return Object.freeze({
+    candidateIdentity: Object.freeze(structuredClone(input.candidateIdentity)),
+    deployment,
+    rollback,
+    burnIn,
+    independentGates,
+    disposition: blockingGateIds.length === 0 ? "PASS" : "BLOCKED",
+    blockingGateIds: Object.freeze(blockingGateIds),
+  });
+}
