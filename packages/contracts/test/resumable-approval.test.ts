@@ -16,6 +16,7 @@ import {
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
+import { createAtomicMemoryTestDurability } from "./resumable-test-durability.js";
 
 class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
@@ -142,6 +143,7 @@ describe("resumable approval integration", () => {
   it("persists a protected checkpoint and resumes without repeating completed work", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const nextEventId = ids();
     const calls = { prepare: 0, protected: 0 };
     let resolution: ApprovalResolution | undefined;
@@ -168,6 +170,7 @@ describe("resumable approval integration", () => {
 
     const buildRunner = () =>
       new ResumableSequentialWorkflowRunner({
+        durability,
         checkpointStore: checkpoints,
         eventSink: events,
         loadEventCursor: () => events.cursor(),
@@ -214,6 +217,7 @@ describe("resumable approval integration", () => {
   it("rejects stale approval decisions without executing protected work", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const nextEventId = ids();
     let protectedCalls = 0;
     let resolution: ApprovalResolution | undefined;
@@ -234,6 +238,7 @@ describe("resumable approval integration", () => {
 
     const buildRunner = () =>
       new ResumableSequentialWorkflowRunner({
+        durability,
         checkpointStore: checkpoints,
         eventSink: events,
         loadEventCursor: () => events.cursor(),
@@ -271,11 +276,13 @@ describe("resumable approval integration", () => {
   it("records rejection as one terminal failure and clears the checkpoint", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const nextEventId = ids();
     let resolution: ApprovalResolution | undefined;
 
     const buildRunner = () =>
       new ResumableSequentialWorkflowRunner({
+        durability,
         checkpointStore: checkpoints,
         eventSink: events,
         loadEventCursor: () => events.cursor(),
