@@ -75,6 +75,7 @@ export {
 } from "./recovery-ownership-reacquisition-evidence.js";
 
 import type { ExecutionEventType } from "./execution-event-types.js";
+import type { ExecutionAttemptContext } from "./execution-control.js";
 
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
 
@@ -121,7 +122,11 @@ export interface WorkflowContext {
 export interface WorkflowStep<I, O> {
   readonly id: string;
   readonly description: string;
-  execute(input: I, context: WorkflowContext): Promise<O>;
+  execute(
+    input: I,
+    context: WorkflowContext,
+    attemptContext?: ExecutionAttemptContext,
+  ): Promise<O>;
 }
 
 export interface WorkflowDefinition<I, O> {
