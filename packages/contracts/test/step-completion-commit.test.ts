@@ -85,4 +85,15 @@ describe("step completion atomic commit acknowledgement", () => {
       /does not match requested completion transition/,
     );
   });
+
+  it("fails closed when an adapter acknowledges a different completed-step prefix", () => {
+    const { request, result } = fixture();
+    const mismatched = {
+      ...result,
+      checkpoint: { ...result.checkpoint, completedStepIds: ["different-step"] },
+    };
+    expect(() => validateStepCompletionCommit(request, mismatched)).toThrow(
+      /does not match requested completion transition/,
+    );
+  });
 });
