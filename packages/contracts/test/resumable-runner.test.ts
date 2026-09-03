@@ -5,12 +5,14 @@ import type {
   ExecutionUsage,
   WorkflowContext,
 } from "../src/index.js";
+import { InMemoryStepCompletionCommitPort } from "../src/in-memory-step-completion-commit.js";
 import {
   InvalidCheckpointError,
   ResumableSequentialWorkflowRunner,
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
+import { createAtomicMemoryTestDurability } from "./resumable-test-durability.js";
 
 class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
@@ -112,6 +114,7 @@ describe("ResumableSequentialWorkflowRunner", () => {
   it("resumes after a nonterminal interruption without repeating completed work", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new ContiguousMemoryEventSink();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const nextEventId = ids();
     const calls = { first: 0, second: 0, third: 0 };
     let failSecond = true;
@@ -151,6 +154,7 @@ describe("ResumableSequentialWorkflowRunner", () => {
 
     const buildRunner = (timestamp: string) =>
       new ResumableSequentialWorkflowRunner({
+        durability,
         checkpointStore: checkpoints,
         eventSink: events,
         loadEventCursor: () => events.cursor(),
@@ -192,6 +196,92 @@ describe("ResumableSequentialWorkflowRunner", () => {
     ).toEqual(["execution.completed"]);
   });
 
+  it("fails closed before workflow work when authoritative durability is absent", async () => {
+    let calls = 0;
+    const runner = new ResumableSequentialWorkflowRunner({
+      checkpointStore: new MemoryCheckpointStore(),
+      eventSink: new ContiguousMemoryEventSink(),
+      loadEventCursor: () => ({ sequence: 0 }),
+      nextEventId: ids(),
+    });
+
+    await expect(
+      runner.run(
+        {
+          id: "recovery-workflow",
+          version: "1",
+          steps: [
+            {
+              id: "first",
+              description: "first",
+              execute: async (value) => {
+                calls += 1;
+                return value;
+              },
+            },
+          ],
+        },
+        2,
+        context(),
+      ),
+    ).rejects.toThrow("Authoritative resumable durability is required");
+    expect(calls).toBe(0);
+  });
+
+  it("reconciles post-publish acknowledgement loss and never replays the completed prefix", async () => {
+    const durability = new InMemoryStepCompletionCommitPort({
+      failAt: "after_publish_before_ack",
+    });
+    const nextEventId = ids();
+    const calls = { first: 0, second: 0 };
+    let interruptSecond = true;
+    const workflow = {
+      id: "recovery-workflow",
+      version: "1",
+      steps: [
+        {
+          id: "first",
+          description: "first",
+          execute: async (value: unknown) => {
+            calls.first += 1;
+            return Number(value) + 5;
+          },
+        },
+        {
+          id: "second",
+          description: "second",
+          execute: async (value: unknown) => {
+            calls.second += 1;
+            if (interruptSecond) throw new Error("interrupt-after-first");
+            return Number(value) * 2;
+          },
+        },
+      ],
+      mapOutput: Number,
+    } as const;
+
+    const buildRunner = () =>
+      new ResumableSequentialWorkflowRunner({ durability, nextEventId });
+
+    await expect(buildRunner().run(workflow, 1, context())).rejects.toThrow(
+      "interrupt-after-first",
+    );
+    expect(calls).toEqual({ first: 1, second: 1 });
+    expect(durability.loadCheckpoint("execution-1")).toMatchObject({
+      nextStepIndex: 1,
+      completedStepIds: ["first"],
+      value: 6,
+      revision: 1,
+    });
+
+    interruptSecond = false;
+    const resumedContext = context();
+    await expect(buildRunner().run(workflow, 999, resumedContext)).resolves.toBe(12);
+    expect(calls).toEqual({ first: 1, second: 2 });
+    expect(resumedContext.usage.iterations).toBe(2);
+    expect(durability.loadCheckpoint("execution-1")).toBeUndefined();
+  });
+
   it("fails closed when the event stream is behind the checkpoint", async () => {
     const checkpoints = new MemoryCheckpointStore();
     checkpoints.checkpoint = {
@@ -206,10 +296,13 @@ describe("ResumableSequentialWorkflowRunner", () => {
       parentEventId: "event-3",
       revision: 1,
     };
+    const events = new ContiguousMemoryEventSink();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
 
     const runner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
-      eventSink: new ContiguousMemoryEventSink(),
+      eventSink: events,
       loadEventCursor: () => ({ sequence: 0 }),
       nextEventId: ids(),
     });
@@ -236,10 +329,13 @@ describe("ResumableSequentialWorkflowRunner", () => {
       lastEventSequence: 0,
       revision: 1,
     };
+    const events = new ContiguousMemoryEventSink();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
 
     const runner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
-      eventSink: new ContiguousMemoryEventSink(),
+      eventSink: events,
       loadEventCursor: () => ({ sequence: 0 }),
       nextEventId: ids(),
     });
@@ -266,10 +362,13 @@ describe("ResumableSequentialWorkflowRunner", () => {
       lastEventSequence: 3,
       revision: 1,
     };
+    const events = new ContiguousMemoryEventSink();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
 
     const runner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
-      eventSink: new ContiguousMemoryEventSink(),
+      eventSink: events,
       loadEventCursor: () => ({ sequence: 3, parentEventId: "event-3" }),
       nextEventId: ids(),
     });
