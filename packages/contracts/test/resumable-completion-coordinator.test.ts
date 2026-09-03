@@ -20,7 +20,7 @@ describe("coordinateAtomicResumableCompletion", () => {
       id: "event-1",
       executionId: "execution-1",
       sequence: 1,
-      type: "workflow.started",
+      type: "execution.started",
       occurredAt: "2026-09-03T07:59:59.000Z",
       actor: "test-runner",
       payload: {},
