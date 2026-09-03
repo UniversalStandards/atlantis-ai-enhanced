@@ -1,5 +1,9 @@
 # ATLANTIS Repository-Wide AI Instructions
 
+## Upstream reusable standard
+
+This repository adopts `UniversalStandards/UniversalStandards` as the canonical upstream reusable AI engineering standard. The pinned upstream commit is recorded in `.universal-standards.json`. Local ATLANTIS requirements may strengthen upstream controls but must not silently weaken them.
+
 ## Capability-escalation rule
 
 A limitation of the currently selected connector, API wrapper, tool, or execution surface is not automatically a project blocker.
@@ -34,6 +38,8 @@ An issue assignment or agent claim is not completion evidence by itself.
 ## Learning propagation
 
 When a project uncovers a reusable process failure or a materially better execution pattern, treat the lesson as a reusable engineering control rather than one-off chat context. Update the appropriate durable instruction/decision/runbook/template sources so future agents inherit it automatically.
+
+Portfolio-level lessons must be reviewed for promotion to `UniversalStandards/UniversalStandards`. Machine-verifiable lessons should become tests, evaluations, CI, policy evidence, or bootstrap conformance checks whenever practical.
 
 The canonical operational procedure and propagation matrix are in `docs/runbooks/CAPABILITY_ESCALATION_AND_LEARNING_PROPAGATION.md`. The architectural rationale is recorded in `docs/decisions/ADR-AGENT-CAPABILITY-ESCALATION.md`. Use `.github/ISSUE_TEMPLATE/agent-blocker-escalation.md` for future delegated blocker handoffs.
 
