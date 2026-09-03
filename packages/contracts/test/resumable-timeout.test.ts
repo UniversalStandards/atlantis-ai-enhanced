@@ -11,6 +11,7 @@ import {
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
+import { createAtomicMemoryTestDurability } from "./resumable-test-durability.js";
 
 class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
@@ -103,6 +104,7 @@ describe("resumable deadline integration", () => {
   it("times out a resumed execution without repeating completed steps", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new ContiguousEventSink();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const nextEventId = ids();
     const calls = { first: 0, second: 0 };
     let interruptSecond = true;
@@ -133,6 +135,7 @@ describe("resumable deadline integration", () => {
     } as const;
 
     const firstRunner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
       eventSink: events,
       loadEventCursor: () => events.cursor(),
@@ -147,6 +150,7 @@ describe("resumable deadline integration", () => {
 
     interruptSecond = false;
     const resumedRunner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
       eventSink: events,
       loadEventCursor: () => events.cursor(),
