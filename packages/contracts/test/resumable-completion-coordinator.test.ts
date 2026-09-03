@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ExecutionEvent } from "../src/index.js";
 import { InMemoryStepCompletionCommitPort } from "../src/in-memory-step-completion-commit.js";
 import { coordinateAtomicResumableCompletion } from "../src/resumable-completion-coordinator.js";
 
@@ -15,6 +16,16 @@ const usage = {
 describe("coordinateAtomicResumableCompletion", () => {
   it("publishes completion evidence and the advanced checkpoint as one acknowledged transition", async () => {
     const durability = new InMemoryStepCompletionCommitPort();
+    const precedingEvent: ExecutionEvent = {
+      id: "event-1",
+      executionId: "execution-1",
+      sequence: 1,
+      type: "workflow.started",
+      occurredAt: "2026-09-03T07:59:59.000Z",
+      actor: "test-runner",
+      payload: {},
+    };
+    await durability.append(precedingEvent);
 
     const result = await coordinateAtomicResumableCompletion({
       durability,
@@ -26,25 +37,25 @@ describe("coordinateAtomicResumableCompletion", () => {
       completedStepIds: ["step-1"],
       value: { completed: true },
       usage,
-      cursor: { sequence: 4, parentEventId: "event-4" },
+      cursor: { sequence: 1, parentEventId: "event-1" },
       expectedCheckpointRevision: undefined,
-      nextEventId: () => "event-5",
+      nextEventId: () => "event-2",
       actor: "test-runner",
       occurredAt: "2026-09-03T08:00:00.000Z",
     });
 
-    expect(result.cursor).toEqual({ sequence: 5, parentEventId: "event-5" });
+    expect(result.cursor).toEqual({ sequence: 2, parentEventId: "event-2" });
     expect(result.checkpoint).toMatchObject({
       nextStepIndex: 1,
       completedStepIds: ["step-1"],
-      lastEventSequence: 5,
-      parentEventId: "event-5",
+      lastEventSequence: 2,
+      parentEventId: "event-2",
       revision: 1,
     });
     expect(durability.loadCompletionEvent("execution-1")).toMatchObject({
-      id: "event-5",
-      sequence: 5,
-      parentEventId: "event-4",
+      id: "event-2",
+      sequence: 2,
+      parentEventId: "event-1",
       type: "workflow.step.completed",
       payload: { stepId: "step-1", stepIndex: 0 },
     });
@@ -67,9 +78,9 @@ describe("coordinateAtomicResumableCompletion", () => {
         completedStepIds: ["step-1"],
         value: "post-step-value",
         usage,
-        cursor: { sequence: 9, parentEventId: "event-9" },
+        cursor: { sequence: 0 },
         expectedCheckpointRevision: undefined,
-        nextEventId: () => "event-10",
+        nextEventId: () => "event-1",
         actor: "test-runner",
         occurredAt: "2026-09-03T08:00:00.000Z",
       }),
@@ -77,5 +88,34 @@ describe("coordinateAtomicResumableCompletion", () => {
 
     expect(durability.loadCompletionEvent("execution-crash")).toBeUndefined();
     expect(durability.loadCheckpoint("execution-crash")).toBeUndefined();
+    await expect(durability.loadEventCursor("execution-crash")).resolves.toEqual({
+      sequence: 0,
+    });
+  });
+
+  it("fails closed when the caller cursor disagrees with authoritative durability", async () => {
+    const durability = new InMemoryStepCompletionCommitPort();
+
+    await expect(
+      coordinateAtomicResumableCompletion({
+        durability,
+        executionId: "execution-stale-cursor",
+        workflowId: "workflow-1",
+        workflowVersion: "1",
+        stepId: "step-1",
+        stepIndex: 0,
+        completedStepIds: ["step-1"],
+        value: "post-step-value",
+        usage,
+        cursor: { sequence: 3, parentEventId: "event-3" },
+        expectedCheckpointRevision: undefined,
+        nextEventId: () => "event-4",
+        actor: "test-runner",
+        occurredAt: "2026-09-03T08:00:00.000Z",
+      }),
+    ).rejects.toThrow("cursor does not match authoritative durability event cursor");
+
+    expect(durability.loadCompletionEvent("execution-stale-cursor")).toBeUndefined();
+    expect(durability.loadCheckpoint("execution-stale-cursor")).toBeUndefined();
   });
 });
