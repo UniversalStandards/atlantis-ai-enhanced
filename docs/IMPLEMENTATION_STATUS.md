@@ -1,5 +1,18 @@
 # ATLANTIS AI Implementation Status
 
+## 2026-09-03
+
+### Completed
+
+- Added an authoritative retry-consumption contract in which failed-attempt
+  evidence and the retry allowance it consumes are one durable transition.
+- Made replayed evidence for a single step/attempt identity consume exactly one
+  allowance, so acknowledgement loss cannot restore retry budget.
+- Reconstructed execution retry usage from durable failed-attempt evidence during
+  recovery and enforced `maxRetries` across restart boundaries.
+- Added failure-injection tests for the failed-event to retry-checkpoint boundary
+  and for repeated crash/restart cycles.
+
 ## 2026-07-30
 
 ### Completed

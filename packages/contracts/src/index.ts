@@ -60,6 +60,7 @@ export type ExecutionEventType =
   | "workflow.step.started"
   | "workflow.step.completed"
   | "workflow.step.failed"
+  | "workflow.step.attempt.failed"
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
@@ -132,3 +133,25 @@ export function assertWithinBudget(context: WorkflowContext): void {
     }
   }
 }
+
+export {
+  consumeRetryAllowance,
+  InMemoryRetryConsumptionStore,
+  InvalidFailedAttemptRecordError,
+  loadRetryAllowance,
+  reconcileRetryConsumption,
+  reconcileRetryUsageFromDurableEvidence,
+  RetryConsumptionConflictError,
+  RetryConsumptionReconciliationError,
+  SimulatedRetryConsumptionCrashError,
+  validateFailedAttemptRecord,
+  type FailedAttemptIdentity,
+  type FailedAttemptRecord,
+  type InMemoryRetryConsumptionStoreOptions,
+  type RetryAllowanceDecision,
+  type RetryConsumptionFailureInjection,
+  type RetryConsumptionFailurePoint,
+  type RetryConsumptionKey,
+  type RetryConsumptionState,
+  type RetryConsumptionStore,
+} from "./retry-consumption.js";
