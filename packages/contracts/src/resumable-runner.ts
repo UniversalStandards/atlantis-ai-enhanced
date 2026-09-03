@@ -313,7 +313,6 @@ export class ResumableSequentialWorkflowRunner {
     input: I,
     context: WorkflowContext,
   ): Promise<O> {
-    // Resolve the single consistency domain before any workflow event or step can run.
     const durability = requireDurability(this.options);
     const loaded = await durability.load(context.executionId);
     if (loaded !== undefined) {
@@ -513,14 +512,15 @@ export class ResumableSequentialWorkflowRunner {
 
         try {
           value = await executeWithControl(
-            async ({ attempt, maxAttempts }) => {
+            async (attemptContext) => {
+              const { attempt, maxAttempts } = attemptContext;
               await append("workflow.step.attempt.started", {
                 stepId: step.id,
                 stepIndex: index,
                 attempt,
                 maxAttempts,
               });
-              return step.execute(value, context);
+              return step.execute(value, context, attemptContext);
             },
             retryPolicy,
             {
@@ -652,10 +652,6 @@ export class ResumableSequentialWorkflowRunner {
           observed: error.observed,
         });
       } else {
-        // Reconcile the authoritative cursor before recording interruption. A
-        // completion adapter may have atomically published progress while its
-        // acknowledgement was lost; using a stale local cursor would otherwise
-        // manufacture a second inconsistency while reporting the first one.
         const authoritativeCursor = await durability.loadEventCursor(context.executionId);
         validateEventCursor(authoritativeCursor);
         sequence = authoritativeCursor.sequence;
