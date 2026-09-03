@@ -50,6 +50,8 @@ export interface AttemptFailureCommitRequest {
   readonly expectedCheckpointRevision: number | undefined;
   /** Retry allowance consumed by authoritative state before this transition. */
   readonly consumedRetriesBefore: number;
+  /** Attempts of this step already paid for by authoritative state. */
+  readonly consumedAttemptsBefore: number;
 }
 
 export interface AttemptFailureCommitResult {
@@ -211,6 +213,11 @@ export function validateStepCompletionCommit(
   if (requested.completedStepIds.at(-1) !== event.payload.stepId) {
     throw new InvalidStepCompletionCommitError("completion event stepId does not match completed checkpoint prefix");
   }
+  if (requested.stepAttemptConsumption !== undefined) {
+    throw new InvalidStepCompletionCommitError(
+      "completed step must retire its pending attempt consumption",
+    );
+  }
   if (
     committed.executionId !== requested.executionId ||
     committed.workflowId !== requested.workflowId ||
@@ -222,7 +229,8 @@ export function validateStepCompletionCommit(
     !sameUsage(committed.usage, requested.usage) ||
     !sameCheckpointValue(committed.value, requested.value) ||
     !sameCheckpointValue(committed.pendingApproval, requested.pendingApproval) ||
-    !sameCheckpointValue(committed.approvedApproval, requested.approvedApproval)
+    !sameCheckpointValue(committed.approvedApproval, requested.approvedApproval) ||
+    committed.stepAttemptConsumption !== undefined
   ) {
     throw new InvalidStepCompletionCommitError("acknowledged checkpoint does not match requested completion transition");
   }
@@ -259,7 +267,11 @@ function sameCommittedCheckpoint(
     sameUsage(committed.usage, requested.usage) &&
     sameCheckpointValue(committed.value, requested.value) &&
     sameCheckpointValue(committed.pendingApproval, requested.pendingApproval) &&
-    sameCheckpointValue(committed.approvedApproval, requested.approvedApproval)
+    sameCheckpointValue(committed.approvedApproval, requested.approvedApproval) &&
+    sameCheckpointValue(
+      committed.stepAttemptConsumption,
+      requested.stepAttemptConsumption,
+    )
   );
 }
 
@@ -284,17 +296,17 @@ export function validateAttemptFailureCommit(
   if (event.type !== "workflow.step.attempt.failed") {
     throw new InvalidAttemptFailureCommitError("attempt failure event type is invalid");
   }
-  if (event.payload.willRetry !== true) {
-    throw new InvalidAttemptFailureCommitError(
-      "only a retrying attempt failure consumes a retry allowance",
-    );
+  if (typeof event.payload.willRetry !== "boolean") {
+    throw new InvalidAttemptFailureCommitError("attempt failure retry disposition is invalid");
   }
   if (!Number.isSafeInteger(event.payload.attempt) || event.payload.attempt < 1) {
     throw new InvalidAttemptFailureCommitError("attempt failure attempt ordinal is invalid");
   }
   if (
     !Number.isSafeInteger(event.payload.maxAttempts) ||
-    event.payload.maxAttempts <= event.payload.attempt
+    (event.payload.willRetry
+      ? event.payload.maxAttempts <= event.payload.attempt
+      : event.payload.maxAttempts < event.payload.attempt)
   ) {
     throw new InvalidAttemptFailureCommitError(
       "a retrying attempt failure must leave a further attempt available",
@@ -330,9 +342,31 @@ export function validateAttemptFailureCommit(
       "authoritative consumed retry count is invalid",
     );
   }
-  if (requested.usage.retries !== request.consumedRetriesBefore + 1) {
+  if (
+    requested.usage.retries !==
+    request.consumedRetriesBefore + (event.payload.willRetry ? 1 : 0)
+  ) {
     throw new InvalidAttemptFailureCommitError(
       "attempt failure must consume exactly one retry allowance",
+    );
+  }
+  if (
+    !Number.isSafeInteger(request.consumedAttemptsBefore) ||
+    request.consumedAttemptsBefore < 0
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "authoritative consumed attempt count is invalid",
+    );
+  }
+  const consumption = requested.stepAttemptConsumption;
+  if (
+    consumption === undefined ||
+    consumption.stepId !== event.payload.stepId ||
+    consumption.stepIndex !== event.payload.stepIndex ||
+    consumption.consumedAttempts !== request.consumedAttemptsBefore + 1
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure must record exactly one further paid attempt for the failing step",
     );
   }
   if (!sameCommittedCheckpoint(requested, committed)) {

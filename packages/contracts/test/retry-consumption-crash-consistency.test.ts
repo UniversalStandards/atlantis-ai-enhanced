@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { ExecutionEvent, ExecutionUsage, WorkflowContext } from "../src/index.js";
 import type { ApprovalRequest, ApprovalResolution } from "../src/approval-control.js";
 import { InMemoryStepCompletionCommitPort } from "../src/in-memory-step-completion-commit.js";
-import { ResumableSequentialWorkflowRunner } from "../src/resumable-runner.js";
+import {
+  ResumableSequentialWorkflowRunner,
+  RetryBudgetExhaustedError,
+} from "../src/resumable-runner.js";
 import {
   InvalidAttemptFailureCommitError,
   validateAttemptFailureCommit,
@@ -70,14 +73,19 @@ function ids(prefix: string): () => string {
   return () => `${prefix}-${++next}`;
 }
 
-function retryConsumingFailures(
+function durableAttemptFailures(
   port: InMemoryStepCompletionCommitPort,
 ): readonly ExecutionEvent<AttemptFailureEventPayload>[] {
   return port
     .loadEvents(executionId)
     .filter((event) => event.type === "workflow.step.attempt.failed")
-    .map((event) => event as ExecutionEvent<AttemptFailureEventPayload>)
-    .filter((event) => event.payload.willRetry);
+    .map((event) => event as ExecutionEvent<AttemptFailureEventPayload>);
+}
+
+function retryConsumingFailures(
+  port: InMemoryStepCompletionCommitPort,
+): readonly ExecutionEvent<AttemptFailureEventPayload>[] {
+  return durableAttemptFailures(port).filter((event) => event.payload.willRetry);
 }
 
 describe("retry consumption crash consistency", () => {
@@ -139,7 +147,9 @@ describe("retry consumption crash consistency", () => {
   });
 
   it("bounds retry consumption by maxRetries across repeated restarts", async () => {
-    // One durable authority survives; every runner instance is a fresh process.
+    // One durable authority survives; every runner instance is a fresh process
+    // that crashes after each attempt-failure is published but before the
+    // acknowledgement reaches the caller.
     const port = new InMemoryStepCompletionCommitPort({
       attemptFailureFailAt: "after_publish_before_ack",
     });
@@ -154,18 +164,90 @@ describe("retry consumption crash consistency", () => {
           nextEventId,
           retryPolicyForStep: () => ({ maxAttempts: 5 }),
         }).run(alwaysFailingWorkflow(() => (calls += 1)), 1, resumed),
-      ).rejects.toThrow("boundary failure");
+      ).rejects.toThrow();
 
-      expect(resumed.usage.retries).toBeLessThanOrEqual(maxRetries);
-      expect(port.loadCheckpoint(executionId)?.usage.retries).toBe(maxRetries);
+      // Retry allowance is only ever consumed, never restored.
+      expect(port.loadCheckpoint(executionId)?.usage.retries ?? 0).toBeLessThanOrEqual(
+        maxRetries,
+      );
+      expect(calls).toBeLessThanOrEqual(maxRetries + 1);
     }
 
-    // Retry allowance is consumed exactly once and never restored: the first
-    // process spends the whole budget, and each later restart gets a single
-    // bounded attempt instead of an unbounded retry loop.
-    expect(retryConsumingFailures(port)).toHaveLength(maxRetries);
-    expect(calls).toBe(maxRetries + 1 + 4);
+    // Once the durable allowance is spent the step is ineligible for any
+    // further execution, so restarts stay flat instead of granting one more
+    // unpaid attempt each time.
+    const exhausted = calls;
+    for (let restart = 0; restart < 5; restart += 1) {
+      await expect(
+        new ResumableSequentialWorkflowRunner({
+          durability: port,
+          nextEventId,
+          retryPolicyForStep: () => ({ maxAttempts: 5 }),
+        }).run(alwaysFailingWorkflow(() => (calls += 1)), 1, context()),
+      ).rejects.toBeInstanceOf(RetryBudgetExhaustedError);
+      expect(calls).toBe(exhausted);
+    }
+
+    expect(calls).toBeLessThanOrEqual(maxRetries + 1);
+    expect(durableAttemptFailures(port).length).toBe(calls);
   });
+
+  it("bounds total executions by maxRetries without any crash", async () => {
+    const port = new InMemoryStepCompletionCommitPort();
+    const nextEventId = ids("event");
+    let calls = 0;
+
+    const run = async () =>
+      new ResumableSequentialWorkflowRunner({
+        durability: port,
+        nextEventId,
+        retryPolicyForStep: () => ({ maxAttempts: 9 }),
+      }).run(alwaysFailingWorkflow(() => (calls += 1)), 1, context());
+
+    await expect(run()).rejects.toThrow("boundary failure");
+    expect(calls).toBe(maxRetries + 1);
+
+    for (let restart = 0; restart < 3; restart += 1) {
+      await expect(run()).rejects.toBeInstanceOf(RetryBudgetExhaustedError);
+      expect(calls).toBe(maxRetries + 1);
+    }
+  });
+
+  it("still grants an interrupted step its unpaid attempt after restart", async () => {
+    const port = new InMemoryStepCompletionCommitPort();
+    const nextEventId = ids("event");
+    let calls = 0;
+    let fail = true;
+
+    const workflow = {
+      id: "retry-consumption-workflow",
+      version: "1",
+      steps: [
+        {
+          id: "always-fails",
+          description: "interrupted once",
+          execute: async (value: unknown): Promise<number> => {
+            calls += 1;
+            if (fail) throw new Error("boundary failure");
+            return Number(value) + 1;
+          },
+        },
+      ],
+      mapOutput: Number,
+    } as const;
+
+    const run = async () =>
+      new ResumableSequentialWorkflowRunner({
+        durability: port,
+        nextEventId,
+      }).run(workflow, 1, context());
+
+    await expect(run()).rejects.toThrow("boundary failure");
+    fail = false;
+    await expect(run()).resolves.toBe(2);
+    expect(calls).toBe(2);
+  });
+
   it("never publishes retry-consuming evidence through the ordinary event path", async () => {
     const port = new InMemoryStepCompletionCommitPort();
     // Split publication is the defect under repair: retry-consuming evidence
@@ -260,6 +342,8 @@ describe("validateAttemptFailureCommit", () => {
       readonly retries?: number;
       readonly nextStepIndex?: number;
       readonly consumedRetriesBefore?: number;
+      readonly consumedAttemptsBefore?: number;
+      readonly consumedAttempts?: number;
     } = {},
   ): AttemptFailureCommitRequest {
     return {
@@ -277,9 +361,16 @@ describe("validateAttemptFailureCommit", () => {
         usage: { ...usage(), retries: overrides.retries ?? 1 },
         lastEventSequence: 1,
         parentEventId: "event-1",
+        stepAttemptConsumption: {
+          stepId: overrides.payload?.stepId ?? event.payload.stepId,
+          stepIndex: overrides.payload?.stepIndex ?? event.payload.stepIndex,
+          consumedAttempts:
+            overrides.consumedAttempts ?? (overrides.consumedAttemptsBefore ?? 0) + 1,
+        },
       },
       expectedCheckpointRevision: undefined,
       consumedRetriesBefore: overrides.consumedRetriesBefore ?? 0,
+      consumedAttemptsBefore: overrides.consumedAttemptsBefore ?? 0,
     };
   }
 
@@ -306,6 +397,47 @@ describe("validateAttemptFailureCommit", () => {
   it("rejects consuming an allowance for a terminal attempt failure", () => {
     const commit = request({ payload: { willRetry: false } });
     expect(() => validateAttemptFailureCommit(commit, result(commit))).toThrow(
+      InvalidAttemptFailureCommitError,
+    );
+  });
+
+  it("accepts a terminal failure that records the attempt without a retry", () => {
+    const commit = request({ payload: { willRetry: false }, retries: 0 });
+    const checkpoint = validateAttemptFailureCommit(commit, result(commit));
+    expect(checkpoint.usage.retries).toBe(0);
+    expect(checkpoint.stepAttemptConsumption?.consumedAttempts).toBe(1);
+  });
+
+  it("rejects a transition that records no attempt consumption", () => {
+    const commit = request();
+    const { stepAttemptConsumption: _omitted, ...checkpoint } = commit.checkpoint;
+    const stripped: AttemptFailureCommitRequest = { ...commit, checkpoint };
+    expect(() => validateAttemptFailureCommit(stripped, result(stripped))).toThrow(
+      InvalidAttemptFailureCommitError,
+    );
+  });
+
+  it("rejects attempt consumption that does not advance exactly once", () => {
+    const commit = request({ consumedAttempts: 3 });
+    expect(() => validateAttemptFailureCommit(commit, result(commit))).toThrow(
+      InvalidAttemptFailureCommitError,
+    );
+  });
+
+  it("rejects attempt consumption bound to another step identity", () => {
+    const commit = request();
+    const bound: AttemptFailureCommitRequest = {
+      ...commit,
+      checkpoint: {
+        ...commit.checkpoint,
+        stepAttemptConsumption: {
+          stepId: "other-step",
+          stepIndex: 0,
+          consumedAttempts: 1,
+        },
+      },
+    };
+    expect(() => validateAttemptFailureCommit(bound, result(bound))).toThrow(
       InvalidAttemptFailureCommitError,
     );
   });

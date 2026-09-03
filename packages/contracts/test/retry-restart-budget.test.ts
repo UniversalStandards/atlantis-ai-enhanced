@@ -7,6 +7,7 @@ import type {
 } from "../src/index.js";
 import {
   ResumableSequentialWorkflowRunner,
+  RetryBudgetExhaustedError,
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
@@ -137,17 +138,22 @@ describe("durable retry accounting", () => {
     expect(calls).toBe(2);
     expect(checkpoints.checkpoint?.usage.retries).toBe(1);
 
-    const resumedContext = context();
-    await expect(buildRunner().run(workflow, 1, resumedContext)).rejects.toThrow(
-      "failure-3",
-    );
+    // The step already spent its durable attempts, so recovery must not grant a
+    // further unpaid execution on this or any later restart.
+    for (let restart = 0; restart < 3; restart += 1) {
+      const resumedContext = context();
+      await expect(buildRunner().run(workflow, 1, resumedContext)).rejects.toThrow(
+        RetryBudgetExhaustedError,
+      );
+      expect(calls).toBe(2);
+      expect(resumedContext.usage.retries).toBe(1);
+    }
 
-    expect(calls).toBe(3);
-    expect(resumedContext.usage.retries).toBe(1);
+    expect(checkpoints.checkpoint?.usage.retries).toBe(1);
     expect(
       events.events
         .filter((event) => event.type === "workflow.step.attempt.started")
         .map((event) => (event.payload as { maxAttempts: number }).maxAttempts),
-    ).toEqual([2, 2, 1]);
+    ).toEqual([2, 2]);
   });
 });

@@ -23,6 +23,10 @@ export interface AtomicAttemptFailureInput {
   readonly value: unknown;
   /** Usage before the retry allowance for this failure is consumed. */
   readonly usage: ExecutionUsage;
+  /** Attempts of this step already accounted for by authoritative state. */
+  readonly consumedAttemptsBefore: number;
+  /** Whether this failure is followed by another attempt in this process. */
+  readonly willRetry: boolean;
   readonly cursor: ExecutionEventCursor;
   readonly expectedCheckpointRevision: number | undefined;
   readonly pendingApproval?: ApprovalRequest;
@@ -68,9 +72,10 @@ async function reconcileCommitAfterError(
 }
 
 /**
- * Single provider-neutral execution-path transition for a retryable failed
- * attempt. The `workflow.step.attempt.failed` evidence and the checkpoint that
- * consumes its retry allowance are submitted to the same durability authority,
+ * Single provider-neutral execution-path transition for a failed attempt. The
+ * `workflow.step.attempt.failed` evidence and the checkpoint that consumes the
+ * attempt (and, when another attempt follows, its retry allowance) are
+ * submitted together to the same durability authority,
  * and the acknowledgement is validated before execution may continue. There is
  * therefore no window in which durable failure evidence exists while the
  * consumed allowance can still be restored by a crash.
@@ -101,7 +106,7 @@ export async function commitAtomicAttemptFailure(
     stepIndex: input.stepIndex,
     attempt: input.attempt,
     maxAttempts: input.maxAttempts,
-    willRetry: true,
+    willRetry: input.willRetry,
     error: input.error,
   };
   const event: ExecutionEvent<AttemptFailureEventPayload> = {
@@ -126,9 +131,17 @@ export async function commitAtomicAttemptFailure(
       nextStepIndex: input.stepIndex,
       completedStepIds: [...input.completedStepIds],
       value: input.value,
-      usage: { ...input.usage, retries: input.usage.retries + 1 },
+      usage: {
+        ...input.usage,
+        retries: input.usage.retries + (input.willRetry ? 1 : 0),
+      },
       lastEventSequence: event.sequence,
       parentEventId: event.id,
+      stepAttemptConsumption: {
+        stepId: input.stepId,
+        stepIndex: input.stepIndex,
+        consumedAttempts: input.consumedAttemptsBefore + 1,
+      },
       ...(input.pendingApproval === undefined
         ? {}
         : { pendingApproval: input.pendingApproval }),
@@ -138,6 +151,7 @@ export async function commitAtomicAttemptFailure(
     },
     expectedCheckpointRevision: input.expectedCheckpointRevision,
     consumedRetriesBefore: input.usage.retries,
+    consumedAttemptsBefore: input.consumedAttemptsBefore,
   };
 
   let checkpoint: WorkflowCheckpoint;
