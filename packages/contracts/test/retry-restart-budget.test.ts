@@ -10,6 +10,7 @@ import {
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
+import { createAtomicMemoryTestDurability } from "./resumable-test-durability.js";
 
 class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
@@ -102,6 +103,7 @@ describe("durable retry accounting", () => {
   it("does not restore consumed retry budget after restart", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const nextEventId = ids();
     let calls = 0;
 
@@ -123,6 +125,7 @@ describe("durable retry accounting", () => {
 
     const buildRunner = () =>
       new ResumableSequentialWorkflowRunner({
+        durability,
         checkpointStore: checkpoints,
         eventSink: events,
         loadEventCursor: () => events.cursor(),
