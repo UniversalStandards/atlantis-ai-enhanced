@@ -33,6 +33,8 @@ An issue assignment or agent claim is not completion evidence by itself.
 
 ## Learning propagation
 
-When a project uncovers a reusable process failure or a materially better execution pattern, treat the lesson as a reusable engineering control rather than one-off chat context. Update the appropriate durable instruction/decision/runbook/template sources so future agents inherit it automatically. Prefer shared instructions for cross-agent rules, repository instructions for repository-specific rules, path-specific instructions for specialized areas, and ADR/runbook documentation for rationale and operational procedure.
+When a project uncovers a reusable process failure or a materially better execution pattern, treat the lesson as a reusable engineering control rather than one-off chat context. Update the appropriate durable instruction/decision/runbook/template sources so future agents inherit it automatically.
 
-Avoid duplicating contradictory copies. Maintain one canonical rule and reference it from narrower documents when practical.
+The canonical operational procedure and propagation matrix are in `docs/runbooks/CAPABILITY_ESCALATION_AND_LEARNING_PROPAGATION.md`. The architectural rationale is recorded in `docs/decisions/ADR-AGENT-CAPABILITY-ESCALATION.md`. Use `.github/ISSUE_TEMPLATE/agent-blocker-escalation.md` for future delegated blocker handoffs.
+
+Avoid duplicating contradictory copies. Maintain one canonical operational rule and reference it from narrower documents when practical.
