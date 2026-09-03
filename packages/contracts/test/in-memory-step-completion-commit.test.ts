@@ -30,16 +30,21 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
       revision: 1,
     };
     const completionEvent: ExecutionEvent<{ stepId: string; stepIndex: number }> = {
-      id: "event-8",
+      id: "event-5",
       executionId: "execution-1",
-      sequence: 8,
+      sequence: 5,
       type: "workflow.step.completed",
       occurredAt: "2026-09-02T19:00:00.000Z",
       actor: "runner",
-      parentEventId: "event-7",
+      parentEventId: "event-4",
       payload: { stepId: "second", stepIndex: 1 },
     };
     const port = new InMemoryStepCompletionCommitPort({ initialCheckpoints: [initial] });
+
+    await expect(port.loadEventCursor("execution-1")).resolves.toEqual({
+      sequence: 4,
+      parentEventId: "event-4",
+    });
 
     const result = await port.commitStepCompletion({
       completionEvent,
@@ -51,8 +56,8 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
         completedStepIds: ["first", "second"],
         value: 6,
         usage: usage(2),
-        lastEventSequence: 8,
-        parentEventId: "event-8",
+        lastEventSequence: 5,
+        parentEventId: "event-5",
       },
       expectedCheckpointRevision: 1,
     });
@@ -60,6 +65,10 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
     expect(result.checkpoint.revision).toBe(2);
     expect(port.loadCheckpoint("execution-1")).toEqual(result.checkpoint);
     expect(port.loadCompletionEvent("execution-1")).toEqual(completionEvent);
+    await expect(port.loadEventCursor("execution-1")).resolves.toEqual({
+      sequence: 5,
+      parentEventId: "event-5",
+    });
   });
 
   it("publishes neither side when failure is injected after validation", async () => {
@@ -67,13 +76,12 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
       failAt: "after_validation_before_publish",
     });
     const completionEvent: ExecutionEvent<{ stepId: string; stepIndex: number }> = {
-      id: "event-4",
+      id: "event-1",
       executionId: "execution-1",
-      sequence: 4,
+      sequence: 1,
       type: "workflow.step.completed",
       occurredAt: "2026-09-02T19:00:00.000Z",
       actor: "runner",
-      parentEventId: "event-3",
       payload: { stepId: "first", stepIndex: 0 },
     };
 
@@ -88,8 +96,8 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
           completedStepIds: ["first"],
           value: 3,
           usage: usage(1),
-          lastEventSequence: 4,
-          parentEventId: "event-4",
+          lastEventSequence: 1,
+          parentEventId: "event-1",
         },
         expectedCheckpointRevision: undefined,
       }),
@@ -97,5 +105,6 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
 
     expect(port.loadCheckpoint("execution-1")).toBeUndefined();
     expect(port.loadCompletionEvent("execution-1")).toBeUndefined();
+    await expect(port.loadEventCursor("execution-1")).resolves.toEqual({ sequence: 0 });
   });
 });
