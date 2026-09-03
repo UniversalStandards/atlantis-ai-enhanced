@@ -1,3 +1,81 @@
+export {
+  InMemoryRecoveryOwnershipStore,
+  InvalidRecoveryOwnershipStoreRequestError,
+  RecoveryOwnershipConflictError,
+  type InMemoryRecoveryOwnershipStoreOptions,
+  type RecoveryOwnershipAcquireRequest,
+  type RecoveryOwnershipAcquireResult,
+  type RecoveryOwnershipStore,
+} from "./recovery-ownership-store.js";
+
+export {
+  InvalidRecoveryOwnershipDurableAdapterRegistrationError,
+  authorizeRecoveryOwnershipDurableAdapterRegistration,
+  observeRecoveryOwnershipDurably,
+  validateRecoveryOwnershipDurableAdapterRegistration,
+  type AuthorizedRecoveryOwnershipDurableAdapterRegistration,
+  type DurableRecoveryOwnershipAcquireRequest,
+  type DurableRecoveryOwnershipLeaseEvidence,
+  type RecoveryOwnershipDurableAdapterCapabilities,
+  type RecoveryOwnershipDurableAdapterHarness,
+  type RecoveryOwnershipDurableAdapterRegistration,
+  type RecoveryOwnershipDurableObservation,
+  type RecoveryOwnershipFailureInjectionController,
+  type RecoveryOwnershipFailurePoint,
+  type RecoveryOwnershipMutationKind,
+} from "./recovery-ownership-durable-adapter.js";
+
+export { validateRecoveryOwnershipDurableAdapterHarness } from "./recovery-ownership-durable-harness-validation.js";
+
+export {
+  InvalidDurableAppendEvidenceError,
+  reconcileDurableAppendUncertainty,
+  validateDurableAppendUncertaintyRecord,
+  type DurableAppendAuthoritativeReadback,
+  type DurableAppendIdentity,
+  type DurableAppendOutcome,
+  type DurableAppendOutcomeKind,
+  type DurableAppendReconciliationState,
+  type DurableAppendUncertaintyRecord,
+} from "./durable-append-outcome.js";
+
+export {
+  executionEventTypes,
+  type ExecutionEventType,
+} from "./execution-event-types.js";
+
+export {
+  InvalidImmutableWriterCommitEvidenceError,
+  verifyImmutableWriterCommitEvidence,
+  type ExpectedWriterAppendIdentity,
+  type ImmutableWriterCommitEvidence,
+  type ImmutableWriterCommitEvidenceMechanism,
+} from "./immutable-writer-commit-evidence.js";
+
+export {
+  InvalidRecoveryOwnershipFenceTransitionEvidenceError,
+  verifyRecoveryOwnershipFenceTransitionEvidence,
+  type ExpectedRecoveryOwnershipFenceTransition,
+  type RecoveryOwnershipFenceTransitionEvidence,
+} from "./recovery-ownership-fence-transition-evidence.js";
+
+export {
+  InvalidRecoveryOwnershipLeaseEvidenceError,
+  toRecoveryOwnershipDiagnosticEvidence,
+  verifyRecoveryOwnershipLeaseEvidence,
+  type ExpectedRecoveryOwnershipIdentity,
+  type RecoveryOwnershipDiagnosticEvidence,
+  type RecoveryOwnershipLeaseEvidence,
+} from "./recovery-ownership-lease-evidence.js";
+
+export {
+  InvalidRecoveryOwnershipReacquisitionEvidenceError,
+  verifyRecoveryOwnershipReacquisitionEvidence,
+  type RecoveryOwnershipReacquisitionEvidence,
+} from "./recovery-ownership-reacquisition-evidence.js";
+
+import type { ExecutionEventType } from "./execution-event-types.js";
+
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
 
 export type ExecutionStatus =
@@ -7,9 +85,8 @@ export type ExecutionStatus =
   | "succeeded"
   | "failed"
   | "cancelled"
-  | "budget_exceeded"
   | "timed_out"
-  | "rejected";
+  | "budget_exceeded";
 
 export interface ExecutionBudget {
   readonly maxToolCalls: number;
@@ -55,26 +132,6 @@ export interface WorkflowDefinition<I, O> {
   run(input: I, context: WorkflowContext): Promise<O>;
 }
 
-export type ExecutionEventType =
-  | "execution.started"
-  | "execution.completed"
-  | "execution.failed"
-  | "execution.cancelled"
-  | "execution.timed_out"
-  | "execution.rejected"
-  | "workflow.step.started"
-  | "workflow.step.completed"
-  | "workflow.step.failed"
-  | "tool.started"
-  | "tool.completed"
-  | "tool.failed"
-  | "evaluation.completed"
-  | "approval.requested"
-  | "approval.resolved"
-  | "supervisor.escalated"
-  | "supervisor.returned"
-  | "budget.exceeded";
-
 export interface ExecutionEvent<T = unknown> {
   readonly id: string;
   readonly executionId: string;
@@ -88,189 +145,6 @@ export interface ExecutionEvent<T = unknown> {
 
 export interface EventSink {
   append<T>(event: ExecutionEvent<T>): Promise<void>;
-}
-
-export type TerminalExecutionStatus = Extract<
-  ExecutionStatus,
-  "succeeded" | "failed" | "cancelled" | "budget_exceeded" | "timed_out" | "rejected"
->;
-
-export type TerminalExecutionEventType = Extract<
-  ExecutionEventType,
-  | "execution.completed"
-  | "execution.failed"
-  | "execution.cancelled"
-  | "execution.timed_out"
-  | "execution.rejected"
-  | "budget.exceeded"
->;
-
-export interface TerminalExecutionPayload {
-  readonly status: TerminalExecutionStatus;
-  readonly completedPrefix: number;
-  readonly reason?: string;
-}
-
-export interface DurableExecutionCheckpoint {
-  readonly id: string;
-  readonly executionId: string;
-  readonly nextSequence: number;
-  readonly completedPrefix: number;
-  readonly updatedAt: string;
-}
-
-export interface CheckpointRetirement {
-  readonly checkpointId: string;
-  readonly executionId: string;
-  readonly terminalEventId: string;
-  readonly retiredAt: string;
-}
-
-export interface TerminalDurabilityTransition {
-  readonly checkpoint: DurableExecutionCheckpoint;
-  readonly terminalEvent: ExecutionEvent<TerminalExecutionPayload>;
-  readonly retiredAt: string;
-}
-
-export interface TerminalDurabilityAuthority {
-  appendTerminalEvent(event: ExecutionEvent<TerminalExecutionPayload>): Promise<void>;
-  retireCheckpoint(retirement: CheckpointRetirement): Promise<void>;
-}
-
-export type TerminalRecoverySnapshot =
-  | {
-      readonly checkpoint: DurableExecutionCheckpoint;
-      readonly terminalEvent?: ExecutionEvent<TerminalExecutionPayload>;
-      readonly checkpointRetired?: false;
-    }
-  | {
-      readonly checkpoint?: undefined;
-      readonly terminalEvent: ExecutionEvent<TerminalExecutionPayload>;
-      readonly checkpointRetired: true;
-    }
-  | {
-      readonly checkpoint?: undefined;
-      readonly terminalEvent?: undefined;
-      readonly checkpointRetired: true;
-    };
-
-export type TerminalRecoveryDecision =
-  | {
-      readonly kind: "terminal";
-      readonly outcome: TerminalExecutionPayload;
-      readonly terminalEvent: ExecutionEvent<TerminalExecutionPayload>;
-      readonly shouldRetireCheckpoint: boolean;
-    }
-  | {
-      readonly kind: "resume";
-      readonly checkpoint: DurableExecutionCheckpoint;
-      readonly resumeFromSequence: number;
-    };
-
-const terminalStatusByEventType: Readonly<
-  Record<TerminalExecutionEventType, TerminalExecutionStatus>
-> = {
-  "execution.completed": "succeeded",
-  "execution.failed": "failed",
-  "execution.cancelled": "cancelled",
-  "execution.timed_out": "timed_out",
-  "execution.rejected": "rejected",
-  "budget.exceeded": "budget_exceeded",
-};
-
-export class DurabilityInvariantError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DurabilityInvariantError";
-  }
-}
-
-export function isTerminalExecutionEvent(
-  event: ExecutionEvent<unknown>,
-): event is ExecutionEvent<TerminalExecutionPayload> {
-  return event.type in terminalStatusByEventType;
-}
-
-export function terminalStatusForEventType(
-  type: TerminalExecutionEventType,
-): TerminalExecutionStatus {
-  return terminalStatusByEventType[type];
-}
-
-export async function publishTerminalDurabilityTransition(
-  authority: TerminalDurabilityAuthority,
-  transition: TerminalDurabilityTransition,
-): Promise<void> {
-  validateTerminalDurabilityTransition(transition);
-
-  await authority.appendTerminalEvent(transition.terminalEvent);
-  await authority.retireCheckpoint({
-    checkpointId: transition.checkpoint.id,
-    executionId: transition.checkpoint.executionId,
-    terminalEventId: transition.terminalEvent.id,
-    retiredAt: transition.retiredAt,
-  });
-}
-
-export function recoverTerminalExecution(
-  snapshot: TerminalRecoverySnapshot,
-): TerminalRecoveryDecision {
-  if (snapshot.terminalEvent !== undefined) {
-    validateTerminalEvent(snapshot.terminalEvent);
-
-    return {
-      kind: "terminal",
-      outcome: snapshot.terminalEvent.payload,
-      terminalEvent: snapshot.terminalEvent,
-      shouldRetireCheckpoint: snapshot.checkpoint !== undefined,
-    };
-  }
-
-  if (snapshot.checkpoint !== undefined) {
-    return {
-      kind: "resume",
-      checkpoint: snapshot.checkpoint,
-      resumeFromSequence: snapshot.checkpoint.nextSequence,
-    };
-  }
-
-  throw new DurabilityInvariantError(
-    "terminal execution recovery requires either durable terminal evidence or an active checkpoint",
-  );
-}
-
-function validateTerminalDurabilityTransition(
-  transition: TerminalDurabilityTransition,
-): void {
-  validateTerminalEvent(transition.terminalEvent);
-
-  if (transition.checkpoint.executionId !== transition.terminalEvent.executionId) {
-    throw new DurabilityInvariantError(
-      "terminal event and checkpoint must belong to the same execution",
-    );
-  }
-
-  if (transition.terminalEvent.payload.completedPrefix < transition.checkpoint.completedPrefix) {
-    throw new DurabilityInvariantError(
-      "terminal evidence must preserve the checkpoint completed prefix",
-    );
-  }
-}
-
-function validateTerminalEvent(
-  event: ExecutionEvent<TerminalExecutionPayload>,
-): void {
-  if (!isTerminalExecutionEvent(event)) {
-    throw new DurabilityInvariantError("checkpoint retirement requires terminal evidence");
-  }
-
-  const eventType = event.type as TerminalExecutionEventType;
-  const expectedStatus = terminalStatusForEventType(eventType);
-  if (event.payload.status !== expectedStatus) {
-    throw new DurabilityInvariantError(
-      `terminal event payload status ${event.payload.status} does not match event type ${event.type}`,
-    );
-  }
 }
 
 export interface EvaluationResult {
@@ -301,11 +175,52 @@ export class BudgetExceededError extends Error {
   }
 }
 
+export class InvalidBudgetValueError extends Error {
+  constructor(
+    public readonly field: keyof ExecutionBudget | keyof ExecutionUsage,
+    public readonly value: number,
+  ) {
+    super(`Invalid execution budget value for ${field}: ${String(value)}`);
+    this.name = "InvalidBudgetValueError";
+  }
+}
+
+function assertFiniteNonNegative(
+  field: keyof ExecutionBudget | keyof ExecutionUsage,
+  value: number,
+): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new InvalidBudgetValueError(field, value);
+  }
+}
+
 export function assertWithinBudget(context: WorkflowContext): void {
   const { budget, usage } = context;
-  const checks: ReadonlyArray<
-    readonly [keyof ExecutionBudget, number, number]
-  > = [
+
+  const budgetValues: ReadonlyArray<readonly [keyof ExecutionBudget, number]> = [
+    ["maxToolCalls", budget.maxToolCalls],
+    ["maxRetries", budget.maxRetries],
+    ["maxIterations", budget.maxIterations],
+    ["maxTokens", budget.maxTokens],
+    ["maxDurationMs", budget.maxDurationMs],
+    ["maxCostUsd", budget.maxCostUsd],
+  ];
+
+  const usageValues: ReadonlyArray<readonly [keyof ExecutionUsage, number]> = [
+    ["toolCalls", usage.toolCalls],
+    ["retries", usage.retries],
+    ["iterations", usage.iterations],
+    ["inputTokens", usage.inputTokens],
+    ["outputTokens", usage.outputTokens],
+    ["durationMs", usage.durationMs],
+    ["costUsd", usage.costUsd],
+  ];
+
+  for (const [field, value] of [...budgetValues, ...usageValues]) {
+    assertFiniteNonNegative(field, value);
+  }
+
+  const checks: ReadonlyArray<readonly [keyof ExecutionBudget, number, number]> = [
     ["maxToolCalls", budget.maxToolCalls, usage.toolCalls],
     ["maxRetries", budget.maxRetries, usage.retries],
     ["maxIterations", budget.maxIterations, usage.iterations],
