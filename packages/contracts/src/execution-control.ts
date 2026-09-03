@@ -454,7 +454,7 @@ async function assertBeforeDeadline(
  * reported for audit.
  */
 function observeLateSettlement(
-  operation: Promise<unknown>,
+  attempt: Promise<AttemptSettlement<unknown>>,
   context: ExecutionAttemptContext,
   hooks: ExecutionControlHooks | undefined,
 ): void {
@@ -468,15 +468,21 @@ function observeLateSettlement(
     })();
   };
 
-  operation.then(
-    (value) => {
-      report({ ...context, kind: "resolved", value });
-    },
-    (error: unknown) => {
-      report({ ...context, kind: "rejected", error });
-    },
-  );
+  void attempt.then((settlement) => {
+    report(
+      settlement.kind === "resolved"
+        ? { ...context, kind: "resolved", value: settlement.value }
+        : { ...context, kind: "rejected", error: settlement.error },
+    );
+  });
 }
+
+type AttemptSettlement<T> =
+  | { readonly kind: "resolved"; readonly value: T }
+  | { readonly kind: "rejected"; readonly error: unknown };
+
+/** Node clamps larger delays, so long deadlines are armed in bounded chunks. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 async function executeAttemptWithDeadline<T>(
   operation: (context: ExecutionAttemptContext) => Promise<T>,
@@ -487,47 +493,73 @@ async function executeAttemptWithDeadline<T>(
   fencing: ReturnType<typeof resolveFencing>,
   observedAtStartMs: number | undefined,
 ): Promise<T> {
-  const attempt = (async () => await operation(context))();
+  if (deadline === undefined || observedAtStartMs === undefined) {
+    return await operation(context);
+  }
 
-  if (deadline === undefined || observedAtStartMs === undefined) return await attempt;
-
-  const remainingMs = Math.max(0, deadline.deadlineAtMs - observedAtStartMs);
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   let fenced = false;
 
+  // The fence timer is armed before the operation starts so no unfenced work
+  // can run outside the deadline window.
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutHandle = setTimeout(() => {
-      fenced = true;
-      void (async () => {
-        const clockAtTimeout = readDeadlineClock(deadline);
-        const enforcedObservedAtMs = Math.max(clockAtTimeout, deadline.deadlineAtMs);
-        // Commit authority is revoked before any terminal publication so a
-        // still-running operation cannot start a new external commit.
-        fence.revoke("deadline");
-        const acknowledged = await awaitFenceAcknowledgement(
-          fence,
-          fencing.requireAcknowledgement,
-          fencing.acknowledgementTimeoutMs,
-        );
-        const status = { ...fence.status(), acknowledged };
-        await emitTimeout(
-          deadline,
-          context,
-          hooks,
-          enforcedObservedAtMs,
-          status,
-          fencing.acknowledgementTimeoutMs,
-        );
-      })().catch(reject);
-    }, remainingMs);
+    const finalize = async (clockAtTimeout: number): Promise<never> => {
+      const enforcedObservedAtMs = Math.max(clockAtTimeout, deadline.deadlineAtMs);
+      // Commit authority is revoked before any terminal publication so a
+      // still-running operation cannot start a new external commit.
+      fence.revoke("deadline");
+      const acknowledged = await awaitFenceAcknowledgement(
+        fence,
+        fencing.requireAcknowledgement,
+        fencing.acknowledgementTimeoutMs,
+      );
+      const status = { ...fence.status(), acknowledged };
+      return await emitTimeout(
+        deadline,
+        context,
+        hooks,
+        enforcedObservedAtMs,
+        status,
+        fencing.acknowledgementTimeoutMs,
+      );
+    };
+
+    const arm = (delayMs: number): void => {
+      timeoutHandle = setTimeout(() => {
+        try {
+          const clockAtTimeout = readDeadlineClock(deadline);
+          const remainingMs = deadline.deadlineAtMs - clockAtTimeout;
+          if (remainingMs > MAX_TIMER_DELAY_MS) {
+            arm(remainingMs);
+            return;
+          }
+          fenced = true;
+          void finalize(clockAtTimeout).catch(reject);
+        } catch (error) {
+          reject(error);
+        }
+      }, Math.min(Math.max(0, delayMs), MAX_TIMER_DELAY_MS));
+    };
+
+    arm(deadline.deadlineAtMs - readDeadlineClock(deadline));
   });
 
+  const attempt = (async (): Promise<AttemptSettlement<T>> => {
+    try {
+      return { kind: "resolved", value: await operation(context) };
+    } catch (error) {
+      return { kind: "rejected", error };
+    }
+  })();
+
   try {
-    const result = await Promise.race([attempt, timeout]);
-    // The operation may win the race while fencing is still finalizing; the
-    // fenced outcome always wins so a revoked attempt cannot report success.
+    const settlement = await Promise.race([attempt, timeout]);
+    // The operation may settle while fencing is still finalizing; the fenced
+    // outcome always wins so a revoked attempt can neither report success nor
+    // drive retry decisions.
     if (fenced) return await timeout;
-    return result;
+    if (settlement.kind === "rejected") throw settlement.error;
+    return settlement.value;
   } finally {
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     if (fenced) observeLateSettlement(attempt, context, hooks);

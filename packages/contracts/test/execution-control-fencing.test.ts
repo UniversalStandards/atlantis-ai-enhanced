@@ -247,6 +247,30 @@ describe("executeWithControl fencing", () => {
     ).toBe(30);
   });
 
+  it("keeps the fenced outcome when the operation settles during finalization", async () => {
+    const settled = deferred<ExecutionLateSettlementContext>();
+    let calls = 0;
+
+    await expect(
+      executeWithControl(
+        async () => {
+          calls += 1;
+          await sleep(30);
+          throw new Error("late-failure");
+        },
+        { maxAttempts: 3 },
+        {
+          deadline: activeDeadline(),
+          fencing: { requireAcknowledgement: true, acknowledgementTimeoutMs: 60 },
+          hooks: { onLateSettlement: settled.resolve },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ExecutionFenceNotAcknowledgedError);
+
+    expect(calls).toBe(1);
+    expect((await settled.promise).kind).toBe("rejected");
+  });
+
   it("publishes a plain timeout once the operation acknowledges revocation", async () => {
     await expect(
       executeWithControl(
