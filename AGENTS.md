@@ -24,6 +24,22 @@ This repository contains ATLANTIS AI, a civilian-first, provider-independent AI 
 9. All AI behavior changes require evaluation coverage.
 10. Civilian accessibility is the default; regulated and government profiles are separate deployment layers.
 
+## Capability escalation and blocker handling
+
+1. A limitation of the current connector/tool/API is not automatically a project blocker.
+2. Before escalating to a human, search reasonable authorized execution paths: current connector, another authorized connector, GitHub-native agent delegation, workflows/Actions/Apps, CLI/MCP, authorized remote execution, or a reversible automation operating with proper authority.
+3. When GitHub-native coding agents may have an execution context unavailable to the initiating connector, create a tightly scoped issue with objective, acceptance evidence, prohibited shortcuts, rollback constraints, and fail-closed instructions; delegate it to the agent and independently verify the result.
+4. Never weaken security, review, approval, identity, audit, policy, or release controls to get around a capability boundary.
+5. Never claim alternate authority that has not been verified. If all reasonable authorized paths fail, record the exact missing permission/capability as the blocker.
+
+## Continuous learning propagation
+
+1. Reusable lessons from defects, blocked workflows, incorrect assumptions, or better execution patterns must be promoted from transient conversation context into durable project guidance.
+2. Cross-agent standing rules belong in `AGENTS.md`; Copilot-wide repository behavior belongs in `.github/copilot-instructions.md`; specialized rules belong in path-specific instructions; architectural rationale belongs in ADRs; operational procedures belong in runbooks; repeatable work belongs in issue/PR templates, skills, prompts, tests, or automation as appropriate.
+3. Prefer one canonical rule with references over multiple drifting copies.
+4. A lesson is not considered propagated until future automated contributors can discover it without access to the conversation in which it was learned.
+5. Periodically reconcile instructions, ADRs, runbooks, templates, and automation to remove obsolete or contradictory guidance.
+
 ## Implementation direction
 
 - Preserve the existing Python engine where it provides real value.
