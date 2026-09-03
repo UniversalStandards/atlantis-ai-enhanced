@@ -1,7 +1,7 @@
 import {
   InvalidStepCompletionCommitError,
   validateStepCompletionCommit,
-  type StepCompletionCommitPort,
+  type ResumableDurabilityPort,
   type StepCompletionCommitRequest,
   type StepCompletionCommitResult,
 } from "./step-completion-commit.js";
@@ -28,11 +28,23 @@ function cloneCheckpoint(checkpoint: WorkflowCheckpoint): WorkflowCheckpoint {
   };
 }
 
+function assertExpectedRevision(
+  current: WorkflowCheckpoint | undefined,
+  expectedRevision: number | undefined,
+): void {
+  if (current?.revision !== expectedRevision) {
+    throw new InvalidStepCompletionCommitError(
+      "expected checkpoint revision does not match authoritative state",
+    );
+  }
+}
+
 /**
- * Reference-only atomic completion adapter used to verify the provider-neutral
- * contract. It deliberately has no production durability claim.
+ * Reference-only authoritative durability adapter used to verify the
+ * provider-neutral resumable-execution contract. It deliberately has no
+ * production durability claim.
  */
-export class InMemoryStepCompletionCommitPort implements StepCompletionCommitPort {
+export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort {
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();
   private readonly events = new Map<string, Readonly<StepCompletionCommitRequest>["completionEvent"]>();
 
@@ -47,6 +59,36 @@ export class InMemoryStepCompletionCommitPort implements StepCompletionCommitPor
     }
   }
 
+  public async load(executionId: string): Promise<WorkflowCheckpoint | undefined> {
+    return this.loadCheckpoint(executionId);
+  }
+
+  public async save(
+    checkpoint: Omit<WorkflowCheckpoint, "revision">,
+    expectedRevision: number | undefined,
+  ): Promise<WorkflowCheckpoint> {
+    const current = this.checkpoints.get(checkpoint.executionId);
+    assertExpectedRevision(current, expectedRevision);
+    const committed: WorkflowCheckpoint = {
+      ...checkpoint,
+      completedStepIds: [...checkpoint.completedStepIds],
+      usage: { ...checkpoint.usage },
+      revision: (current?.revision ?? 0) + 1,
+    };
+    this.checkpoints.set(checkpoint.executionId, committed);
+    return cloneCheckpoint(committed);
+  }
+
+  public async clear(executionId: string, expectedRevision: number): Promise<void> {
+    const current = this.checkpoints.get(executionId);
+    if (current === undefined || current.revision !== expectedRevision) {
+      throw new InvalidStepCompletionCommitError(
+        "expected checkpoint revision does not match authoritative state",
+      );
+    }
+    this.checkpoints.delete(executionId);
+  }
+
   public async commitStepCompletion(
     request: Readonly<StepCompletionCommitRequest>,
   ): Promise<Readonly<StepCompletionCommitResult>> {
@@ -55,18 +97,13 @@ export class InMemoryStepCompletionCommitPort implements StepCompletionCommitPor
     }
 
     const current = this.checkpoints.get(request.checkpoint.executionId);
-    const currentRevision = current?.revision;
-    if (currentRevision !== request.expectedCheckpointRevision) {
-      throw new InvalidStepCompletionCommitError(
-        "expected checkpoint revision does not match authoritative state",
-      );
-    }
+    assertExpectedRevision(current, request.expectedCheckpointRevision);
 
     const committed: WorkflowCheckpoint = {
       ...request.checkpoint,
       completedStepIds: [...request.checkpoint.completedStepIds],
       usage: { ...request.checkpoint.usage },
-      revision: (currentRevision ?? 0) + 1,
+      revision: (current?.revision ?? 0) + 1,
     };
     const result: StepCompletionCommitResult = {
       checkpoint: committed,
