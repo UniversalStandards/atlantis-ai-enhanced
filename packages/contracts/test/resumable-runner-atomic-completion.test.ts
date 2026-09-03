@@ -6,18 +6,30 @@ import {
   type ExecutionEventCursor,
 } from "../src/resumable-runner.js";
 
+/**
+ * The runner shares one execution-wide sequence counter across the plain
+ * event sink and the atomic completion port: a step completed through
+ * `durability` consumes a sequence number (and becomes the new parent event)
+ * without ever being appended to this sink. So this sink can only enforce
+ * that sequence numbers strictly increase past its own tail, not that they
+ * are contiguous with its own stored event count — a gap for every
+ * atomically-committed step completion is expected, not an error.
+ */
 class ContiguousMemoryEventSink implements EventSink {
   public readonly events: ExecutionEvent[] = [];
+  private lastSequence = 0;
 
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
-    const expectedSequence = this.events.length + 1;
-    if (event.sequence !== expectedSequence) {
-      throw new Error(`event sequence ${event.sequence} does not match ${expectedSequence}`);
+    if (event.sequence <= this.lastSequence) {
+      throw new Error(
+        `event sequence ${event.sequence} does not advance past ${this.lastSequence}`,
+      );
     }
     if (this.events.some((stored) => stored.id === event.id)) {
       throw new Error(`duplicate event id ${event.id}`);
     }
     this.events.push(event as ExecutionEvent);
+    this.lastSequence = event.sequence;
   }
 
   public cursor(): ExecutionEventCursor {
