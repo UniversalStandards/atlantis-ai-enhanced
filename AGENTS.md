@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Upstream reusable standard
+
+This repository adopts `UniversalStandards/UniversalStandards` as the canonical upstream reusable AI engineering standard. Local ATLANTIS rules may strengthen that standard but must not silently weaken it. The adopted upstream commit is recorded in `.universal-standards.json`.
+
 ## Purpose
 
 This repository contains ATLANTIS AI, a civilian-first, provider-independent AI operating platform. All automated contributors must preserve user agency, explicit authorization, provenance, auditability, and reversibility.
@@ -39,6 +43,7 @@ This repository contains ATLANTIS AI, a civilian-first, provider-independent AI 
 3. Prefer one canonical rule with references over multiple drifting copies.
 4. A lesson is not considered propagated until future automated contributors can discover it without access to the conversation in which it was learned.
 5. Periodically reconcile instructions, ADRs, runbooks, templates, and automation to remove obsolete or contradictory guidance.
+6. Portfolio-level lessons must be reviewed for promotion to `UniversalStandards/UniversalStandards`; machine-verifiable lessons should become tests/evaluations/CI/policy-as-code whenever practical.
 
 ## Implementation direction
 
