@@ -130,10 +130,12 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
       actor: "runner",
       parentEventId: "event-4",
       payload: {
+        terminalSchemaVersion: 1,
         workflowId: "recovery-workflow",
         reason: "operator cancelled",
         nextStepIndex: 1,
         completedStepIds: ["first"],
+        usage: usage(1),
       },
     };
     const port = new InMemoryStepCompletionCommitPort({ initialCheckpoints: [initial] });
@@ -177,10 +179,12 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
       actor: "runner",
       parentEventId: "event-4",
       payload: {
+        terminalSchemaVersion: 1,
         workflowId: "recovery-workflow",
         reason: "operator cancelled",
         nextStepIndex: 1,
         completedStepIds: ["first"],
+        usage: usage(1),
       },
     };
     const port = new InMemoryStepCompletionCommitPort({

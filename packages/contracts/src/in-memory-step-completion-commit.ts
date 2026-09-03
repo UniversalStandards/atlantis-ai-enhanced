@@ -11,6 +11,8 @@ import {
   type StepCompletionCommitResult,
   type TerminalExecutionCommitRequest,
   type TerminalExecutionCommitResult,
+  type TerminalExecutionResultRecord,
+  type TerminalExecutionResultReference,
 } from "./step-completion-commit.js";
 import type { ExecutionEventCursor, WorkflowCheckpoint } from "./resumable-runner.js";
 
@@ -80,6 +82,7 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();
   private readonly events = new Map<string, ExecutionEvent[]>();
   private readonly eventCursors = new Map<string, ExecutionEventCursor>();
+  private readonly terminalResults = new Map<string, TerminalExecutionResultRecord>();
 
   public constructor(private readonly options: InMemoryStepCompletionCommitOptions = {}) {
     for (const checkpoint of options.initialCheckpoints ?? []) {
@@ -219,6 +222,13 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
       );
     }
 
+    if (request.terminalResult !== undefined) {
+      this.terminalResults.set(
+        request.terminalResult.reference.reference,
+        structuredClone(request.terminalResult),
+      );
+    }
+
     if (this.options.failAt === "terminal_after_publication_before_ack") {
       throw new Error("injected terminal acknowledgement loss after publication");
     }
@@ -246,6 +256,12 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
   public async loadTerminalEvent(executionId: string): Promise<ExecutionEvent<unknown> | undefined> {
     const event = this.findTerminalEvent(executionId);
     return event === undefined ? undefined : structuredClone(event);
+  }
+
+  public async loadTerminalResult(
+    reference: TerminalExecutionResultReference,
+  ): Promise<TerminalExecutionResultRecord | undefined> {
+    return structuredClone(this.terminalResults.get(reference.reference));
   }
 
   public loadCheckpoint(executionId: string): WorkflowCheckpoint | undefined {

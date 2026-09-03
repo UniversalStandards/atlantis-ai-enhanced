@@ -30,6 +30,7 @@ export interface TerminalExecutionCommitRequest {
   readonly checkpoint: WorkflowCheckpoint | undefined;
   readonly expectedCheckpointRevision: number | undefined;
   readonly completedStepIds: readonly string[];
+  readonly terminalResult?: TerminalExecutionResultRecord;
 }
 
 export interface TerminalExecutionCommitResult {
@@ -37,6 +38,28 @@ export interface TerminalExecutionCommitResult {
   readonly eventSequence: number;
   readonly eventId: string;
   readonly checkpoint: WorkflowCheckpoint | undefined;
+}
+
+export interface TerminalExecutionResultReference {
+  readonly kind: "terminal-result-reference";
+  readonly version: 1;
+  readonly reference: string;
+}
+
+export interface TerminalExecutionResultRecord {
+  readonly reference: TerminalExecutionResultReference;
+  readonly value: unknown;
+}
+
+export interface TerminalExecutionPayloadBase {
+  readonly terminalSchemaVersion: 1;
+  readonly workflowId: string;
+  readonly completedStepIds: readonly string[];
+  readonly usage: ExecutionUsage;
+}
+
+export interface TerminalExecutionCompletedPayload extends TerminalExecutionPayloadBase {
+  readonly result: TerminalExecutionResultReference;
 }
 
 /**
@@ -59,6 +82,9 @@ export interface TerminalExecutionCommitPort {
     request: Readonly<TerminalExecutionCommitRequest>,
   ): Promise<Readonly<TerminalExecutionCommitResult>>;
   loadTerminalEvent(executionId: string): Promise<ExecutionEvent<unknown> | undefined>;
+  loadTerminalResult(
+    reference: TerminalExecutionResultReference,
+  ): Promise<TerminalExecutionResultRecord | undefined>;
 }
 
 /**
@@ -259,13 +285,35 @@ export function terminalExecutionEventsEqual(
 }
 
 function payloadCompletedStepIds(event: Readonly<ExecutionEvent<unknown>>): readonly string[] {
+  const payload = terminalPayload(event);
+  validateTerminalSchema(payload);
+  return payload.completedStepIds;
+}
+
+function terminalPayload(
+  event: Readonly<ExecutionEvent<unknown>>,
+): TerminalExecutionPayloadBase & Record<string, unknown> {
   const payload = event.payload;
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     throw new InvalidTerminalExecutionCommitError(
-      "terminal event payload must include completedStepIds",
+      "terminal event payload must be a versioned object",
     );
   }
-  const completedStepIds = (payload as { readonly completedStepIds?: unknown }).completedStepIds;
+  return payload as TerminalExecutionPayloadBase & Record<string, unknown>;
+}
+
+function validateTerminalSchema(
+  payload: Readonly<TerminalExecutionPayloadBase & Record<string, unknown>>,
+): void {
+  if (payload.terminalSchemaVersion !== 1) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal event payload schema version is invalid",
+    );
+  }
+  if (typeof payload.workflowId !== "string" || payload.workflowId.length === 0) {
+    throw new InvalidTerminalExecutionCommitError("terminal event workflowId is invalid");
+  }
+  const completedStepIds = payload.completedStepIds;
   if (
     !Array.isArray(completedStepIds) ||
     completedStepIds.some((stepId) => typeof stepId !== "string" || stepId.length === 0)
@@ -274,7 +322,46 @@ function payloadCompletedStepIds(event: Readonly<ExecutionEvent<unknown>>): read
       "terminal event payload completedStepIds must be a string prefix array",
     );
   }
-  return completedStepIds as readonly string[];
+  validateUsage(payload.usage);
+}
+
+function validateUsage(usage: ExecutionUsage): void {
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    throw new InvalidTerminalExecutionCommitError("terminal event usage is invalid");
+  }
+  for (const field of [
+    "toolCalls",
+    "retries",
+    "iterations",
+    "inputTokens",
+    "outputTokens",
+    "durationMs",
+    "costUsd",
+  ] as const) {
+    const value = usage[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new InvalidTerminalExecutionCommitError(
+        `terminal event usage ${field} is invalid`,
+      );
+    }
+  }
+}
+
+function validateTerminalResultReference(
+  reference: Readonly<TerminalExecutionResultReference>,
+): void {
+  if (
+    reference === null ||
+    typeof reference !== "object" ||
+    reference.kind !== "terminal-result-reference" ||
+    reference.version !== 1 ||
+    typeof reference.reference !== "string" ||
+    reference.reference.trim().length === 0
+  ) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal result reference is invalid",
+    );
+  }
 }
 
 export function validateTerminalExecutionCommit(
@@ -284,6 +371,32 @@ export function validateTerminalExecutionCommit(
   const event = request.terminalEvent;
   if (!isTerminalExecutionEvent(event)) {
     throw new InvalidTerminalExecutionCommitError("terminal execution event type is invalid");
+  }
+  const payload = terminalPayload(event);
+  validateTerminalSchema(payload);
+  if (event.type === "execution.completed") {
+    const result = payload.result as TerminalExecutionResultReference | undefined;
+    if (result === undefined) {
+      throw new InvalidTerminalExecutionCommitError(
+        "completed terminal event requires a result reference",
+      );
+    }
+    validateTerminalResultReference(result);
+    if (request.terminalResult === undefined) {
+      throw new InvalidTerminalExecutionCommitError(
+        "completed terminal transition requires protected result persistence",
+      );
+    }
+    validateTerminalResultReference(request.terminalResult.reference);
+    if (!sameCheckpointValue(request.terminalResult.reference, result)) {
+      throw new InvalidTerminalExecutionCommitError(
+        "terminal result record must match completed event reference",
+      );
+    }
+  } else if (request.terminalResult !== undefined) {
+    throw new InvalidTerminalExecutionCommitError(
+      "only completed terminal transitions may persist a result",
+    );
   }
   if (request.checkpoint === undefined && request.expectedCheckpointRevision !== undefined) {
     throw new InvalidTerminalExecutionCommitError(

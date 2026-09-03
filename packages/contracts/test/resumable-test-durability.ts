@@ -15,6 +15,8 @@ import {
   type StepCompletionCommitResult,
   type TerminalExecutionCommitRequest,
   type TerminalExecutionCommitResult,
+  type TerminalExecutionResultRecord,
+  type TerminalExecutionResultReference,
 } from "../src/step-completion-commit.js";
 
 export interface MutableCheckpointHarness extends CheckpointStore {
@@ -47,6 +49,7 @@ export function createAtomicMemoryTestDurability(
   events: MutableEventHarness,
   options: AtomicMemoryTestDurabilityOptions = {},
 ): ResumableDurabilityPort {
+  const terminalResults = new Map<string, TerminalExecutionResultRecord>();
   const findTerminalEvent = (executionId: string): ExecutionEvent<unknown> | undefined => {
     for (let index = events.events.length - 1; index >= 0; index -= 1) {
       const event = events.events[index];
@@ -67,6 +70,8 @@ export function createAtomicMemoryTestDurability(
       const event = findTerminalEvent(executionId);
       return event === undefined ? undefined : structuredClone(event);
     },
+    loadTerminalResult: async (reference: TerminalExecutionResultReference) =>
+      structuredClone(terminalResults.get(reference.reference)),
     commitStepCompletion: async (
       request: Readonly<StepCompletionCommitRequest>,
     ): Promise<Readonly<StepCompletionCommitResult>> => {
@@ -137,6 +142,12 @@ export function createAtomicMemoryTestDurability(
       } else if (!terminalExecutionEventsEqual(existingTerminal, request.terminalEvent)) {
         throw new InvalidStepCompletionCommitError(
           "execution already has different terminal evidence",
+        );
+      }
+      if (request.terminalResult !== undefined) {
+        terminalResults.set(
+          request.terminalResult.reference.reference,
+          structuredClone(request.terminalResult),
         );
       }
 

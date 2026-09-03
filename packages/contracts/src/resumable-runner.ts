@@ -32,6 +32,7 @@ import {
   terminalExecutionEventsEqual,
   validateTerminalExecutionCommit,
   type ResumableDurabilityPort,
+  type TerminalExecutionResultReference,
 } from "./step-completion-commit.js";
 
 export interface ResumableWorkflow<I, O> {
@@ -258,10 +259,68 @@ function readNumber(payload: Readonly<Record<string, unknown>>, field: string): 
   return value as number;
 }
 
-function restoreTerminalOutcome<O>(event: Readonly<ExecutionEvent<unknown>>): O {
+function readTerminalUsage(payload: Readonly<Record<string, unknown>>): ExecutionUsage {
+  const usage = payload.usage;
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    throw new InvalidCheckpointError("Terminal execution event usage is invalid");
+  }
+  const candidate = usage as Partial<ExecutionUsage>;
+  for (const field of [
+    "toolCalls",
+    "retries",
+    "iterations",
+    "inputTokens",
+    "outputTokens",
+    "durationMs",
+    "costUsd",
+  ] as const) {
+    if (typeof candidate[field] !== "number" || !Number.isFinite(candidate[field])) {
+      throw new InvalidCheckpointError(`Terminal execution event usage ${field} is invalid`);
+    }
+  }
+  return candidate as ExecutionUsage;
+}
+
+function readResultReference(
+  payload: Readonly<Record<string, unknown>>,
+): TerminalExecutionResultReference {
+  const result = payload.result;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new InvalidCheckpointError("Completed terminal event result reference is invalid");
+  }
+  const reference = result as Partial<TerminalExecutionResultReference>;
+  if (
+    reference.kind !== "terminal-result-reference" ||
+    reference.version !== 1 ||
+    typeof reference.reference !== "string" ||
+    reference.reference.trim().length === 0
+  ) {
+    throw new InvalidCheckpointError("Completed terminal event result reference is invalid");
+  }
+  return reference as TerminalExecutionResultReference;
+}
+
+function validateTerminalPayloadVersion(payload: Readonly<Record<string, unknown>>): void {
+  if (payload.terminalSchemaVersion !== 1) {
+    throw new InvalidCheckpointError("Terminal execution event schema version is invalid");
+  }
+}
+
+async function restoreTerminalOutcome<O>(
+  event: Readonly<ExecutionEvent<unknown>>,
+  durability: ResumableDurabilityPort,
+  context: WorkflowContext,
+): Promise<O> {
   const payload = terminalPayload(event);
+  validateTerminalPayloadVersion(payload);
+  restoreUsage(context.usage, readTerminalUsage(payload));
   if (event.type === "execution.completed") {
-    return payload.output as O;
+    const resultReference = readResultReference(payload);
+    const result = await durability.loadTerminalResult(resultReference);
+    if (result === undefined) {
+      throw new InvalidCheckpointError("Completed terminal result is unavailable");
+    }
+    return result.value as O;
   }
   if (event.type === "execution.cancelled") {
     const reason = typeof payload.reason === "string" ? payload.reason : undefined;
@@ -340,7 +399,7 @@ export class ResumableSequentialWorkflowRunner {
           })
           .catch(() => undefined);
       }
-      return restoreTerminalOutcome<O>(terminalEvent);
+      return restoreTerminalOutcome<O>(terminalEvent, durability, context);
     }
 
     let checkpoint = loaded;
@@ -397,16 +456,34 @@ export class ResumableSequentialWorkflowRunner {
     const commitTerminal = async <T extends Record<string, unknown>>(
       type: ExecutionEvent<T & { readonly completedStepIds: readonly string[] }>["type"],
       payload: T,
+      terminalResult?: { readonly value: unknown },
     ): Promise<void> => {
+      const completedStepIds = completedPrefix();
+      const resultReference: TerminalExecutionResultReference = {
+        kind: "terminal-result-reference",
+        version: 1,
+        reference: `${context.executionId}:terminal-result:${sequence + 1}`,
+      };
       const event = createEvent(type, {
         ...payload,
-        completedStepIds: completedPrefix(),
+        terminalSchemaVersion: 1,
+        usage: copyUsage(context.usage),
+        completedStepIds,
+        ...(terminalResult === undefined ? {} : { result: resultReference }),
       });
       const request = {
         terminalEvent: event as ExecutionEvent<unknown>,
         checkpoint,
         expectedCheckpointRevision: checkpoint?.revision,
-        completedStepIds: completedPrefix(),
+        completedStepIds,
+        ...(terminalResult === undefined
+          ? {}
+          : {
+              terminalResult: {
+                reference: resultReference,
+                value: terminalResult.value,
+              },
+            }),
       } as const;
 
       try {
@@ -614,8 +691,7 @@ export class ResumableSequentialWorkflowRunner {
       await commitTerminal("execution.completed", {
         workflowId: workflow.id,
         completedSteps: workflow.steps.length,
-        output,
-      });
+      }, { value: output });
       return output;
     } catch (error) {
       if (error instanceof ApprovalRequiredError) {

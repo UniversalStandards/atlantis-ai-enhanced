@@ -100,6 +100,105 @@ function ids(): () => string {
 }
 
 describe("resumable terminal durability transition", () => {
+  it("recovers completed output through a result reference without embedding it in the event", async () => {
+    const checkpoints = new MemoryCheckpointStore();
+    const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
+    const nextEventId = ids();
+    let calls = 0;
+    const workflow = {
+      id: "terminal-transition-workflow",
+      version: "1",
+      steps: [
+        {
+          id: "first",
+          description: "first",
+          execute: async (_value: unknown, currentContext: WorkflowContext) => {
+            calls += 1;
+            currentContext.usage.outputTokens = 7;
+            return { secret: "must-not-enter-event-stream", value: 42 };
+          },
+        },
+      ],
+    } as const;
+
+    const firstContext = context();
+    await expect(
+      new ResumableSequentialWorkflowRunner({
+        durability,
+        nextEventId,
+      }).run(workflow, "ignored", firstContext),
+    ).resolves.toEqual({ secret: "must-not-enter-event-stream", value: 42 });
+
+    const completed = events.events.find((event) => event.type === "execution.completed");
+    expect(completed).toBeDefined();
+    expect(completed?.payload).toMatchObject({
+      terminalSchemaVersion: 1,
+      completedStepIds: ["first"],
+      usage: expect.objectContaining({ iterations: 1, outputTokens: 7 }),
+      result: expect.objectContaining({
+        kind: "terminal-result-reference",
+        version: 1,
+      }),
+    });
+    expect(completed?.payload).not.toHaveProperty("output");
+    expect(JSON.stringify(completed?.payload)).not.toContain("must-not-enter-event-stream");
+
+    const recoveredContext = context();
+    await expect(
+      new ResumableSequentialWorkflowRunner({
+        durability,
+        nextEventId,
+      }).run(workflow, "different input", recoveredContext),
+    ).resolves.toEqual({ secret: "must-not-enter-event-stream", value: 42 });
+    expect(calls).toBe(1);
+    expect(recoveredContext.usage).toMatchObject({ iterations: 1, outputTokens: 7 });
+  });
+
+  it("fails closed for legacy completed terminal records without a schema version", async () => {
+    const checkpoints = new MemoryCheckpointStore();
+    const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
+    await events.append({
+      id: "legacy-terminal",
+      executionId: "terminal-transition-execution",
+      sequence: 1,
+      type: "execution.completed",
+      occurredAt: "2026-09-03T21:00:00.000Z",
+      actor: "legacy-runner",
+      payload: {
+        workflowId: "terminal-transition-workflow",
+        completedSteps: 1,
+      },
+    });
+    let calls = 0;
+
+    await expect(
+      new ResumableSequentialWorkflowRunner({
+        durability,
+        nextEventId: ids(),
+      }).run(
+        {
+          id: "terminal-transition-workflow",
+          version: "1",
+          steps: [
+            {
+              id: "first",
+              description: "first",
+              execute: async () => {
+                calls += 1;
+                return 1;
+              },
+            },
+          ],
+        },
+        0,
+        context(),
+      ),
+    ).rejects.toThrow("Terminal execution event schema version is invalid");
+    expect(calls).toBe(0);
+  });
+
   it.each([
     "before-publication",
     "after-publication-pre-ack",
@@ -169,10 +268,11 @@ describe("resumable terminal durability transition", () => {
       ).rejects.toThrow();
 
       durabilityOptions.failTerminalAt = undefined;
+      const restartContext = context();
       const restart = new ResumableSequentialWorkflowRunner({
         durability,
         nextEventId,
-      }).run(workflow, 999, context());
+      }).run(workflow, 999, restartContext);
 
       if (failTerminalAt === "before-publication") {
         await expect(restart).resolves.toBe(6);
@@ -184,6 +284,7 @@ describe("resumable terminal durability transition", () => {
         expect(events.events.filter((event) => event.type === "execution.cancelled"))
           .toHaveLength(1);
         expect(events.events.at(-1)?.type).toBe("execution.cancelled");
+        expect(restartContext.usage.iterations).toBe(1);
       }
 
       expect(calls.first).toBe(1);
