@@ -25,6 +25,13 @@ export interface ResumableCompletionCoordinatorResult {
   readonly cursor: ExecutionEventCursor;
 }
 
+function cursorsEqual(
+  left: Readonly<ExecutionEventCursor>,
+  right: Readonly<ExecutionEventCursor>,
+): boolean {
+  return left.sequence === right.sequence && left.parentEventId === right.parentEventId;
+}
+
 /**
  * Constructs and atomically commits the execution-path completion transition.
  * The caller's cursor can advance only from the acknowledged result, preventing
@@ -43,16 +50,21 @@ export async function coordinateAtomicResumableCompletion(
     throw new Error("completedStepIds must be the exact completed workflow prefix");
   }
 
+  const authoritativeCursor = await input.durability.loadEventCursor(input.executionId);
+  if (!cursorsEqual(input.cursor, authoritativeCursor)) {
+    throw new Error("cursor does not match authoritative durability event cursor");
+  }
+
   const event: ExecutionEvent<{ readonly stepId: string; readonly stepIndex: number }> = {
     id: input.nextEventId(),
     executionId: input.executionId,
-    sequence: input.cursor.sequence + 1,
+    sequence: authoritativeCursor.sequence + 1,
     type: "workflow.step.completed",
     occurredAt: input.occurredAt,
     actor: input.actor,
-    ...(input.cursor.parentEventId === undefined
+    ...(authoritativeCursor.parentEventId === undefined
       ? {}
-      : { parentEventId: input.cursor.parentEventId }),
+      : { parentEventId: authoritativeCursor.parentEventId }),
     payload: { stepId: input.stepId, stepIndex: input.stepIndex },
   };
 
