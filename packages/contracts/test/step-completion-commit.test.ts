@@ -96,4 +96,15 @@ describe("step completion atomic commit acknowledgement", () => {
       /does not match requested completion transition/,
     );
   });
+
+  it("fails closed when an adapter acknowledges a checkpoint revision that does not advance exactly once", () => {
+    const { request, result } = fixture();
+    const mismatched = {
+      ...result,
+      checkpoint: { ...result.checkpoint, revision: 2 },
+    };
+    expect(() => validateStepCompletionCommit(request, mismatched)).toThrow(
+      /revision does not advance exactly once/,
+    );
+  });
 });
