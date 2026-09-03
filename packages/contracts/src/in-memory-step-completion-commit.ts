@@ -1,3 +1,4 @@
+import type { ExecutionEvent } from "./index.js";
 import {
   InvalidStepCompletionCommitError,
   validateStepCompletionCommit,
@@ -5,7 +6,7 @@ import {
   type StepCompletionCommitRequest,
   type StepCompletionCommitResult,
 } from "./step-completion-commit.js";
-import type { WorkflowCheckpoint } from "./resumable-runner.js";
+import type { ExecutionEventCursor, WorkflowCheckpoint } from "./resumable-runner.js";
 
 export type StepCompletionFailurePoint =
   | "before_commit"
@@ -46,7 +47,7 @@ function assertExpectedRevision(
  */
 export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort {
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();
-  private readonly events = new Map<string, Readonly<StepCompletionCommitRequest>["completionEvent"]>();
+  private readonly events = new Map<string, ExecutionEvent[]>();
 
   public constructor(private readonly options: InMemoryStepCompletionCommitOptions = {}) {
     for (const checkpoint of options.initialCheckpoints ?? []) {
@@ -89,6 +90,36 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     this.checkpoints.delete(executionId);
   }
 
+  public async append<T>(event: ExecutionEvent<T>): Promise<void> {
+    const stream = this.events.get(event.executionId) ?? [];
+    const tail = stream.at(-1);
+    const expectedSequence = (tail?.sequence ?? 0) + 1;
+    if (event.sequence !== expectedSequence) {
+      throw new InvalidStepCompletionCommitError(
+        "event sequence does not extend authoritative execution stream",
+      );
+    }
+    if (tail !== undefined && event.parentEventId !== tail.id) {
+      throw new InvalidStepCompletionCommitError(
+        "event parent does not match authoritative execution stream tail",
+      );
+    }
+    if (tail === undefined && event.parentEventId !== undefined) {
+      throw new InvalidStepCompletionCommitError(
+        "first execution event cannot identify a parent",
+      );
+    }
+    stream.push(event as ExecutionEvent);
+    this.events.set(event.executionId, stream);
+  }
+
+  public async loadEventCursor(executionId: string): Promise<ExecutionEventCursor> {
+    const tail = this.events.get(executionId)?.at(-1);
+    return tail === undefined
+      ? { sequence: 0 }
+      : { sequence: tail.sequence, parentEventId: tail.id };
+  }
+
   public async commitStepCompletion(
     request: Readonly<StepCompletionCommitRequest>,
   ): Promise<Readonly<StepCompletionCommitResult>> {
@@ -98,6 +129,25 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
 
     const current = this.checkpoints.get(request.checkpoint.executionId);
     assertExpectedRevision(current, request.expectedCheckpointRevision);
+
+    const stream = this.events.get(request.checkpoint.executionId) ?? [];
+    const tail = stream.at(-1);
+    const expectedSequence = (tail?.sequence ?? 0) + 1;
+    if (request.completionEvent.sequence !== expectedSequence) {
+      throw new InvalidStepCompletionCommitError(
+        "completion event does not extend authoritative execution stream",
+      );
+    }
+    if (tail !== undefined && request.completionEvent.parentEventId !== tail.id) {
+      throw new InvalidStepCompletionCommitError(
+        "completion event parent does not match authoritative execution stream tail",
+      );
+    }
+    if (tail === undefined && request.completionEvent.parentEventId !== undefined) {
+      throw new InvalidStepCompletionCommitError(
+        "first completion event cannot identify a parent",
+      );
+    }
 
     const committed: WorkflowCheckpoint = {
       ...request.checkpoint,
@@ -119,7 +169,8 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
 
     // Publish both observable records only after the complete transition validates.
     // No await or externally observable mutation occurs between these assignments.
-    this.events.set(request.checkpoint.executionId, request.completionEvent);
+    stream.push(request.completionEvent);
+    this.events.set(request.checkpoint.executionId, stream);
     this.checkpoints.set(request.checkpoint.executionId, committed);
     return result;
   }
@@ -132,6 +183,10 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
   public loadCompletionEvent(
     executionId: string,
   ): Readonly<StepCompletionCommitRequest>["completionEvent"] | undefined {
-    return this.events.get(executionId);
+    const events = this.events.get(executionId) ?? [];
+    return events.findLast(
+      (event): event is StepCompletionCommitRequest["completionEvent"] =>
+        event.type === "workflow.step.completed",
+    );
   }
 }
