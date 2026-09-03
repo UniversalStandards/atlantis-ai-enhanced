@@ -11,6 +11,7 @@ import {
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
+import { createAtomicMemoryTestDurability } from "./resumable-test-durability.js";
 
 class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
@@ -107,10 +108,12 @@ describe("terminal budget exhaustion", () => {
   it("clears the checkpoint and retained protected-step approval", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     let protectedCalls = 0;
     let resolutionCalls = 0;
     const executionContext = context();
     const runner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
       eventSink: events,
       loadEventCursor: () => events.cursor(),
