@@ -26,6 +26,8 @@ import {
   type ExecutionDeadline,
   type RetryPolicy,
 } from "./execution-control.js";
+import { coordinateAtomicResumableCompletion } from "./resumable-completion-coordinator.js";
+import type { ResumableDurabilityPort } from "./step-completion-commit.js";
 
 export interface ResumableWorkflow<I, O> {
   readonly id: string;
@@ -72,9 +74,21 @@ export class InvalidCheckpointError extends Error {
 }
 
 export interface ResumableRunnerOptions {
-  readonly checkpointStore: CheckpointStore;
-  readonly eventSink: EventSink;
-  readonly loadEventCursor: (
+  /**
+   * Authoritative consistency domain for checkpoints, ordinary execution events,
+   * restart cursor state, and atomic completed-step publication.
+   *
+   * Optional only as a source-compatibility bridge while callers migrate. A run
+   * without this authority fails closed before workflow work begins; the legacy
+   * split stores below are never used as an execution fallback.
+   */
+  readonly durability?: ResumableDurabilityPort;
+  /** @deprecated Supply `durability`; retained only so unmigrated callers fail at runtime, not compile time. */
+  readonly checkpointStore?: CheckpointStore;
+  /** @deprecated Supply `durability`; retained only so unmigrated callers fail at runtime, not compile time. */
+  readonly eventSink?: EventSink;
+  /** @deprecated Supply `durability`; retained only so unmigrated callers fail at runtime, not compile time. */
+  readonly loadEventCursor?: (
     executionId: string,
   ) => ExecutionEventCursor | Promise<ExecutionEventCursor>;
   readonly nextEventId: () => string;
@@ -224,6 +238,15 @@ function validateCheckpoint<I, O>(
   }
 }
 
+function requireDurability(options: Readonly<ResumableRunnerOptions>): ResumableDurabilityPort {
+  if (options.durability === undefined) {
+    throw new InvalidCheckpointError(
+      "Authoritative resumable durability is required; split checkpoint/event authorities are not permitted",
+    );
+  }
+  return options.durability;
+}
+
 export class ResumableSequentialWorkflowRunner {
   private readonly actor: string;
   private readonly now: () => string;
@@ -238,13 +261,15 @@ export class ResumableSequentialWorkflowRunner {
     input: I,
     context: WorkflowContext,
   ): Promise<O> {
-    const loaded = await this.options.checkpointStore.load(context.executionId);
+    // Resolve the single consistency domain before any workflow event or step can run.
+    const durability = requireDurability(this.options);
+    const loaded = await durability.load(context.executionId);
     if (loaded !== undefined) {
       validateCheckpoint(loaded, workflow, context);
       restoreUsage(context.usage, loaded.usage);
     }
 
-    const cursor = await this.options.loadEventCursor(context.executionId);
+    const cursor = await durability.loadEventCursor(context.executionId);
     validateEventCursor(cursor);
     if (loaded !== undefined && cursor.sequence < loaded.lastEventSequence) {
       throw new InvalidCheckpointError(
@@ -265,19 +290,20 @@ export class ResumableSequentialWorkflowRunner {
       const event: ExecutionEvent<T> = {
         id,
         executionId: context.executionId,
-        sequence: ++sequence,
+        sequence: sequence + 1,
         type,
         occurredAt: this.now(),
         actor: this.actor,
         ...(parentEventId === undefined ? {} : { parentEventId }),
         payload,
       };
-      await this.options.eventSink.append(event);
+      await durability.append(event);
+      sequence = event.sequence;
       parentEventId = id;
     };
 
     const saveCheckpoint = async (): Promise<void> => {
-      checkpoint = await this.options.checkpointStore.save(
+      checkpoint = await durability.save(
         {
           executionId: context.executionId,
           workflowId: workflow.id,
@@ -424,11 +450,36 @@ export class ResumableSequentialWorkflowRunner {
           );
           context.usage.iterations += 1;
           assertWithinBudget(context);
-          await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
 
-          nextStepIndex = index + 1;
-          approvedApproval = undefined;
-          await saveCheckpoint();
+          const completion = await coordinateAtomicResumableCompletion({
+            durability,
+            executionId: context.executionId,
+            workflowId: workflow.id,
+            workflowVersion: workflow.version,
+            stepId: step.id,
+            stepIndex: index,
+            completedStepIds: workflow.steps.slice(0, index + 1).map((item) => item.id),
+            value,
+            usage: copyUsage(context.usage),
+            cursor: {
+              sequence,
+              ...(parentEventId === undefined ? {} : { parentEventId }),
+            },
+            expectedCheckpointRevision: checkpoint?.revision,
+            nextEventId: this.options.nextEventId,
+            actor: this.actor,
+            occurredAt: this.now(),
+          });
+
+          checkpoint = completion.checkpoint;
+          validateCheckpoint(checkpoint, workflow, context);
+          restoreUsage(context.usage, checkpoint.usage);
+          value = checkpoint.value;
+          nextStepIndex = checkpoint.nextStepIndex;
+          pendingApproval = checkpoint.pendingApproval;
+          approvedApproval = checkpoint.approvedApproval;
+          sequence = completion.cursor.sequence;
+          parentEventId = completion.cursor.parentEventId;
         } catch (error) {
           if (error instanceof BudgetExceededError) {
             await append("budget.exceeded", {
@@ -459,7 +510,7 @@ export class ResumableSequentialWorkflowRunner {
       });
 
       if (checkpoint !== undefined) {
-        await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+        await durability.clear(context.executionId, checkpoint.revision);
       }
       return output;
     } catch (error) {
@@ -468,7 +519,7 @@ export class ResumableSequentialWorkflowRunner {
       }
       if (error instanceof ApprovalRejectedError) {
         if (checkpoint !== undefined) {
-          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          await durability.clear(context.executionId, checkpoint.revision);
           checkpoint = undefined;
         }
         await append("execution.failed", {
@@ -479,7 +530,7 @@ export class ResumableSequentialWorkflowRunner {
         });
       } else if (error instanceof ExecutionCancelledError) {
         if (checkpoint !== undefined) {
-          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          await durability.clear(context.executionId, checkpoint.revision);
           checkpoint = undefined;
         }
         await append("execution.cancelled", {
@@ -489,7 +540,7 @@ export class ResumableSequentialWorkflowRunner {
         });
       } else if (error instanceof ExecutionTimedOutError) {
         if (checkpoint !== undefined) {
-          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          await durability.clear(context.executionId, checkpoint.revision);
           checkpoint = undefined;
         }
         await append("execution.timed_out", {
@@ -500,7 +551,7 @@ export class ResumableSequentialWorkflowRunner {
         });
       } else if (error instanceof BudgetExceededError) {
         if (checkpoint !== undefined) {
-          await this.options.checkpointStore.clear(context.executionId, checkpoint.revision);
+          await durability.clear(context.executionId, checkpoint.revision);
           checkpoint = undefined;
         }
         await append("execution.failed", {
@@ -509,6 +560,24 @@ export class ResumableSequentialWorkflowRunner {
           error: error.message,
         });
       } else {
+        // Reconcile the authoritative cursor before recording interruption. A
+        // completion adapter may have atomically published progress while its
+        // acknowledgement was lost; using a stale local cursor would otherwise
+        // manufacture a second inconsistency while reporting the first one.
+        const authoritativeCursor = await durability.loadEventCursor(context.executionId);
+        validateEventCursor(authoritativeCursor);
+        sequence = authoritativeCursor.sequence;
+        parentEventId = authoritativeCursor.parentEventId;
+        const authoritativeCheckpoint = await durability.load(context.executionId);
+        if (authoritativeCheckpoint !== undefined) {
+          validateCheckpoint(authoritativeCheckpoint, workflow, context);
+          checkpoint = authoritativeCheckpoint;
+          restoreUsage(context.usage, checkpoint.usage);
+          value = checkpoint.value;
+          nextStepIndex = checkpoint.nextStepIndex;
+          pendingApproval = checkpoint.pendingApproval;
+          approvedApproval = checkpoint.approvedApproval;
+        }
         await append("execution.interrupted", {
           workflowId: workflow.id,
           reason: "recoverable_error",
