@@ -10,14 +10,11 @@ import type { ExecutionEventCursor, WorkflowCheckpoint } from "./resumable-runne
 
 export type StepCompletionFailurePoint =
   | "before_commit"
-  | "after_validation_before_publish";
+  | "after_validation_before_publish"
+  | "after_publish_before_ack";
 
 export interface InMemoryStepCompletionCommitOptions {
   readonly failAt?: StepCompletionFailurePoint;
-  /**
-   * Reference-only authoritative checkpoint state used to model a resumed
-   * execution before the next atomic completion transition.
-   */
   readonly initialCheckpoints?: readonly WorkflowCheckpoint[];
 }
 
@@ -57,9 +54,7 @@ function assertEventExtendsCursor(
   }
   if (cursor.sequence === 0) {
     if (event.parentEventId !== undefined) {
-      throw new InvalidStepCompletionCommitError(
-        `first ${label} cannot identify a parent`,
-      );
+      throw new InvalidStepCompletionCommitError(`first ${label} cannot identify a parent`);
     }
     return;
   }
@@ -70,11 +65,7 @@ function assertEventExtendsCursor(
   }
 }
 
-/**
- * Reference-only authoritative durability adapter used to verify the
- * provider-neutral resumable-execution contract. It deliberately has no
- * production durability claim.
- */
+/** Reference-only authoritative durability adapter; no production durability claim. */
 export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort {
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();
   private readonly events = new Map<string, ExecutionEvent[]>();
@@ -83,9 +74,7 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
   public constructor(private readonly options: InMemoryStepCompletionCommitOptions = {}) {
     for (const checkpoint of options.initialCheckpoints ?? []) {
       if (this.checkpoints.has(checkpoint.executionId)) {
-        throw new InvalidStepCompletionCommitError(
-          "initial checkpoint executionId must be unique",
-        );
+        throw new InvalidStepCompletionCommitError("initial checkpoint executionId must be unique");
       }
       this.checkpoints.set(checkpoint.executionId, cloneCheckpoint(checkpoint));
       this.eventCursors.set(
@@ -128,7 +117,6 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
   public async append<T>(event: ExecutionEvent<T>): Promise<void> {
     const cursor = this.eventCursors.get(event.executionId) ?? { sequence: 0 };
     assertEventExtendsCursor(event, cursor, "event");
-
     const stream = this.events.get(event.executionId) ?? [];
     stream.push(event as ExecutionEvent);
     this.events.set(event.executionId, stream);
@@ -149,7 +137,6 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
 
     const current = this.checkpoints.get(request.checkpoint.executionId);
     assertExpectedRevision(current, request.expectedCheckpointRevision);
-
     const cursor = this.eventCursors.get(request.checkpoint.executionId) ?? { sequence: 0 };
     assertEventExtendsCursor(request.completionEvent, cursor, "completion event");
 
@@ -164,15 +151,12 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
       eventSequence: request.completionEvent.sequence,
       eventId: request.completionEvent.id,
     };
-
     validateStepCompletionCommit(request, result);
 
     if (this.options.failAt === "after_validation_before_publish") {
       throw new Error("injected step-completion failure before atomic publish");
     }
 
-    // Publish all observable state only after the complete transition validates.
-    // No await or externally observable mutation occurs between these assignments.
     const stream = this.events.get(request.checkpoint.executionId) ?? [];
     stream.push(request.completionEvent);
     this.events.set(request.checkpoint.executionId, stream);
@@ -181,6 +165,13 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
       eventCursor(request.completionEvent.sequence, request.completionEvent.id),
     );
     this.checkpoints.set(request.checkpoint.executionId, committed);
+
+    // Models an uncertain acknowledgement: authoritative state committed atomically,
+    // but the caller loses the acknowledgement and must reconcile from durability.
+    if (this.options.failAt === "after_publish_before_ack") {
+      throw new Error("injected step-completion acknowledgement loss after atomic publish");
+    }
+
     return result;
   }
 
