@@ -97,6 +97,17 @@ describe("step completion atomic commit acknowledgement", () => {
     );
   });
 
+  it("fails closed when an adapter substitutes the post-step checkpoint value", () => {
+    const { request, result } = fixture();
+    const mismatched = {
+      ...result,
+      checkpoint: { ...result.checkpoint, value: 999 },
+    };
+    expect(() => validateStepCompletionCommit(request, mismatched)).toThrow(
+      /does not match requested completion transition/,
+    );
+  });
+
   it("fails closed when an adapter acknowledges a checkpoint revision that does not advance exactly once", () => {
     const { request, result } = fixture();
     const mismatched = {
