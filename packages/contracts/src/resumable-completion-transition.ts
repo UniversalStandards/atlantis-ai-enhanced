@@ -3,6 +3,8 @@ import type { WorkflowCheckpoint } from "./resumable-runner.js";
 import {
   validateStepCompletionCommit,
   type ResumableDurabilityPort,
+  type StepCompletionCommitRequest,
+  type StepCompletionCommitResult,
 } from "./step-completion-commit.js";
 
 export interface AtomicResumableCompletionInput {
@@ -20,17 +22,9 @@ export interface AtomicResumableCompletionInput {
   readonly expectedCheckpointRevision: number | undefined;
 }
 
-/**
- * Single provider-neutral execution-path transition for acknowledged step
- * completion. The completion event and the checkpoint that advances beyond the
- * step are submitted to the same durability authority and the acknowledgement
- * is validated before execution may continue.
- *
- * Production persistence/provider selection remains outside this helper.
- */
-export async function commitAtomicResumableCompletion(
+function createRequest(
   input: Readonly<AtomicResumableCompletionInput>,
-): Promise<WorkflowCheckpoint> {
+): Readonly<StepCompletionCommitRequest> {
   const event = input.completionEvent;
   const checkpoint: Omit<WorkflowCheckpoint, "revision"> = {
     executionId: input.executionId,
@@ -44,12 +38,66 @@ export async function commitAtomicResumableCompletion(
     parentEventId: event.id,
   };
 
-  const request = {
+  return {
     completionEvent: event,
     checkpoint,
     expectedCheckpointRevision: input.expectedCheckpointRevision,
-  } as const;
+  };
+}
 
-  const result = await input.durability.commitStepCompletion(request);
+async function reconcileCommitAfterError(
+  durability: ResumableDurabilityPort,
+  request: Readonly<StepCompletionCommitRequest>,
+): Promise<WorkflowCheckpoint | undefined> {
+  const checkpoint = await durability.load(request.checkpoint.executionId);
+  if (checkpoint === undefined) return undefined;
+
+  const cursor = await durability.loadEventCursor(request.checkpoint.executionId);
+  if (
+    cursor.sequence !== request.completionEvent.sequence ||
+    cursor.parentEventId !== request.completionEvent.id
+  ) {
+    return undefined;
+  }
+
+  const result: StepCompletionCommitResult = {
+    checkpoint,
+    eventSequence: cursor.sequence,
+    eventId: cursor.parentEventId,
+  };
   return validateStepCompletionCommit(request, result);
+}
+
+/**
+ * Single provider-neutral execution-path transition for acknowledged step
+ * completion. The completion event and the checkpoint that advances beyond the
+ * step are submitted to the same durability authority and the acknowledgement
+ * is validated before execution may continue.
+ *
+ * If the adapter reports an error after authoritative publication but before
+ * acknowledgement reaches the caller, the transition performs readback-only
+ * reconciliation. It treats the operation as committed only when the existing
+ * validator proves the authoritative checkpoint and event tail are the exact
+ * requested transition; otherwise the original failure remains authoritative.
+ *
+ * Production persistence/provider selection remains outside this helper.
+ */
+export async function commitAtomicResumableCompletion(
+  input: Readonly<AtomicResumableCompletionInput>,
+): Promise<WorkflowCheckpoint> {
+  const request = createRequest(input);
+
+  try {
+    const result = await input.durability.commitStepCompletion(request);
+    return validateStepCompletionCommit(request, result);
+  } catch (error) {
+    try {
+      const reconciled = await reconcileCommitAfterError(input.durability, request);
+      if (reconciled !== undefined) return reconciled;
+    } catch {
+      // Reconciliation itself is evidence, not a replacement error. Preserve the
+      // original adapter failure unless exact committed state can be proven.
+    }
+    throw error;
+  }
 }
