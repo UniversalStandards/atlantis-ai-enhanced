@@ -98,8 +98,13 @@ export function validateStepCompletionCommit(
   ) {
     throw new InvalidStepCompletionCommitError("acknowledged checkpoint does not match requested completion transition");
   }
-  if (!Number.isInteger(committed.revision) || committed.revision < 1) {
-    throw new InvalidStepCompletionCommitError("acknowledged checkpoint revision is invalid");
+  const expectedCommittedRevision = (request.expectedCheckpointRevision ?? 0) + 1;
+  if (
+    !Number.isSafeInteger(expectedCommittedRevision) ||
+    expectedCommittedRevision < 1 ||
+    committed.revision !== expectedCommittedRevision
+  ) {
+    throw new InvalidStepCompletionCommitError("acknowledged checkpoint revision does not advance exactly once");
   }
   return committed;
 }
