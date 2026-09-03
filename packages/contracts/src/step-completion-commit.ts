@@ -1,5 +1,9 @@
-import type { ExecutionEvent, ExecutionUsage } from "./index.js";
-import type { CheckpointStore, WorkflowCheckpoint } from "./resumable-runner.js";
+import type { EventSink, ExecutionEvent, ExecutionUsage } from "./index.js";
+import type {
+  CheckpointStore,
+  ExecutionEventCursor,
+  WorkflowCheckpoint,
+} from "./resumable-runner.js";
 
 export interface StepCompletionCommitRequest {
   readonly completionEvent: ExecutionEvent<{
@@ -33,14 +37,17 @@ export interface StepCompletionCommitPort {
 
 /**
  * Authoritative provider-neutral persistence boundary used by resumable
- * execution. The same authority that loads/saves/clears checkpoints also owns
- * atomic step completion so recovery can never read a checkpoint from a
- * different consistency domain than the acknowledged completion transition.
+ * execution. The same consistency domain owns ordinary execution events,
+ * restart-visible event cursors, checkpoint lifecycle, and atomic completed-step
+ * publication. This prevents recovery from reading completion/checkpoint state
+ * from one authority while deriving its event tail from another.
  *
  * This is an interface invariant only; it does not select a production
  * database, transaction mechanism, credential model, or deployment authority.
  */
-export interface ResumableDurabilityPort extends CheckpointStore, StepCompletionCommitPort {}
+export interface ResumableDurabilityPort extends CheckpointStore, StepCompletionCommitPort, EventSink {
+  loadEventCursor(executionId: string): Promise<ExecutionEventCursor>;
+}
 
 export class InvalidStepCompletionCommitError extends Error {
   public constructor(message: string) {
