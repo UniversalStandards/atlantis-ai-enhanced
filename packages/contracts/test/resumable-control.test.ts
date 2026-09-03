@@ -11,6 +11,7 @@ import {
   type CheckpointStore,
   type WorkflowCheckpoint,
 } from "../src/resumable-runner.js";
+import { createAtomicMemoryTestDurability } from "./resumable-test-durability.js";
 
 class MemoryCheckpointStore implements CheckpointStore {
   public checkpoint: WorkflowCheckpoint | undefined;
@@ -99,9 +100,11 @@ describe("resumable execution controls", () => {
   it("records bounded retry attempts and accounts retry usage", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     let calls = 0;
     const executionContext = context(1);
     const runner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
       eventSink: events,
       loadEventCursor: () => events.cursor(),
@@ -146,9 +149,11 @@ describe("resumable execution controls", () => {
   it("cancels terminally, clears checkpoint state, and does not repeat completed work", async () => {
     const checkpoints = new MemoryCheckpointStore();
     const events = new MemoryEvents();
+    const durability = createAtomicMemoryTestDurability(checkpoints, events);
     const cancellation = { isCancellationRequested: false, reason: "operator stop" };
     const calls = { first: 0, second: 0 };
     const runner = new ResumableSequentialWorkflowRunner({
+      durability,
       checkpointStore: checkpoints,
       eventSink: events,
       loadEventCursor: () => events.cursor(),
