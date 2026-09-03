@@ -184,9 +184,12 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     executionId: string,
   ): Readonly<StepCompletionCommitRequest>["completionEvent"] | undefined {
     const events = this.events.get(executionId) ?? [];
-    return events.findLast(
-      (event): event is StepCompletionCommitRequest["completionEvent"] =>
-        event.type === "workflow.step.completed",
-    );
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event?.type === "workflow.step.completed") {
+        return event as StepCompletionCommitRequest["completionEvent"];
+      }
+    }
+    return undefined;
   }
 }
