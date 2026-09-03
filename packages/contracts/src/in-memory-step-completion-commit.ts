@@ -29,6 +29,10 @@ function cloneCheckpoint(checkpoint: WorkflowCheckpoint): WorkflowCheckpoint {
   };
 }
 
+function eventCursor(sequence: number, parentEventId?: string): ExecutionEventCursor {
+  return parentEventId === undefined ? { sequence } : { sequence, parentEventId };
+}
+
 function assertExpectedRevision(
   current: WorkflowCheckpoint | undefined,
   expectedRevision: number | undefined,
@@ -84,10 +88,10 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
         );
       }
       this.checkpoints.set(checkpoint.executionId, cloneCheckpoint(checkpoint));
-      this.eventCursors.set(checkpoint.executionId, {
-        sequence: checkpoint.lastEventSequence,
-        parentEventId: checkpoint.parentEventId,
-      });
+      this.eventCursors.set(
+        checkpoint.executionId,
+        eventCursor(checkpoint.lastEventSequence, checkpoint.parentEventId),
+      );
     }
   }
 
@@ -128,10 +132,7 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     const stream = this.events.get(event.executionId) ?? [];
     stream.push(event as ExecutionEvent);
     this.events.set(event.executionId, stream);
-    this.eventCursors.set(event.executionId, {
-      sequence: event.sequence,
-      parentEventId: event.id,
-    });
+    this.eventCursors.set(event.executionId, eventCursor(event.sequence, event.id));
   }
 
   public async loadEventCursor(executionId: string): Promise<ExecutionEventCursor> {
@@ -175,10 +176,10 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     const stream = this.events.get(request.checkpoint.executionId) ?? [];
     stream.push(request.completionEvent);
     this.events.set(request.checkpoint.executionId, stream);
-    this.eventCursors.set(request.checkpoint.executionId, {
-      sequence: request.completionEvent.sequence,
-      parentEventId: request.completionEvent.id,
-    });
+    this.eventCursors.set(
+      request.checkpoint.executionId,
+      eventCursor(request.completionEvent.sequence, request.completionEvent.id),
+    );
     this.checkpoints.set(request.checkpoint.executionId, committed);
     return result;
   }
