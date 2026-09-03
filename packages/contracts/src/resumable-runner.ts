@@ -26,6 +26,8 @@ import {
   type ExecutionDeadline,
   type RetryPolicy,
 } from "./execution-control.js";
+import { coordinateAtomicResumableCompletion } from "./resumable-completion-coordinator.js";
+import type { ResumableDurabilityPort } from "./step-completion-commit.js";
 
 export interface ResumableWorkflow<I, O> {
   readonly id: string;
@@ -74,6 +76,18 @@ export class InvalidCheckpointError extends Error {
 export interface ResumableRunnerOptions {
   readonly checkpointStore: CheckpointStore;
   readonly eventSink: EventSink;
+  /**
+   * Optional authoritative durability port used only for the step-completion
+   * transition. When provided, the completion event and the advanced
+   * checkpoint are committed atomically through this single authority instead
+   * of via independent eventSink.append(...) + checkpointStore.save(...)
+   * calls, closing the crash window where one could become durable without
+   * the other. A conforming production adapter typically implements both
+   * CheckpointStore and this port on one object, which the caller passes as
+   * both `checkpointStore` and `durability`. Omitting this preserves the
+   * previous non-atomic behavior.
+   */
+  readonly durability?: ResumableDurabilityPort;
   readonly loadEventCursor: (
     executionId: string,
   ) => ExecutionEventCursor | Promise<ExecutionEventCursor>;
@@ -424,11 +438,44 @@ export class ResumableSequentialWorkflowRunner {
           );
           context.usage.iterations += 1;
           assertWithinBudget(context);
-          await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
+
+          const completedStepIds = workflow.steps.slice(0, index + 1).map((item) => item.id);
+
+          if (this.options.durability !== undefined) {
+            // Single atomic transition: the completion event and the advanced
+            // checkpoint are submitted to the same durability authority, so a
+            // crash between "event durable" and "checkpoint advanced" can no
+            // longer leave one without the other. That gap is what allowed an
+            // already-completed, possibly non-idempotent step to replay.
+            const result = await coordinateAtomicResumableCompletion({
+              durability: this.options.durability,
+              executionId: context.executionId,
+              workflowId: workflow.id,
+              workflowVersion: workflow.version,
+              stepId: step.id,
+              stepIndex: index,
+              completedStepIds,
+              value,
+              usage: copyUsage(context.usage),
+              cursor: {
+                sequence,
+                ...(parentEventId === undefined ? {} : { parentEventId }),
+              },
+              expectedCheckpointRevision: checkpoint?.revision,
+              nextEventId: this.options.nextEventId,
+              actor: this.actor,
+              occurredAt: this.now(),
+            });
+            checkpoint = result.checkpoint;
+            sequence = result.cursor.sequence;
+            parentEventId = result.cursor.parentEventId;
+          } else {
+            await append("workflow.step.completed", { stepId: step.id, stepIndex: index });
+            await saveCheckpoint();
+          }
 
           nextStepIndex = index + 1;
           approvedApproval = undefined;
-          await saveCheckpoint();
         } catch (error) {
           if (error instanceof BudgetExceededError) {
             await append("budget.exceeded", {
