@@ -48,16 +48,18 @@ describe("coordinateAtomicResumableCompletion", () => {
     await expect(durability.loadEventCursor("execution-crash")).resolves.toEqual({ sequence: 0 });
   });
 
-  it("retains authoritative completion and checkpoint progress when acknowledgement is lost after atomic publish", async () => {
+  it("reconciles authoritative completion and checkpoint progress when acknowledgement is lost after atomic publish", async () => {
     const durability = new InMemoryStepCompletionCommitPort({ failAt: "after_publish_before_ack" });
-    await expect(coordinateAtomicResumableCompletion({
+    const result = await coordinateAtomicResumableCompletion({
       durability, executionId: "execution-uncertain", workflowId: "workflow-1", workflowVersion: "1",
       stepId: "step-1", stepIndex: 0, completedStepIds: ["step-1"], value: "post-step-value", usage,
       cursor: { sequence: 0 }, expectedCheckpointRevision: undefined,
       nextEventId: () => "event-1", actor: "test-runner", occurredAt: "2026-09-03T08:00:00.000Z",
-    })).rejects.toThrow("acknowledgement loss after atomic publish");
+    });
+    expect(result.cursor).toEqual({ sequence: 1, parentEventId: "event-1" });
+    expect(result.checkpoint).toMatchObject({ nextStepIndex: 1, completedStepIds: ["step-1"], value: "post-step-value", lastEventSequence: 1, parentEventId: "event-1", revision: 1 });
     expect(durability.loadCompletionEvent("execution-uncertain")).toMatchObject({ id: "event-1", sequence: 1, type: "workflow.step.completed" });
-    expect(durability.loadCheckpoint("execution-uncertain")).toMatchObject({ nextStepIndex: 1, completedStepIds: ["step-1"], value: "post-step-value", lastEventSequence: 1, parentEventId: "event-1", revision: 1 });
+    expect(durability.loadCheckpoint("execution-uncertain")).toEqual(result.checkpoint);
     await expect(durability.loadEventCursor("execution-uncertain")).resolves.toEqual({ sequence: 1, parentEventId: "event-1" });
   });
 
