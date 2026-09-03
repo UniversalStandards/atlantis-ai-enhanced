@@ -13,6 +13,19 @@ export type StepCompletionFailurePoint =
 
 export interface InMemoryStepCompletionCommitOptions {
   readonly failAt?: StepCompletionFailurePoint;
+  /**
+   * Reference-only authoritative checkpoint state used to model a resumed
+   * execution before the next atomic completion transition.
+   */
+  readonly initialCheckpoints?: readonly WorkflowCheckpoint[];
+}
+
+function cloneCheckpoint(checkpoint: WorkflowCheckpoint): WorkflowCheckpoint {
+  return {
+    ...checkpoint,
+    completedStepIds: [...checkpoint.completedStepIds],
+    usage: { ...checkpoint.usage },
+  };
 }
 
 /**
@@ -23,7 +36,16 @@ export class InMemoryStepCompletionCommitPort implements StepCompletionCommitPor
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();
   private readonly events = new Map<string, Readonly<StepCompletionCommitRequest>["completionEvent"]>();
 
-  public constructor(private readonly options: InMemoryStepCompletionCommitOptions = {}) {}
+  public constructor(private readonly options: InMemoryStepCompletionCommitOptions = {}) {
+    for (const checkpoint of options.initialCheckpoints ?? []) {
+      if (this.checkpoints.has(checkpoint.executionId)) {
+        throw new InvalidStepCompletionCommitError(
+          "initial checkpoint executionId must be unique",
+        );
+      }
+      this.checkpoints.set(checkpoint.executionId, cloneCheckpoint(checkpoint));
+    }
+  }
 
   public async commitStepCompletion(
     request: Readonly<StepCompletionCommitRequest>,
@@ -67,13 +89,7 @@ export class InMemoryStepCompletionCommitPort implements StepCompletionCommitPor
 
   public loadCheckpoint(executionId: string): WorkflowCheckpoint | undefined {
     const checkpoint = this.checkpoints.get(executionId);
-    return checkpoint === undefined
-      ? undefined
-      : {
-          ...checkpoint,
-          completedStepIds: [...checkpoint.completedStepIds],
-          usage: { ...checkpoint.usage },
-        };
+    return checkpoint === undefined ? undefined : cloneCheckpoint(checkpoint);
   }
 
   public loadCompletionEvent(
