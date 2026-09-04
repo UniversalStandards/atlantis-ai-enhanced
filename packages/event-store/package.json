@@ -17,6 +17,7 @@
     "./external-effect-ownership-loss-context": "./src/external-effect-ownership-loss-context.ts",
     "./persistence-uncertainty-recovery-selection": "./src/persistence-uncertainty-recovery-selection.ts",
     "./persistence-uncertainty-repository": "./src/persistence-uncertainty-repository.ts",
+    "./provider-neutral-benchmark": "./src/provider-neutral-benchmark.ts",
     "./self-improvement-patch-generator": "./src/self-improvement-patch-generator.ts",
     "./task-entrypoint": "./src/task-entrypoint.ts",
     "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts",
