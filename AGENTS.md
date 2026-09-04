@@ -28,13 +28,27 @@ This repository contains ATLANTIS AI, a civilian-first, provider-independent AI 
 9. All AI behavior changes require evaluation coverage.
 10. Civilian accessibility is the default; regulated and government profiles are separate deployment layers.
 
+## Surgical work-unit and Copilot delegation model
+
+1. Default to issue-first decomposition. Break large objectives into independently reviewable issues with one bounded outcome, explicit acceptance criteria, dependencies, rollback notes, and evidence requirements.
+2. Use GitHub Copilot/coding agents aggressively for implementation-heavy work that can be delegated safely. Give the agent the same concrete instructions an expert maintainer would follow: canonical repo/ref, exact objective, invariants, files/contracts to reuse, prohibited shortcuts, required tests, and completion evidence.
+3. Parent/meta issues coordinate dependency order and release readiness; child issues are the primary progress units. Close child issues as soon as their acceptance criteria are independently verified so project progress reflects actual completed work rather than waiting for a monolithic PR.
+4. Prefer one issue → one focused branch → one focused PR. A PR may close a small tightly coupled issue set only when separating them would create artificial sequencing or duplicate validation.
+5. Keep PRs intentionally small. Target <= 10 logical commits and <= 25 changed files. Treat > 20 logical commits or > 50 changed files as a decomposition trigger unless an explicit documented exception explains why splitting would be riskier. Generated lockfiles, vendored/generated artifacts, and mechanical migrations may be counted separately but still require bounded review evidence.
+6. Do not use a long-lived mega-PR as the primary accumulation branch. Integrate verified surgical PRs into the canonical sprint branch in dependency order, preserving a clear rollback boundary for each completed issue.
+7. Before adding work to an existing PR, ask whether the work has independent acceptance criteria. If yes, create/link a separate issue and PR instead of widening the current PR.
+8. If a PR becomes materially oversized or diverges, stop widening it. Freeze it as evidence/reference, create fresh surgical issues from current canonical HEAD, and transplant only the proven focused deltas.
+9. Agent-generated work is never self-validating. Another execution/review path must inspect diff, ancestry, tests, CI, security evidence, and issue acceptance criteria before integration or closure.
+10. Progress reporting should emphasize closed verified issues, integrated focused PRs, remaining dependency edges, and exact release blockers—not raw commit count.
+
 ## Capability escalation and blocker handling
 
 1. A limitation of the current connector/tool/API is not automatically a project blocker.
 2. Before escalating to a human, search reasonable authorized execution paths: current connector, another authorized connector, GitHub-native agent delegation, workflows/Actions/Apps, CLI/MCP, authorized remote execution, or a reversible automation operating with proper authority.
 3. When GitHub-native coding agents may have an execution context unavailable to the initiating connector, create a tightly scoped issue with objective, acceptance evidence, prohibited shortcuts, rollback constraints, and fail-closed instructions; delegate it to the agent and independently verify the result.
-4. Never weaken security, review, approval, identity, audit, policy, or release controls to get around a capability boundary.
-5. Never claim alternate authority that has not been verified. If all reasonable authorized paths fail, record the exact missing permission/capability as the blocker.
+4. Prefer delegation before repeated status-only comments when implementation can proceed through an authorized coding agent.
+5. Never weaken security, review, approval, identity, audit, policy, or release controls to get around a capability boundary.
+6. Never claim alternate authority that has not been verified. If all reasonable authorized paths fail, record the exact missing permission/capability as the blocker.
 
 ## Continuous learning propagation
 
@@ -64,3 +78,4 @@ Before proposing a merge, run the checks supported by the affected workspace, in
 - Update architecture documentation when contracts or boundaries change.
 - Do not silently preserve obsolete code for compatibility; classify it as retain, refactor, replace, or archive.
 - Never weaken policy, approval, identity, or audit controls to make a test pass.
+- Prefer surgical PRs and frequent verified issue closure over cumulative mega-PRs.
