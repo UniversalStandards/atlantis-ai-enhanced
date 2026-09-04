@@ -4,6 +4,7 @@ import {
   InvalidRepositoryImprovementEvidenceError,
   RepositoryImprovementTask,
   type RepositoryImprovementEvidence,
+  type RepositoryImprovementRequest,
   type RepositoryImprovementTool,
 } from "../src/repository-improvement-tool.js";
 
@@ -37,6 +38,28 @@ describe("RepositoryImprovementTask", () => {
     const result = await new RepositoryImprovementTask(tool(evidence())).execute(request, "exec-101");
     expect(result).toEqual(evidence());
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it("passes the same normalized request identity used for governed evidence binding", async () => {
+    let received: Readonly<RepositoryImprovementRequest> | undefined;
+    const capturingTool: RepositoryImprovementTool = {
+      execute: async (candidate) => {
+        received = candidate;
+        return evidence();
+      },
+    };
+
+    await new RepositoryImprovementTask(capturingTool).execute(
+      {
+        repository: `  ${request.repository}  `,
+        branch: `  ${request.branch}  `,
+        objective: `  ${request.objective}  `,
+      },
+      "  exec-101  ",
+    );
+
+    expect(received).toEqual(request);
+    expect(Object.isFrozen(received)).toBe(true);
   });
 
   it.each([
