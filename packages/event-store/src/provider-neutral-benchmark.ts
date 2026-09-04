@@ -136,6 +136,14 @@ export function normalizeBenchmarkScorecard(
   });
 }
 
+function reserveIteration(context: WorkflowContext): void {
+  if (context.usage.iterations >= context.budget.maxIterations) {
+    throw new InvalidBenchmarkEvidenceError("no benchmark iteration budget remains.");
+  }
+  context.usage.iterations += 1;
+  assertWithinBudget(context);
+}
+
 export async function runBoundedBenchmark<TInput, TOutput>(
   benchmarkCase: BenchmarkCase<TInput>,
   context: WorkflowContext,
@@ -146,18 +154,20 @@ export async function runBoundedBenchmark<TInput, TOutput>(
   validateCase(benchmarkCase);
   assertWithinBudget(context);
 
-  const maxAttempts = context.budget.maxIterations;
-  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+  if (!Number.isSafeInteger(context.budget.maxIterations) || context.budget.maxIterations < 1) {
     throw new InvalidBenchmarkEvidenceError("context.budget.maxIterations must allow at least one attempt.");
   }
 
+  const maxAttempts = context.budget.maxIterations - context.usage.iterations;
+  if (maxAttempts < 1) {
+    throw new InvalidBenchmarkEvidenceError("no benchmark iteration budget remains.");
+  }
+
   const attempts: BenchmarkAttempt<TOutput>[] = [];
+  reserveIteration(context);
   let output = await generator.generate(benchmarkCase.input, context);
 
   for (let iteration = 1; iteration <= maxAttempts; iteration += 1) {
-    context.usage.iterations += 1;
-    assertWithinBudget(context);
-
     const evaluation = await evaluator.evaluate(output, context);
     const scorecard = normalizeBenchmarkScorecard(evaluation, benchmarkCase.passThreshold);
     const attempt = Object.freeze({ iteration, output, scorecard });
@@ -187,6 +197,7 @@ export async function runBoundedBenchmark<TInput, TOutput>(
       });
     }
 
+    reserveIteration(context);
     output = await refiner.refine(benchmarkCase.input, output, evaluation, context);
   }
 
