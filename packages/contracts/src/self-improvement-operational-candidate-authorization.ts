@@ -32,6 +32,18 @@ export interface SelfImprovementOperationalCandidateAuthorization {
   readonly approvals: readonly SelfImprovementOperationalCandidateApproval[];
 }
 
+export interface ExpectedSelfImprovementOperationalCandidateAdmission {
+  readonly candidateId: string;
+  readonly repository: string;
+  readonly baseRevision: string;
+  readonly configurationDigest: string;
+  readonly credentialClass: string;
+  readonly networkBoundary: string;
+  readonly verificationGates: string;
+  readonly decisionEvidence: string;
+  readonly approvalIdentities: Readonly<Record<SelfImprovementOperationalCandidateApprovalRole, string>>;
+}
+
 export class InvalidSelfImprovementOperationalCandidateAuthorizationError extends Error {
   constructor(message: string) {
     super(message);
@@ -50,6 +62,11 @@ const approvalFields = ["role", "approvedBy", "approvedAt"] as const;
 const authorizationFields = [
   ...requiredFields, "executionEnvironment", "featureGateDefault", "authorityBoundary", "approvals",
 ] as const;
+const expectedAdmissionFields = [
+  "candidateId", "repository", "baseRevision", "configurationDigest", "credentialClass", "networkBoundary",
+  "verificationGates", "decisionEvidence", "approvalIdentities",
+] as const;
+const approvalRoles = ["architecture", "operations", "security-network"] as const;
 
 function record(field: string, value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -117,7 +134,7 @@ export function validateSelfImprovementOperationalCandidateAuthorization(
     throw new InvalidSelfImprovementOperationalCandidateAuthorizationError("approvals must be an array");
   }
   const approvals = candidate.approvals.map(approval);
-  for (const role of ["architecture", "operations", "security-network"] as const) {
+  for (const role of approvalRoles) {
     if (approvals.filter((item) => item.role === role).length !== 1) {
       throw new InvalidSelfImprovementOperationalCandidateAuthorizationError(`exactly one ${role} approval is required`);
     }
@@ -130,4 +147,68 @@ export function validateSelfImprovementOperationalCandidateAuthorization(
     authorityBoundary: "no-prohibited-authority",
     approvals: Object.freeze(approvals),
   });
+}
+
+function expectedAdmission(value: unknown): Readonly<ExpectedSelfImprovementOperationalCandidateAdmission> {
+  const candidate = record("expectedAdmission", value);
+  rejectUnknown("expectedAdmission", candidate, expectedAdmissionFields);
+  const approvalIdentities = record("expectedAdmission.approvalIdentities", candidate.approvalIdentities);
+  rejectUnknown("expectedAdmission.approvalIdentities", approvalIdentities, approvalRoles);
+
+  const normalizedApprovals = Object.freeze({
+    architecture: nonBlank("expectedAdmission.approvalIdentities.architecture", approvalIdentities.architecture),
+    operations: nonBlank("expectedAdmission.approvalIdentities.operations", approvalIdentities.operations),
+    "security-network": nonBlank("expectedAdmission.approvalIdentities.security-network", approvalIdentities["security-network"]),
+  });
+
+  return Object.freeze({
+    candidateId: nonBlank("expectedAdmission.candidateId", candidate.candidateId),
+    repository: nonBlank("expectedAdmission.repository", candidate.repository),
+    baseRevision: nonBlank("expectedAdmission.baseRevision", candidate.baseRevision),
+    configurationDigest: nonBlank("expectedAdmission.configurationDigest", candidate.configurationDigest),
+    credentialClass: nonBlank("expectedAdmission.credentialClass", candidate.credentialClass),
+    networkBoundary: nonBlank("expectedAdmission.networkBoundary", candidate.networkBoundary),
+    verificationGates: nonBlank("expectedAdmission.verificationGates", candidate.verificationGates),
+    decisionEvidence: nonBlank("expectedAdmission.decisionEvidence", candidate.decisionEvidence),
+    approvalIdentities: normalizedApprovals,
+  });
+}
+
+/**
+ * Binds a structurally valid candidate to independently supplied admission expectations.
+ * Candidate-supplied identity, base/configuration, verification, network, credential, decision, or approver values
+ * cannot substitute for the expected values. This function remains provider/runtime neutral and performs no execution.
+ */
+export function authorizeSelfImprovementOperationalCandidateAdmission(
+  authorization: unknown,
+  expected: unknown,
+): Readonly<SelfImprovementOperationalCandidateAuthorization> {
+  const admitted = validateSelfImprovementOperationalCandidateAuthorization(authorization);
+  const trusted = expectedAdmission(expected);
+
+  const exactBindings = [
+    ["candidateId", admitted.candidateId, trusted.candidateId],
+    ["repository", admitted.repository, trusted.repository],
+    ["baseRevision", admitted.baseRevision, trusted.baseRevision],
+    ["configurationDigest", admitted.configurationDigest, trusted.configurationDigest],
+    ["credentialClass", admitted.credentialClass, trusted.credentialClass],
+    ["networkBoundary", admitted.networkBoundary, trusted.networkBoundary],
+    ["verificationGates", admitted.verificationGates, trusted.verificationGates],
+    ["decisionEvidence", admitted.decisionEvidence, trusted.decisionEvidence],
+  ] as const;
+
+  for (const [field, observed, required] of exactBindings) {
+    if (observed !== required) {
+      throw new InvalidSelfImprovementOperationalCandidateAuthorizationError(`${field} does not match expected admission value`);
+    }
+  }
+
+  for (const role of approvalRoles) {
+    const observed = admitted.approvals.find((item) => item.role === role);
+    if (observed?.approvedBy !== trusted.approvalIdentities[role]) {
+      throw new InvalidSelfImprovementOperationalCandidateAuthorizationError(`${role} approval identity does not match expected admission value`);
+    }
+  }
+
+  return admitted;
 }
