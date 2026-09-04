@@ -1,64 +1,63 @@
 # ATLANTIS AI Implementation Status
 
-## 2026-09-02 — Day-7 integration baseline reconciled
+## 2026-09-03 — Daily integration reconciliation
 
 ### Canonical sprint baseline
 
 - Repository: `UniversalStandards/atlantis-ai-enhanced`
 - Sprint branch: `sprint/7-day-operational-alpha`
 - Primary PR: #10, targeting `main`
-- Latest verified implementation head before this documentation reconciliation: `aba095d6a479282410afad5d1918d1c4fed6ec31`.
-- Exact-head Contracts run: `33713698647` (#928), `validate` job `100518338028`, successful.
-- Verified runtime-equivalent test baseline: **378/378 contracts + 535/535 event-store = 913/913 tests**.
+- Verified implementation head before this documentation-only reconciliation: `702ce398096401a28d74c0d907a5955993752fdd`.
+- Exact-head Contracts run `33824542603` (#1001) and Universal Standards Conformance `33824542619` (#13) are successful.
+- Verified test baseline: **409/409 contracts + 536/536 event-store = 945/945 tests**.
+- Exact-head CodeQL is successful with no new alerts in code changed by PR #10 and zero annotations; Socket Security reports no new dependency alerts.
+
+This status document does not treat its own documentation commit as runtime proof. Issue #8, PR #10, and PR checks carry mutable current-head CI identity so documentation reconciliation does not create a self-referential evidence loop.
 
 ### Current durable-execution boundary
 
-`ResumableDurabilityPort extends CheckpointStore, StepCompletionCommitPort` now defines one provider-neutral authoritative consistency domain for ordinary checkpoint persistence and atomic step-completion acknowledgement. The reference-only `InMemoryStepCompletionCommitPort` implements that unified boundary and reuses the same optimistic-revision authority across load/save/clear/atomic completion. Acknowledgement validation binds event identity, sequence, completed-step prefix, usage, and exactly one checkpoint-revision advancement. The reference adapter can be seeded with authoritative resumed checkpoint state, and regression coverage proves a resumed transition advances exactly one checkpoint revision while publishing neither side when failure is injected after validation but before the in-memory atomic publish.
+The original completed-step replay P1 is **CLOSED**. `ResumableSequentialWorkflowRunner` uses the authoritative `ResumableDurabilityPort` completion path; completed-step evidence and checkpoint advancement share one consistency domain, and acknowledgement-loss recovery is validated by authoritative readback.
 
-The original recovery replay P1 is **not resolved**. `resumable-runner.ts` still accepts independent `checkpointStore` and `eventSink` authorities and still durably appends `workflow.step.completed` before separately persisting advanced checkpoint state. `ResumableDurabilityPort` is not yet consumed by the execution path, so a crash in the append → checkpoint window can replay an already-completed non-idempotent or externally consequential step.
+Timeout late-effect authority is **CLOSED**. The existing provider-neutral `ExecutionAttemptContext` reaches the runner step boundary, including cancellation and revocable commit authority, and runner-level evidence proves late consequential commit is fenced after terminal timeout.
 
-The P1 may be resolved only after the execution path uses the unified atomic completion/checkpoint authority, or validated authoritative-tail reconciliation with sufficient post-step recovery state, and failure injection proves no duplicate execution plus correct post-step value, usage, and progress recovery.
+Terminal/checkpoint crash consistency is **CLOSED**. Terminal publication and checkpoint retirement use the existing authoritative durability domain, completed terminal output is restored through the versioned terminal-result reference, legacy/invalid terminal result shape fails closed, and final usage is restored on recovery.
+
+The remaining identified runner P1 is **Issue #19: retry-consumption crash consistency**. A retryable failed-attempt record and the allowance it consumes must be one authoritative transition so crash/restart or acknowledgement loss cannot restore retry budget or allow an exhausted step to execute again.
+
+Focused PR #20 now extends the existing `ResumableDurabilityPort` rather than creating a parallel retry store, binds attempt-failure evidence to checkpoint retry consumption, reconciles acknowledgement loss from authoritative readback, checks durable attempt eligibility before invocation, and routes exhausted retry state through the existing terminal transition. Its first-party CI initially required approval because the branch was Copilot-authored; a tree-identical owner-authored no-op retrigger was used to obtain ordinary exact-head verification without changing runtime code.
 
 ### Verified CI and security evidence
 
-Exact-head Contracts run #928 passed frozen-lockfile installation, SEC-20 lockfile/source integrity, structured vulnerability audit, dependency inventory validation, the release-control evidence self-test, typecheck, and the full test suite. Socket Security reports no new dependency alerts.
+For canonical implementation head `702ce398...`, Contracts #1001 passed frozen-lockfile installation, SEC-20 source/integrity validation, a structured vulnerability audit with **0 critical / 0 high / 0 moderate / 0 low / 0 info**, dependency inventory validation, the 12-assertion release-control self-test, both workspace typechecks, and **945/945 tests**. GitHub Actions permissions were limited to `contents: read` and `metadata: read`, and checkout did not persist credentials.
 
-Current GitHub check evidence for head `aba095d6...` reports CodeQL successful with **no new alerts in code changed by PR #10** and zero annotations. Do not restore the stale empty-matrix `.github/workflows/codeql.yml` from `main` or introduce duplicate scanning modes merely to manufacture a second green path.
+Exact-head CodeQL reported no new alerts in code changed by PR #10 and zero annotations. Socket Security PR alerts and project report were successful.
 
-This document does not claim its own documentation commit as an exact-head CI anchor. Master Issue #8, PR #10, and PR checks carry mutable current-head CI identity so status reconciliation does not create a self-referential evidence loop.
+### Architecture and security boundary
+
+No production provider, credential, deployment authority, protected-branch authority, security-sensitive production permission, or universal exactly-once guarantee is introduced by the runner durability work. Concrete external-effect adapters remain separately gated by idempotency/outbox/fencing/reconciliation semantics.
+
+Durable persistence, external artifact storage, browser runtime, telemetry binding, model-provider benchmarking, and self-improvement operational execution remain separately approval-bound. Component/reference evidence is not real external durability, provider failover, live operational integration, deployment/rollback proof, or burn-in proof.
 
 ### Repository release-control boundary
 
-`main` remains unprotected: branch protection is disabled, required-status enforcement is off, and no required checks are configured. Repository rulesets are empty. Green CI is evidence, not an enforced integration boundary.
+Governance Issue #13 remains open. The current integration can read repository rulesets and they are empty; the branch-protection read endpoint is not accessible through the present GitHub integration, so this document does not claim live branch-protection enforcement from an unverified settings read. Release control remains fail-closed: PR-based integration, at least one approving review from a distinct reviewer, exact `validate` from GitHub Actions app id `15368`, and no applicable bypass path must be independently proven before `main` release.
 
-Before repository-settings mutation, re-query the exact `validate` check identity and preserve rollback state. Any accepted control must require PR integration, at least one approving review, exact ATLANTIS `validate`, and no applicable bypass path; pending or failing required checks must be proven to block integration.
+### Remaining release blockers
 
-### Architecture, security, trace, and evidence boundary
-
-No production provider, credential, deployment authority, protected-branch permission, security-sensitive authority, or production mutation has been selected or expanded by the current durability-boundary work. The in-memory adapter is reference/component evidence only and is not production durability proof.
-
-Durable persistence remains **UNSELECTED / BLOCKED FOR IMPLEMENTATION**. Candidate recommendation is not selection or authorization. Provider-specific implementation still requires a completed candidate record and matching architecture + operations approval.
-
-External artifact storage, browser runtime, telemetry binding, model-provider benchmarking, and self-improvement operational execution remain separately approval-bound. Component/unit/reference-adapter evidence is not real durable persistence/failover, external artifact durability, live browser/telemetry/self-improvement operation, complete same-run trace, deployment/rollback proof, or candidate-bound burn-in.
-
-### Current release blockers
-
-1. Wire and prove the unified atomic step-completion/checkpoint boundary (or equivalent authoritative-tail reconciliation) in resumable execution, including exact append → checkpoint crash-window failure injection and correct post-step recovery.
-2. Enforce a reversible bypass-resistant `main` release-control mechanism and prove pending/failing required checks block integration; at least one approving review is still required.
+1. Close Issue #19 with exact-head runner-level crash/restart evidence proving failed-attempt evidence and retry consumption remain atomic and an exhausted step cannot execute again.
+2. Enforce and prove the bypass-resistant `main` release-control requirements in Issue #13.
 3. Complete Issue #6 real-provider benchmark acceptance and Issue #7 operational isolated-development acceptance ending at mandatory human review.
-4. Record and approve one bounded durable-persistence candidate before provider-specific implementation.
-5. Select/authorize external artifact storage and concrete browser, telemetry, and self-improvement operational adapters and execute their real-adapter acceptance evidence.
-6. Execute one governed Day-7 repository-improvement run with complete same-run trace, independent verification, release artifact, and cost evidence.
-7. Execute candidate-bound deployment reproduction, rollback rehearsal, and non-vacuous burn-in.
+4. Complete authority-gated durable persistence/external artifact/browser/telemetry/self-improvement operational adapter evidence.
+5. Execute the governed same-run Day-7 trace plus deployment reproduction, rollback rehearsal, and non-vacuous burn-in.
 
-### Current safe parallel work
+### Duplicate-work rule
 
-Continue current-head CI/review inspection, provider-neutral failure-injection/conformance preparation, candidate decision evidence, governed-run preparation, and deployment/rollback/burn-in preparation. Do not duplicate existing validators or containment tests merely to create activity, and do not promote documentation, mocks, process-local fixtures, or green component CI into operational proof.
+Do not recreate the completed-step, timeout-fencing, or terminal-transition fixes in parallel. Older focused PRs for already-landed P1s are historical/superseded evidence unless a fresh current-head regression is demonstrated. PR #20 is the active focused integration candidate for Issue #19.
 
 ### Single next highest-leverage action
 
-Integrate `ResumableDurabilityPort` into the resumable-runner completion path (or implement equivalent validated authoritative-tail reconciliation) and prove with exact crash-window failure injection that an acknowledged completed step cannot execute twice while preserving correct post-step value, usage, and progress.
+**Finish exact-head Contracts/Conformance/CodeQL/Socket verification for the focused PR #20 retry-durability delta, then integrate only that #19 correction if all evidence is green and independently confirms repeated crash/restart cannot exceed the durable retry limit.**
 
 ### Integration rule
 
-Do not repeat completed provider-neutral contracts, evidence-identity hardening, candidate authorization, conformance definitions, rehearsal/burn-in scaffolding, or release-evidence scaffolding unless a verified defect or regression requires correction. Nothing is complete without build, test, execution, trace, security, and release-control evidence.
+Do not weaken approval, security, identity, persistence, or release controls to accelerate integration. Nothing is complete without build, test, execution, trace, security, and release-control evidence.

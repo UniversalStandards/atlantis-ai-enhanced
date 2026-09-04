@@ -53,11 +53,11 @@ export class RepositoryImprovementTask {
   ): Promise<Readonly<RepositoryImprovementEvidence>> {
     const repository = requireNonBlank(request.repository, "repository");
     const branch = requireNonBlank(request.branch, "branch");
-    requireNonBlank(request.objective, "objective");
+    const objective = requireNonBlank(request.objective, "objective");
     const boundExecutionId = requireNonBlank(executionId, "executionId");
 
     const evidence = await this.tool.execute(
-      Object.freeze({ ...request, repository, branch }),
+      Object.freeze({ ...request, repository, branch, objective }),
       boundExecutionId,
     );
 
