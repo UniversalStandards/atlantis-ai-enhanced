@@ -28,6 +28,7 @@ import {
   type RetryPolicy,
 } from "./execution-control.js";
 import { coordinateAtomicResumableCompletion } from "./resumable-completion-coordinator.js";
+import { commitAtomicAttemptFailure } from "./resumable-attempt-failure-transition.js";
 import {
   terminalExecutionEventsEqual,
   validateTerminalExecutionCommit,
@@ -43,6 +44,21 @@ export interface ResumableWorkflow<I, O> {
   readonly mapOutput?: (value: unknown) => O;
 }
 
+/**
+ * Durable record of retry allowances already consumed by the pending step.
+ *
+ * Retry budget is execution-wide, so it cannot by itself tell recovery whether
+ * the pending step has already spent its own attempts. Without this record an
+ * exhausted execution would still grant every restart one further unpaid step
+ * execution, which is unbounded re-execution of a failing step.
+ */
+export interface StepAttemptConsumption {
+  readonly stepId: string;
+  readonly stepIndex: number;
+  /** Durably recorded failed attempts of this step, retrying and terminal. */
+  readonly consumedAttempts: number;
+}
+
 export interface WorkflowCheckpoint {
   readonly executionId: string;
   readonly workflowId: string;
@@ -55,6 +71,7 @@ export interface WorkflowCheckpoint {
   readonly parentEventId?: string;
   readonly pendingApproval?: ApprovalRequest;
   readonly approvedApproval?: ResolvedApproval;
+  readonly stepAttemptConsumption?: StepAttemptConsumption;
   readonly revision: number;
 }
 
@@ -70,6 +87,24 @@ export interface CheckpointStore {
 export interface ExecutionEventCursor {
   readonly sequence: number;
   readonly parentEventId?: string;
+}
+
+/**
+ * Raised before a step is invoked when authoritative state proves no retry
+ * allowance remains to pay for another attempt of that step.
+ */
+export class RetryBudgetExhaustedError extends Error {
+  public constructor(
+    public readonly stepId: string,
+    public readonly stepIndex: number,
+    public readonly consumedAttempts: number,
+    public readonly maxRetries: number,
+  ) {
+    super(
+      `Step ${stepId} exhausted its retry allowance after ${consumedAttempts} durable attempts (maxRetries ${maxRetries})`,
+    );
+    this.name = "RetryBudgetExhaustedError";
+  }
 }
 
 export class InvalidCheckpointError extends Error {
@@ -205,6 +240,31 @@ function validateCheckpoint<I, O>(
   }
 
   const step = workflow.steps[checkpoint.nextStepIndex];
+  const consumption = checkpoint.stepAttemptConsumption;
+  if (consumption !== undefined) {
+    if (step === undefined) {
+      throw new InvalidCheckpointError(
+        "Completed workflow cannot retain pending step attempt consumption",
+      );
+    }
+    if (
+      consumption.stepIndex !== checkpoint.nextStepIndex ||
+      consumption.stepId !== step.id
+    ) {
+      throw new InvalidCheckpointError(
+        "Checkpoint attempt consumption does not identify the pending step",
+      );
+    }
+    if (
+      !Number.isSafeInteger(consumption.consumedAttempts) ||
+      consumption.consumedAttempts < 1
+    ) {
+      throw new InvalidCheckpointError(
+        "Checkpoint attempt consumption count is invalid",
+      );
+    }
+  }
+
   if (checkpoint.pendingApproval !== undefined) {
     if (step === undefined) {
       throw new InvalidCheckpointError("Completed workflow cannot retain a pending approval");
@@ -336,6 +396,14 @@ async function restoreTerminalOutcome<O>(
     if (payload.reason === "approval_rejected") {
       throw new ApprovalRejectedError(payload.approval as ResolvedApproval);
     }
+    if (payload.reason === "retry_budget_exhausted") {
+      throw new RetryBudgetExhaustedError(
+        payload.stepId as string,
+        readNumber(payload, "stepIndex"),
+        readNumber(payload, "consumedAttempts"),
+        readNumber(payload, "maxRetries"),
+      );
+    }
     if (payload.reason === "budget_exceeded") {
       throw new BudgetExceededError(
         payload.dimension as keyof ExecutionBudget,
@@ -407,6 +475,7 @@ export class ResumableSequentialWorkflowRunner {
     let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
     let pendingApproval = checkpoint?.pendingApproval;
     let approvedApproval = checkpoint?.approvedApproval;
+    let stepAttemptConsumption = checkpoint?.stepAttemptConsumption;
     let sequence = cursor.sequence;
     let parentEventId = cursor.parentEventId;
 
@@ -445,6 +514,7 @@ export class ResumableSequentialWorkflowRunner {
           ...(parentEventId === undefined ? {} : { parentEventId }),
           ...(pendingApproval === undefined ? {} : { pendingApproval }),
           ...(approvedApproval === undefined ? {} : { approvedApproval }),
+          ...(stepAttemptConsumption === undefined ? {} : { stepAttemptConsumption }),
         },
         checkpoint?.revision,
       );
@@ -575,17 +645,37 @@ export class ResumableSequentialWorkflowRunner {
         }
 
         assertWithinBudget(context);
-        await append("workflow.step.started", { stepId: step.id, stepIndex: index });
 
         const requestedPolicy = this.options.retryPolicyForStep?.(step, index) ?? {
           maxAttempts: 1,
         };
         assertValidRetryPolicy(requestedPolicy);
         const remainingRetries = context.budget.maxRetries - context.usage.retries;
+        const consumedAttempts =
+          stepAttemptConsumption?.stepIndex === index &&
+          stepAttemptConsumption.stepId === step.id
+            ? stepAttemptConsumption.consumedAttempts
+            : 0;
+        // A step may attempt at most `maxRetries + 1` times in total, and every
+        // durable failed attempt is subtracted from that allowance. Because the
+        // consumed count is durable, an exhausted step cannot buy another
+        // execution by restarting.
+        const availableAttempts =
+          Math.min(requestedPolicy.maxAttempts, remainingRetries + 1) - consumedAttempts;
+        if (availableAttempts < 1) {
+          throw new RetryBudgetExhaustedError(
+            step.id,
+            index,
+            consumedAttempts,
+            context.budget.maxRetries,
+          );
+        }
         const retryPolicy: RetryPolicy = {
           ...requestedPolicy,
-          maxAttempts: Math.min(requestedPolicy.maxAttempts, remainingRetries + 1),
+          maxAttempts: availableAttempts,
         };
+
+        await append("workflow.step.started", { stepId: step.id, stepIndex: index });
 
         try {
           value = await executeWithControl(
@@ -605,19 +695,64 @@ export class ResumableSequentialWorkflowRunner {
               deadline: this.options.deadline,
               hooks: {
                 onAttemptFailed: async ({ attempt, maxAttempts }, error, willRetry) => {
-                  await append("workflow.step.attempt.failed", {
+                  const message = error instanceof Error ? error.message : String(error);
+                  const consumedAttemptsBefore = consumedAttempts + attempt - 1;
+                  if (!willRetry && consumedAttemptsBefore === 0) {
+                    // The step's first attempt is its free one: a terminal
+                    // failure there consumes no allowance and leaves ordinary
+                    // interruption/resume semantics unchanged.
+                    await append("workflow.step.attempt.failed", {
+                      stepId: step.id,
+                      stepIndex: index,
+                      attempt,
+                      maxAttempts,
+                      willRetry,
+                      error: message,
+                    });
+                    return;
+                  }
+
+                  // Failure evidence and the allowance it consumes are one
+                  // authoritative transition. A crash can leave neither or both,
+                  // so durable evidence can never restore spent retry budget.
+                  // Terminal failures are committed too once the step has spent
+                  // an allowance, so a restart cannot replay the final attempt
+                  // of an exhausted step without ever paying for it.
+                  const consumption = await commitAtomicAttemptFailure({
+                    durability,
+                    executionId: context.executionId,
+                    workflowId: workflow.id,
+                    workflowVersion: workflow.version,
                     stepId: step.id,
                     stepIndex: index,
+                    completedStepIds: workflow.steps
+                      .slice(0, index)
+                      .map((item) => item.id),
                     attempt,
                     maxAttempts,
+                    error: message,
+                    value,
+                    usage: copyUsage(context.usage),
+                    consumedAttemptsBefore,
                     willRetry,
-                    error: error instanceof Error ? error.message : String(error),
+                    cursor: {
+                      sequence,
+                      ...(parentEventId === undefined ? {} : { parentEventId }),
+                    },
+                    expectedCheckpointRevision: checkpoint?.revision,
+                    ...(pendingApproval === undefined ? {} : { pendingApproval }),
+                    ...(approvedApproval === undefined ? {} : { approvedApproval }),
+                    nextEventId: this.options.nextEventId,
+                    actor: this.actor,
+                    occurredAt: this.now(),
                   });
-                  if (willRetry) {
-                    context.usage.retries += 1;
-                    assertWithinBudget(context);
-                    await saveCheckpoint();
-                  }
+
+                  checkpoint = consumption.checkpoint;
+                  stepAttemptConsumption = checkpoint.stepAttemptConsumption;
+                  restoreUsage(context.usage, checkpoint.usage);
+                  sequence = consumption.cursor.sequence;
+                  parentEventId = consumption.cursor.parentEventId;
+                  assertWithinBudget(context);
                 },
                 onTimedOut: async ({ attempt, maxAttempts, deadlineAtMs, observedAtMs }) => {
                   await append("workflow.step.timed_out", {
@@ -717,6 +852,20 @@ export class ResumableSequentialWorkflowRunner {
           deadlineAtMs: error.deadlineAtMs,
           observedAtMs: error.observedAtMs,
           nextStepIndex,
+        });
+      } else if (error instanceof RetryBudgetExhaustedError) {
+        // Exhaustion is terminal, so it is published and retired through the
+        // same authoritative terminal transition as every other terminal
+        // disposition. Recovery then replays that evidence instead of granting
+        // the step another execution.
+        await commitTerminal("execution.failed", {
+          workflowId: workflow.id,
+          reason: "retry_budget_exhausted",
+          stepId: error.stepId,
+          stepIndex: error.stepIndex,
+          consumedAttempts: error.consumedAttempts,
+          maxRetries: error.maxRetries,
+          error: error.message,
         });
       } else if (error instanceof BudgetExceededError) {
         await commitTerminal("execution.failed", {

@@ -4,8 +4,11 @@ import {
   InvalidTerminalExecutionCommitError,
   isTerminalExecutionEvent,
   terminalExecutionEventsEqual,
+  validateAttemptFailureCommit,
   validateTerminalExecutionCommit,
   validateStepCompletionCommit,
+  type AttemptFailureCommitRequest,
+  type AttemptFailureCommitResult,
   type ResumableDurabilityPort,
   type StepCompletionCommitRequest,
   type StepCompletionCommitResult,
@@ -27,6 +30,8 @@ export type StepCompletionFailurePoint =
 
 export interface InMemoryStepCompletionCommitOptions {
   readonly failAt?: StepCompletionFailurePoint;
+  /** Independent injection for the retry-consuming attempt-failure transition. */
+  readonly attemptFailureFailAt?: StepCompletionFailurePoint;
   readonly initialCheckpoints?: readonly WorkflowCheckpoint[];
 }
 
@@ -188,6 +193,58 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     return result;
   }
 
+  public async commitAttemptFailure(
+    request: Readonly<AttemptFailureCommitRequest>,
+  ): Promise<Readonly<AttemptFailureCommitResult>> {
+    if (this.options.attemptFailureFailAt === "before_commit") {
+      throw new Error("injected attempt-failure failure before commit");
+    }
+
+    const current = this.checkpoints.get(request.checkpoint.executionId);
+    assertExpectedRevision(current, request.expectedCheckpointRevision);
+    if ((current?.usage.retries ?? 0) !== request.consumedRetriesBefore) {
+      throw new InvalidStepCompletionCommitError(
+        "consumed retry count does not match authoritative state",
+      );
+    }
+    const cursor = this.eventCursors.get(request.checkpoint.executionId) ?? { sequence: 0 };
+    assertEventExtendsCursor(request.attemptFailedEvent, cursor, "attempt failure event");
+
+    const committed: WorkflowCheckpoint = {
+      ...request.checkpoint,
+      completedStepIds: [...request.checkpoint.completedStepIds],
+      usage: { ...request.checkpoint.usage },
+      revision: (current?.revision ?? 0) + 1,
+    };
+    const result: AttemptFailureCommitResult = {
+      checkpoint: committed,
+      eventSequence: request.attemptFailedEvent.sequence,
+      eventId: request.attemptFailedEvent.id,
+    };
+    validateAttemptFailureCommit(request, result);
+
+    if (this.options.attemptFailureFailAt === "after_validation_before_publish") {
+      throw new Error("injected attempt-failure failure before atomic publish");
+    }
+
+    const stream = this.events.get(request.checkpoint.executionId) ?? [];
+    stream.push(request.attemptFailedEvent as ExecutionEvent);
+    this.events.set(request.checkpoint.executionId, stream);
+    this.eventCursors.set(
+      request.checkpoint.executionId,
+      eventCursor(request.attemptFailedEvent.sequence, request.attemptFailedEvent.id),
+    );
+    this.checkpoints.set(request.checkpoint.executionId, committed);
+
+    // Models an uncertain acknowledgement: evidence and consumed allowance are
+    // committed atomically, but the caller must reconcile from durability.
+    if (this.options.attemptFailureFailAt === "after_publish_before_ack") {
+      throw new Error("injected attempt-failure acknowledgement loss after atomic publish");
+    }
+
+    return result;
+  }
+
   public async commitTerminalExecution(
     request: Readonly<TerminalExecutionCommitRequest>,
   ): Promise<Readonly<TerminalExecutionCommitResult>> {
@@ -264,9 +321,14 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     return structuredClone(this.terminalResults.get(reference.reference));
   }
 
+
   public loadCheckpoint(executionId: string): WorkflowCheckpoint | undefined {
     const checkpoint = this.checkpoints.get(executionId);
     return checkpoint === undefined ? undefined : cloneCheckpoint(checkpoint);
+  }
+
+  public loadEvents(executionId: string): readonly ExecutionEvent[] {
+    return [...(this.events.get(executionId) ?? [])];
   }
 
   public loadCompletionEvent(

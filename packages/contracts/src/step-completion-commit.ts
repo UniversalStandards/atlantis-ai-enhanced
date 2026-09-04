@@ -77,6 +77,46 @@ export interface StepCompletionCommitPort {
   ): Promise<Readonly<StepCompletionCommitResult>>;
 }
 
+export interface AttemptFailureEventPayload {
+  readonly stepId: string;
+  readonly stepIndex: number;
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly willRetry: boolean;
+  readonly error: string;
+}
+
+export interface AttemptFailureCommitRequest {
+  readonly attemptFailedEvent: ExecutionEvent<AttemptFailureEventPayload>;
+  readonly checkpoint: Omit<WorkflowCheckpoint, "revision">;
+  readonly expectedCheckpointRevision: number | undefined;
+  /** Retry allowance consumed by authoritative state before this transition. */
+  readonly consumedRetriesBefore: number;
+  /** Attempts of this step already paid for by authoritative state. */
+  readonly consumedAttemptsBefore: number;
+}
+
+export interface AttemptFailureCommitResult {
+  readonly checkpoint: WorkflowCheckpoint;
+  readonly eventSequence: number;
+  readonly eventId: string;
+}
+
+/**
+ * Provider-neutral durability boundary for a retryable failed step attempt.
+ *
+ * A conforming implementation MUST make the failed-attempt event and the
+ * checkpoint that consumes its retry allowance visible atomically. Recovery
+ * must never observe durable failure evidence whose allowance was not
+ * consumed, because that would restore retry budget and let repeated boundary
+ * failures re-execute beyond `maxRetries`.
+ */
+export interface AttemptFailureCommitPort {
+  commitAttemptFailure(
+    request: Readonly<AttemptFailureCommitRequest>,
+  ): Promise<Readonly<AttemptFailureCommitResult>>;
+}
+
 export interface TerminalExecutionCommitPort {
   commitTerminalExecution(
     request: Readonly<TerminalExecutionCommitRequest>,
@@ -90,9 +130,10 @@ export interface TerminalExecutionCommitPort {
 /**
  * Authoritative provider-neutral persistence boundary used by resumable
  * execution. The same consistency domain owns ordinary execution events,
- * restart-visible event cursors, checkpoint lifecycle, and atomic completed-step
- * publication. This prevents recovery from reading completion/checkpoint state
- * from one authority while deriving its event tail from another.
+ * restart-visible event cursors, checkpoint lifecycle, atomic completed-step
+ * publication, and atomic retry-consuming attempt failures. This prevents
+ * recovery from reading completion/checkpoint/retry state from one authority
+ * while deriving its event tail from another.
  *
  * This is an interface invariant only; it does not select a production
  * database, transaction mechanism, credential model, or deployment authority.
@@ -100,6 +141,7 @@ export interface TerminalExecutionCommitPort {
 export interface ResumableDurabilityPort
   extends CheckpointStore,
     StepCompletionCommitPort,
+    AttemptFailureCommitPort,
     TerminalExecutionCommitPort,
     EventSink {
   loadEventCursor(executionId: string): Promise<ExecutionEventCursor>;
@@ -231,6 +273,11 @@ export function validateStepCompletionCommit(
   if (requested.completedStepIds.at(-1) !== event.payload.stepId) {
     throw new InvalidStepCompletionCommitError("completion event stepId does not match completed checkpoint prefix");
   }
+  if (requested.stepAttemptConsumption !== undefined) {
+    throw new InvalidStepCompletionCommitError(
+      "completed step must retire its pending attempt consumption",
+    );
+  }
   if (
     committed.executionId !== requested.executionId ||
     committed.workflowId !== requested.workflowId ||
@@ -242,7 +289,8 @@ export function validateStepCompletionCommit(
     !sameUsage(committed.usage, requested.usage) ||
     !sameCheckpointValue(committed.value, requested.value) ||
     !sameCheckpointValue(committed.pendingApproval, requested.pendingApproval) ||
-    !sameCheckpointValue(committed.approvedApproval, requested.approvedApproval)
+    !sameCheckpointValue(committed.approvedApproval, requested.approvedApproval) ||
+    committed.stepAttemptConsumption !== undefined
   ) {
     throw new InvalidStepCompletionCommitError("acknowledged checkpoint does not match requested completion transition");
   }
@@ -253,6 +301,148 @@ export function validateStepCompletionCommit(
     committed.revision !== expectedCommittedRevision
   ) {
     throw new InvalidStepCompletionCommitError("acknowledged checkpoint revision does not advance exactly once");
+  }
+  return committed;
+}
+
+export class InvalidAttemptFailureCommitError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidAttemptFailureCommitError";
+  }
+}
+
+function sameCommittedCheckpoint(
+  requested: Omit<WorkflowCheckpoint, "revision">,
+  committed: WorkflowCheckpoint,
+): boolean {
+  return (
+    committed.executionId === requested.executionId &&
+    committed.workflowId === requested.workflowId &&
+    committed.workflowVersion === requested.workflowVersion &&
+    committed.nextStepIndex === requested.nextStepIndex &&
+    sameCompletedStepIds(committed.completedStepIds, requested.completedStepIds) &&
+    committed.lastEventSequence === requested.lastEventSequence &&
+    committed.parentEventId === requested.parentEventId &&
+    sameUsage(committed.usage, requested.usage) &&
+    sameCheckpointValue(committed.value, requested.value) &&
+    sameCheckpointValue(committed.pendingApproval, requested.pendingApproval) &&
+    sameCheckpointValue(committed.approvedApproval, requested.approvedApproval) &&
+    sameCheckpointValue(
+      committed.stepAttemptConsumption,
+      requested.stepAttemptConsumption,
+    )
+  );
+}
+
+/**
+ * Validates the acknowledgement returned by an atomic attempt-failure adapter.
+ *
+ * This does not manufacture durability; it proves that the acknowledged
+ * transition is exactly the requested one: the failed-attempt evidence is the
+ * authoritative event tail of the same checkpoint, the workflow position is
+ * unchanged, and the checkpoint consumed exactly one retry allowance for that
+ * attempt. Any other shape is rejected so retry accounting can never be
+ * inferred from partially applied or non-authoritative state.
+ */
+export function validateAttemptFailureCommit(
+  request: Readonly<AttemptFailureCommitRequest>,
+  result: Readonly<AttemptFailureCommitResult>,
+): WorkflowCheckpoint {
+  const event = request.attemptFailedEvent;
+  const requested = request.checkpoint;
+  const committed = result.checkpoint;
+
+  if (event.type !== "workflow.step.attempt.failed") {
+    throw new InvalidAttemptFailureCommitError("attempt failure event type is invalid");
+  }
+  if (typeof event.payload.willRetry !== "boolean") {
+    throw new InvalidAttemptFailureCommitError("attempt failure retry disposition is invalid");
+  }
+  if (!Number.isSafeInteger(event.payload.attempt) || event.payload.attempt < 1) {
+    throw new InvalidAttemptFailureCommitError("attempt failure attempt ordinal is invalid");
+  }
+  if (
+    !Number.isSafeInteger(event.payload.maxAttempts) ||
+    (event.payload.willRetry
+      ? event.payload.maxAttempts <= event.payload.attempt
+      : event.payload.maxAttempts < event.payload.attempt)
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "a retrying attempt failure must leave a further attempt available",
+    );
+  }
+  if (event.executionId !== requested.executionId) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure event executionId does not match checkpoint",
+    );
+  }
+  if (event.sequence !== requested.lastEventSequence || result.eventSequence !== event.sequence) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure event sequence does not match checkpoint",
+    );
+  }
+  if (event.id !== requested.parentEventId || result.eventId !== event.id) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure event identity does not match checkpoint tail",
+    );
+  }
+  if (event.payload.stepIndex !== requested.nextStepIndex) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure must not advance the checkpoint past the failing step",
+    );
+  }
+  if (requested.completedStepIds.length !== requested.nextStepIndex) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure checkpoint completed prefix does not match the failing step",
+    );
+  }
+  if (!Number.isSafeInteger(request.consumedRetriesBefore) || request.consumedRetriesBefore < 0) {
+    throw new InvalidAttemptFailureCommitError(
+      "authoritative consumed retry count is invalid",
+    );
+  }
+  if (
+    requested.usage.retries !==
+    request.consumedRetriesBefore + (event.payload.willRetry ? 1 : 0)
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure must consume exactly one retry allowance",
+    );
+  }
+  if (
+    !Number.isSafeInteger(request.consumedAttemptsBefore) ||
+    request.consumedAttemptsBefore < 0
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "authoritative consumed attempt count is invalid",
+    );
+  }
+  const consumption = requested.stepAttemptConsumption;
+  if (
+    consumption === undefined ||
+    consumption.stepId !== event.payload.stepId ||
+    consumption.stepIndex !== event.payload.stepIndex ||
+    consumption.consumedAttempts !== request.consumedAttemptsBefore + 1
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "attempt failure must record exactly one further paid attempt for the failing step",
+    );
+  }
+  if (!sameCommittedCheckpoint(requested, committed)) {
+    throw new InvalidAttemptFailureCommitError(
+      "acknowledged checkpoint does not match requested attempt failure transition",
+    );
+  }
+  const expectedCommittedRevision = (request.expectedCheckpointRevision ?? 0) + 1;
+  if (
+    !Number.isSafeInteger(expectedCommittedRevision) ||
+    expectedCommittedRevision < 1 ||
+    committed.revision !== expectedCommittedRevision
+  ) {
+    throw new InvalidAttemptFailureCommitError(
+      "acknowledged checkpoint revision does not advance exactly once",
+    );
   }
   return committed;
 }

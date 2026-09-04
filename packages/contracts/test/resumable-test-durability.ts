@@ -6,10 +6,13 @@ import type {
 } from "../src/resumable-runner.js";
 import {
   InvalidStepCompletionCommitError,
+  validateAttemptFailureCommit,
   isTerminalExecutionEvent,
   terminalExecutionEventsEqual,
   validateTerminalExecutionCommit,
   validateStepCompletionCommit,
+  type AttemptFailureCommitRequest,
+  type AttemptFailureCommitResult,
   type ResumableDurabilityPort,
   type StepCompletionCommitRequest,
   type StepCompletionCommitResult,
@@ -104,6 +107,46 @@ export function createAtomicMemoryTestDurability(
       validateStepCompletionCommit(request, result);
 
       events.events.push(request.completionEvent as ExecutionEvent);
+      checkpoints.checkpoint = committed;
+      return structuredClone(result);
+    },
+    commitAttemptFailure: async (
+      request: Readonly<AttemptFailureCommitRequest>,
+    ): Promise<Readonly<AttemptFailureCommitResult>> => {
+      const current = checkpoints.checkpoint;
+      if (current?.revision !== request.expectedCheckpointRevision) {
+        throw new InvalidStepCompletionCommitError(
+          "expected checkpoint revision does not match authoritative test state",
+        );
+      }
+      if ((current?.usage.retries ?? 0) !== request.consumedRetriesBefore) {
+        throw new InvalidStepCompletionCommitError(
+          "consumed retry count does not match authoritative test state",
+        );
+      }
+
+      const cursor = events.cursor();
+      if (
+        request.attemptFailedEvent.sequence !== cursor.sequence + 1 ||
+        request.attemptFailedEvent.parentEventId !== cursor.parentEventId
+      ) {
+        throw new InvalidStepCompletionCommitError(
+          "attempt failure event does not extend authoritative test event tail",
+        );
+      }
+
+      const committed: WorkflowCheckpoint = structuredClone({
+        ...request.checkpoint,
+        revision: (current?.revision ?? 0) + 1,
+      });
+      const result: AttemptFailureCommitResult = {
+        checkpoint: committed,
+        eventSequence: request.attemptFailedEvent.sequence,
+        eventId: request.attemptFailedEvent.id,
+      };
+      validateAttemptFailureCommit(request, result);
+
+      events.events.push(request.attemptFailedEvent as ExecutionEvent);
       checkpoints.checkpoint = committed;
       return structuredClone(result);
     },

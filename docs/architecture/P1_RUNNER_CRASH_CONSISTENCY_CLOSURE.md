@@ -54,6 +54,12 @@ Preferred implementation: authoritative atomic failed-attempt transition updates
 
 Required invariant: one durable failed-attempt identity consumes exactly one allowance, including after acknowledgement loss and repeated restart. No crash boundary may restore consumed retry budget; no reconciliation may double-count the same failed-attempt identity.
 
+Implemented shape: `ResumableDurabilityPort` is extended with `commitAttemptFailure`, which publishes the `workflow.step.attempt.failed` evidence and the checkpoint that consumes its allowance in one transition. `validateAttemptFailureCommit` proves the acknowledged transition is identity-bound to execution, step, attempt ordinal, and exact event tail, does not advance workflow position, consumes exactly one retry allowance when another attempt follows, and advances the step's durable attempt consumption exactly once. Acknowledgement loss is resolved by readback-only reconciliation against that same validator, so a lost acknowledgement neither restores nor double-consumes budget.
+
+Attempt eligibility is derived from that authoritative state before the step is invoked: a step may attempt at most `min(policy.maxAttempts, maxRetries + 1)` times in total, minus the attempts already recorded in `checkpoint.stepAttemptConsumption`. When nothing remains the runner fails closed with `RetryBudgetExhaustedError` before publishing `workflow.step.started`. Because a step's final attempt is also committed once the step has spent an allowance, an exhausted step cannot replay one unpaid attempt per restart. A step that has consumed nothing keeps its single free attempt, preserving ordinary interruption/resume semantics.
+
+Exhaustion is a terminal disposition, so it is published and retired through the #17 terminal transition (`commitTerminalExecution`) rather than an ad-hoc event append. Recovery then replays that durable terminal evidence and reconstructs `RetryBudgetExhaustedError` without invoking the step, so repeated restarts execute nothing further.
+
 ## Reuse requirements
 
 - Reuse `ResumableDurabilityPort` as the authoritative consistency domain.
