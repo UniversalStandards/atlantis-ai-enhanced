@@ -28,18 +28,19 @@ This repository contains ATLANTIS AI, a civilian-first, provider-independent AI 
 9. All AI behavior changes require evaluation coverage.
 10. Civilian accessibility is the default; regulated and government profiles are separate deployment layers.
 
-## Surgical work-unit and Copilot delegation model
+## Bounded work-packet and Copilot delegation model
 
-1. Default to issue-first decomposition. Break large objectives into independently reviewable issues with one bounded outcome, explicit acceptance criteria, dependencies, rollback notes, and evidence requirements.
-2. Use GitHub Copilot/coding agents aggressively for implementation-heavy work that can be delegated safely. Give the agent the same concrete instructions an expert maintainer would follow: canonical repo/ref, exact objective, invariants, files/contracts to reuse, prohibited shortcuts, required tests, and completion evidence.
-3. Parent/meta issues coordinate dependency order and release readiness; child issues are the primary progress units. Close child issues as soon as their acceptance criteria are independently verified so project progress reflects actual completed work rather than waiting for a monolithic PR.
-4. Prefer one issue → one focused branch → one focused PR. A PR may close a small tightly coupled issue set only when separating them would create artificial sequencing or duplicate validation.
-5. Keep PRs intentionally small. Target <= 10 logical commits and <= 25 changed files. Treat > 20 logical commits or > 50 changed files as a decomposition trigger unless an explicit documented exception explains why splitting would be riskier. Generated lockfiles, vendored/generated artifacts, and mechanical migrations may be counted separately but still require bounded review evidence.
-6. Do not use a long-lived mega-PR as the primary accumulation branch. Integrate verified surgical PRs into the canonical sprint branch in dependency order, preserving a clear rollback boundary for each completed issue.
-7. Before adding work to an existing PR, ask whether the work has independent acceptance criteria. If yes, create/link a separate issue and PR instead of widening the current PR.
-8. If a PR becomes materially oversized or diverges, stop widening it. Freeze it as evidence/reference, create fresh surgical issues from current canonical HEAD, and transplant only the proven focused deltas.
-9. Agent-generated work is never self-validating. Another execution/review path must inspect diff, ancestry, tests, CI, security evidence, and issue acceptance criteria before integration or closure.
-10. Progress reporting should emphasize closed verified issues, integrated focused PRs, remaining dependency edges, and exact release blockers—not raw commit count.
+1. Default to issue-first decomposition at meaningful acceptance boundaries. Break large objectives into independently reviewable work packets with one coherent outcome, explicit acceptance criteria, dependencies, rollback notes, and evidence requirements.
+2. Do not create artificial micro-issues. Keep tightly coupled code, tests, migrations, and documentation together when splitting them would make validation or rollback less reliable.
+3. Use GitHub Copilot/coding agents aggressively for implementation-heavy work that can be delegated safely. Give the agent the same concrete instructions an expert maintainer would follow: canonical repo/ref, exact objective, invariants, files/contracts to reuse, prohibited shortcuts, required tests, and completion evidence.
+4. Parent/meta issues coordinate dependency order and release readiness; child issues/work packets are the primary progress units. Close them as soon as their acceptance criteria are independently verified.
+5. Prefer one coherent work packet → one focused branch → one focused PR. A focused PR may close a small tightly coupled issue set when those issues share one validation/rollback boundary.
+6. PR size is governed by reviewability, not an arbitrary number. As a planning heuristic, aim for roughly <=10 logical commits and <=25 changed files. Crossing roughly 20 logical commits or 50 changed files triggers a decomposition review, not an automatic rejection. Document why a larger PR remains safer when keeping it intact.
+7. `sprint/7-day-operational-alpha` is the integration branch. Verified focused PRs should land there in dependency order. Primary PR #10 is the release/integration PR from the sprint branch toward `main`; do not use PR #10 as the default place to accumulate unrelated implementation work.
+8. Before adding work to an existing implementation PR, ask whether the new work has an independent acceptance/rollback boundary. If yes, create/link a separate work packet and focused PR instead of widening the current PR.
+9. If a PR becomes materially oversized or diverges, stop widening it. Freeze it as evidence/reference, create fresh focused work packets from current canonical HEAD, and transplant only proven deltas.
+10. Agent-generated work is never self-validating. Another execution/review path must inspect diff, ancestry, tests, CI, security evidence, and issue acceptance criteria before integration or closure.
+11. Progress reporting should emphasize closed verified work packets/issues, integrated focused PRs, remaining dependency edges, and exact release blockers—not raw commit count or whether the release PR itself has closed.
 
 ## Capability escalation and blocker handling
 
@@ -73,9 +74,9 @@ Before proposing a merge, run the checks supported by the affected workspace, in
 
 ## Change discipline
 
-- Keep changes scoped to the issue being implemented.
+- Keep changes scoped to the work packet being implemented.
 - Add or update tests with behavior changes.
 - Update architecture documentation when contracts or boundaries change.
 - Do not silently preserve obsolete code for compatibility; classify it as retain, refactor, replace, or archive.
 - Never weaken policy, approval, identity, or audit controls to make a test pass.
-- Prefer surgical PRs and frequent verified issue closure over cumulative mega-PRs.
+- Prefer focused PRs and frequent verified issue/work-packet closure over cumulative mega-PRs.
