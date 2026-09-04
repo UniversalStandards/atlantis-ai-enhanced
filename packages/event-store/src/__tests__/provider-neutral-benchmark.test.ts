@@ -115,6 +115,34 @@ describe("provider-neutral benchmark", () => {
     expect(result.attempts).toHaveLength(2);
   });
 
+  it("does not execute generation after the shared iteration budget is already exhausted", async () => {
+    const exhaustedContext = context(1);
+    exhaustedContext.usage.iterations = 1;
+    let generated = false;
+
+    await expect(
+      runBoundedBenchmark(
+        {
+          id: "budget-exhausted-v1",
+          version: "1",
+          workflowKind: "coding",
+          input: "fix",
+          passThreshold: 0.8,
+        },
+        exhaustedContext,
+        {
+          generate: async () => {
+            generated = true;
+            return "must-not-run";
+          },
+        },
+        { evaluate: async () => evaluation(1) },
+      ),
+    ).rejects.toThrow("no benchmark iteration budget remains");
+
+    expect(generated).toBe(false);
+  });
+
   it("does not convert an evaluator failure into a passing threshold result", async () => {
     const result = await runBoundedBenchmark(
       {
