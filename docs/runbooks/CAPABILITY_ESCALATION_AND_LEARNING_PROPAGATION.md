@@ -1,30 +1,31 @@
 # Capability Escalation and Learning Propagation Runbook
 
 ## Purpose
-Prevent projects from repeatedly rediscovering solutions when a connector, agent, API, or execution surface cannot directly complete an authorized task, while keeping implementation sliced into small independently verifiable units.
+Prevent projects from repeatedly rediscovering solutions when a connector, agent, API, or execution surface cannot directly complete an authorized task, while keeping implementation sliced into bounded independently verifiable work packets.
 
 ## Core rule
-A blocked execution path is not automatically a blocked objective. Search the authorized capability graph before escalating to a human. When implementation can proceed safely, prefer a surgical delegated issue over repeated status-only commentary.
+A blocked execution path is not automatically a blocked objective. Search the authorized capability graph before escalating to a human. When implementation can proceed safely, prefer a delegated bounded work packet over repeated status-only commentary.
 
 ## Default work decomposition procedure
 1. Inspect current canonical branch/head, open issues, PRs, CI, reviews, and dependency edges.
-2. Identify outcomes that have independent acceptance criteria.
-3. Create one surgical child issue per independently verifiable outcome. Link each to the parent sprint/meta issue.
-4. Record dependencies explicitly; do not serialize independent work unnecessarily.
-5. For implementation-heavy child issues, delegate to GitHub Copilot/coding agents when an authorized agent can perform the work safely.
-6. Require the delegated agent to start from current canonical ancestry rather than a stale candidate branch.
-7. Prefer one child issue → one focused branch → one focused PR.
+2. Identify outcomes that have independent acceptance and rollback boundaries.
+3. Create one bounded child issue/work packet per independently verifiable outcome. Do not split tightly coupled changes into artificial micro-issues when that would make testing or rollback less reliable.
+4. Link each work packet to the parent sprint/meta issue and record dependencies explicitly; do not serialize independent work unnecessarily.
+5. For implementation-heavy work packets, delegate to GitHub Copilot/coding agents when an authorized agent can perform the work safely.
+6. Require delegated work to start from current canonical ancestry rather than a stale candidate branch.
+7. Prefer one coherent work packet → one focused branch → one focused PR. A focused PR may close a small tightly coupled issue set when it shares one validation/rollback boundary.
 8. Independently verify diff, ancestry, tests, CI/security, and acceptance criteria.
-9. Integrate verified focused PRs in dependency order and close child issues immediately after evidence is complete.
-10. Update parent sprint progress from closed child issues and remaining dependency edges.
+9. Integrate verified focused PRs into `sprint/7-day-operational-alpha` in dependency order and close child issues/work packets promptly after evidence is complete.
+10. Treat PR #10 as the release/integration PR toward `main`, not as the default accumulation point for unrelated implementation work.
+11. Update parent sprint progress from closed verified work packets and remaining dependency edges.
 
-## PR scope guardrails
-- Target: <= 10 logical commits and <= 25 changed files.
-- Decomposition trigger: > 20 logical commits or > 50 changed files unless a documented exception explains why splitting increases risk.
+## PR reviewability guardrails
+- Planning heuristic: aim for roughly <=10 logical commits and <=25 changed files in a focused PR.
+- Decomposition review trigger: roughly >20 logical commits or >50 changed files. This is not an automatic rejection; document why a larger PR remains safer when keeping the change intact.
 - Generated artifacts, lockfiles, vendored files, or mechanical migrations may be counted separately, but their generated/mechanical nature must be stated and review evidence must remain bounded.
-- Never widen an existing PR merely because it is already open. New independent acceptance criteria normally means a new issue/PR.
-- If a PR becomes a mega-PR or badly diverges, freeze it as reference evidence, derive fresh surgical issues from current canonical HEAD, and transplant only proven focused deltas.
-- Do not use raw commit count as progress. Use closed verified issues and integrated focused PRs.
+- Never widen an existing PR merely because it is already open. New independent acceptance/rollback boundaries normally mean a new work packet and focused PR.
+- If a PR becomes a mega-PR or badly diverges, freeze it as reference evidence, derive fresh bounded work packets from current canonical HEAD, and transplant only proven focused deltas.
+- Do not use raw commit count as progress. Use closed verified issues/work packets and integrated focused PRs.
 
 ## Escalation ladder
 1. Reverify the current connector and permissions.
@@ -38,7 +39,7 @@ A blocked execution path is not automatically a blocked objective. Search the au
 A delegated issue must contain:
 - canonical repo/branch/parent issue context;
 - current verified canonical head and instruction to refresh/rebase from it before implementation;
-- one bounded objective;
+- one coherent bounded objective;
 - dependencies and explicit non-goals;
 - exact acceptance criteria;
 - existing contracts/validators/tests/harnesses to reuse;
@@ -51,13 +52,13 @@ A delegated issue must contain:
 - instruction to fail closed on insufficient authority;
 - instruction to reconcile canonical records.
 
-Assignment is not proof. Independently verify resulting commits, ancestry, settings, CI, security checks, reviews, traces, and repository state before closing the child issue.
+Assignment is not proof. Independently verify resulting commits, ancestry, settings, CI, security checks, reviews, traces, and repository state before closing the child issue/work packet.
 
 ## Parallelism rule
-Independent surgical issues may be delegated concurrently when they do not mutate the same authority boundary or create unsafe merge ordering. Use dependency links and canonical-head refresh instructions to prevent stale ancestry. Integrate one verified slice at a time and require later candidates to refresh onto the new canonical head before integration.
+Independent bounded work packets may be delegated concurrently when they do not mutate the same authority boundary or create unsafe merge ordering. Use dependency links and canonical-head refresh instructions to prevent stale ancestry. Integrate one verified slice at a time and require later candidates to refresh onto the new canonical head before integration.
 
 ## Architecture-gate handling
-A major architecture decision blocks only the mutation that depends on that unresolved choice. Continue provider-neutral contracts, deterministic conformance/failure-injection harnesses, reference/in-memory implementations for contract verification, ADR alternatives, reversible feature-gated scaffolding, CI/review/docs work, and independent surgical issues. Do not silently select providers, credentials, irreversible semantics, security-sensitive permissions, or deployment authority.
+A major architecture decision blocks only the mutation that depends on that unresolved choice. Continue provider-neutral contracts, deterministic conformance/failure-injection harnesses, reference/in-memory implementations for contract verification, ADR alternatives, reversible feature-gated scaffolding, CI/review/docs work, and independent bounded work packets. Do not silently select providers, credentials, irreversible semantics, security-sensitive permissions, or deployment authority.
 
 ## Learning propagation decision
 After any meaningful shortfall or improvement, classify the lesson:
@@ -83,12 +84,12 @@ Every new ATLANTIS-connected repository should bootstrap, at minimum:
 2. `.github/copilot-instructions.md` with repository-wide Copilot behavior.
 3. architecture decisions directory.
 4. operational runbooks directory.
-5. issue/PR templates that require acceptance evidence, surgical scope, and blocker escalation.
+5. issue/PR templates that require acceptance evidence, bounded scope, and blocker escalation.
 6. CI checks that enforce machine-verifiable invariants.
-7. a project status/readiness record identifying canonical sources of truth and child-issue progress.
+7. a project status/readiness record identifying canonical sources of truth and child-work progress.
 
 ## Review cadence
-At sprint boundaries and after material incidents, reconcile durable guidance. Remove contradictions, retire obsolete instructions, promote repeated manual checks into automation, ensure large open PRs are decomposed where practical, and ensure the canonical rule is referenced by narrower guidance rather than copied inconsistently.
+At sprint boundaries and after material incidents, reconcile durable guidance. Remove contradictions, retire obsolete instructions, promote repeated manual checks into automation, ensure oversized open PRs are decomposed where practical, and ensure the canonical rule is referenced by narrower guidance rather than copied inconsistently.
 
 ## Completion test
 Propagation is complete only when a newly launched agent/project can discover the lesson from durable sources without needing the original conversation.
