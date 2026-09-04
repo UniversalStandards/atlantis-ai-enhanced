@@ -6,25 +6,26 @@ This repository adopts `UniversalStandards/UniversalStandards` as the canonical 
 
 ## Default execution model: decompose, delegate, verify
 
-For implementation-heavy work, do not accumulate unrelated changes into a large long-lived PR. Start by decomposing the objective into surgical GitHub issues that can be completed and verified independently.
+For implementation-heavy work, do not accumulate unrelated changes into a large long-lived PR. Start by decomposing the objective into meaningful bounded work packets that can be completed and verified independently.
 
 Default flow:
 
 1. inspect live canonical state and dependency order;
-2. create/link a bounded issue for each independently verifiable outcome;
-3. delegate safe implementation-heavy issues to GitHub Copilot/coding agents when available and useful;
+2. create/link a bounded issue for each independently verifiable outcome, while avoiding artificial micro-issues;
+3. delegate safe implementation-heavy work to GitHub Copilot/coding agents when available and useful;
 4. give each agent exact canonical ref, objective, acceptance criteria, invariants, prohibited shortcuts, contracts/validators to reuse, and required evidence;
-5. prefer one issue → one focused branch → one focused PR;
+5. prefer one coherent work packet → one focused branch → one focused PR;
 6. independently review agent output, ancestry, tests, CI, security evidence, and acceptance criteria;
-7. integrate verified focused PRs in dependency order;
-8. close verified child issues promptly so progress is visible continuously;
-9. keep parent/meta issues as coordination and release-readiness views, not as containers for hundreds of implementation commits.
+7. integrate verified focused PRs into `sprint/7-day-operational-alpha` in dependency order;
+8. close verified child issues/work packets promptly so progress is visible continuously;
+9. keep parent/meta issues as coordination and release-readiness views;
+10. treat PR #10 as the release/integration PR toward `main`, not as the default accumulation point for unrelated implementation changes.
 
-### PR size discipline
+### PR reviewability discipline
 
-Target <= 10 logical commits and <= 25 changed files per focused PR. More than 20 logical commits or more than 50 changed files is a decomposition trigger unless a documented exception shows splitting would increase risk. Generated artifacts and mechanical migrations may be counted separately but still require bounded review evidence.
+Use reviewability and rollback boundaries rather than arbitrary hard caps. As a planning heuristic, aim for roughly <=10 logical commits and <=25 changed files in a focused PR. Crossing roughly 20 logical commits or 50 changed files triggers a decomposition review, not automatic rejection. Keep a larger PR intact only when splitting would increase coupling, invalidate meaningful testing, or make rollback less safe; document that rationale.
 
-If an existing PR becomes oversized, highly divergent, or contains multiple independently testable objectives, stop widening it. Preserve it as reference/evidence, create fresh surgical issues from current canonical HEAD, and transplant only focused proven deltas. Do not keep stacking fixes onto a mega-PR merely because it already exists.
+If an existing PR becomes oversized, highly divergent, or contains multiple independently testable objectives, stop widening it. Preserve it as reference/evidence, create fresh bounded work packets from current canonical HEAD, and transplant only focused proven deltas. Do not keep stacking fixes onto a mega-PR merely because it already exists.
 
 ## Capability-escalation rule
 
@@ -47,14 +48,14 @@ Never weaken security, policy, approval, review, identity, audit, or release con
 
 For work delegated through an issue:
 
-- define one bounded objective and canonical repository/branch/parent-issue context;
+- define one coherent bounded objective and canonical repository/branch/parent-issue context;
 - identify dependencies and the exact current canonical head to start from;
 - state exact acceptance criteria and evidence required;
 - state architectural/security invariants that must remain unchanged;
 - name existing contracts, validators, harnesses, fixtures, or tests to reuse;
 - state prohibited shortcuts, including creating parallel authority/persistence paths merely to make tests pass;
 - require the agent to inspect current state before changing anything;
-- require the smallest safe reversible change;
+- require the smallest safe reversible implementation that preserves a coherent validation/rollback boundary;
 - require tests/CI/security/release evidence appropriate to the change;
 - require a focused PR linked to the issue rather than adding unrelated work to an existing mega-PR;
 - require reconciliation of the canonical project/sprint records;
@@ -65,7 +66,7 @@ An issue assignment, agent statement, commit count, or passing candidate-branch 
 
 ## Progress accounting
 
-Use issue closure as the primary unit of visible delivery progress. Parent sprint issues should track child issues and dependency edges so completed work is reflected immediately. Report integrated focused PRs, closed child issues, exact CI/security evidence, and remaining blockers. Raw commit count is not a useful progress metric.
+Use verified issue/work-packet closure as the primary unit of visible delivery progress. Parent sprint issues should track child work packets and dependency edges so completed work is reflected immediately. Report integrated focused PRs, closed child issues, exact CI/security evidence, and remaining blockers. Raw commit count is not a useful progress metric.
 
 ## Learning propagation
 
@@ -73,6 +74,6 @@ When a project uncovers a reusable process failure or a materially better execut
 
 Portfolio-level lessons must be reviewed for promotion to `UniversalStandards/UniversalStandards`. Machine-verifiable lessons should become tests, evaluations, CI, policy evidence, or bootstrap conformance checks whenever practical.
 
-The canonical operational procedure and propagation matrix are in `docs/runbooks/CAPABILITY_ESCALATION_AND_LEARNING_PROPAGATION.md`. The architectural rationale for surgical work units is in `docs/decisions/ADR-SURGICAL-WORK-UNITS-AND-AGENT-DELEGATION.md`. Use `.github/ISSUE_TEMPLATE/agent-blocker-escalation.md` for blocked delegated handoffs and `.github/ISSUE_TEMPLATE/surgical-implementation.md` for ordinary implementation slices.
+The canonical operational procedure and propagation matrix are in `docs/runbooks/CAPABILITY_ESCALATION_AND_LEARNING_PROPAGATION.md`. The architectural rationale for bounded work packets is in `docs/decisions/ADR-SURGICAL-WORK-UNITS-AND-AGENT-DELEGATION.md`. Use `.github/ISSUE_TEMPLATE/agent-blocker-escalation.md` for blocked delegated handoffs and `.github/ISSUE_TEMPLATE/surgical-implementation.md` for ordinary focused implementation slices.
 
 Avoid duplicating contradictory copies. Maintain one canonical operational rule and reference it from narrower documents when practical.
