@@ -1,20 +1,32 @@
 import type { ExecutionEvent } from "./index.js";
 import {
   InvalidStepCompletionCommitError,
+  InvalidTerminalExecutionCommitError,
+  isTerminalExecutionEvent,
+  terminalExecutionEventsEqual,
   validateAttemptFailureCommit,
+  validateTerminalExecutionCommit,
   validateStepCompletionCommit,
   type AttemptFailureCommitRequest,
   type AttemptFailureCommitResult,
   type ResumableDurabilityPort,
   type StepCompletionCommitRequest,
   type StepCompletionCommitResult,
+  type TerminalExecutionCommitRequest,
+  type TerminalExecutionCommitResult,
+  type TerminalExecutionResultRecord,
+  type TerminalExecutionResultReference,
 } from "./step-completion-commit.js";
 import type { ExecutionEventCursor, WorkflowCheckpoint } from "./resumable-runner.js";
 
 export type StepCompletionFailurePoint =
   | "before_commit"
   | "after_validation_before_publish"
-  | "after_publish_before_ack";
+  | "after_publish_before_ack"
+  | "terminal_before_publication"
+  | "terminal_after_publication_before_ack"
+  | "terminal_before_retirement"
+  | "terminal_after_retirement_before_ack";
 
 export interface InMemoryStepCompletionCommitOptions {
   readonly failAt?: StepCompletionFailurePoint;
@@ -75,6 +87,7 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();
   private readonly events = new Map<string, ExecutionEvent[]>();
   private readonly eventCursors = new Map<string, ExecutionEventCursor>();
+  private readonly terminalResults = new Map<string, TerminalExecutionResultRecord>();
 
   public constructor(private readonly options: InMemoryStepCompletionCommitOptions = {}) {
     for (const checkpoint of options.initialCheckpoints ?? []) {
@@ -232,6 +245,83 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
     return result;
   }
 
+  public async commitTerminalExecution(
+    request: Readonly<TerminalExecutionCommitRequest>,
+  ): Promise<Readonly<TerminalExecutionCommitResult>> {
+    if (this.options.failAt === "terminal_before_publication") {
+      throw new Error("injected terminal failure before publication");
+    }
+
+    const executionId = request.terminalEvent.executionId;
+    const current = this.checkpoints.get(executionId);
+    assertExpectedRevision(current, request.expectedCheckpointRevision);
+    validateTerminalExecutionCommit(request, {
+      terminalEvent: request.terminalEvent,
+      eventSequence: request.terminalEvent.sequence,
+      eventId: request.terminalEvent.id,
+      checkpoint: undefined,
+    });
+    const stream = this.events.get(executionId) ?? [];
+    const existingTerminal = this.findTerminalEvent(executionId);
+
+    if (existingTerminal === undefined) {
+      const cursor = this.eventCursors.get(executionId) ?? { sequence: 0 };
+      assertEventExtendsCursor(request.terminalEvent, cursor, "terminal event");
+      stream.push(request.terminalEvent);
+      this.events.set(executionId, stream);
+      this.eventCursors.set(
+        executionId,
+        eventCursor(request.terminalEvent.sequence, request.terminalEvent.id),
+      );
+    } else if (!terminalExecutionEventsEqual(existingTerminal, request.terminalEvent)) {
+      throw new InvalidTerminalExecutionCommitError(
+        "execution already has different terminal evidence",
+      );
+    }
+
+    if (request.terminalResult !== undefined) {
+      this.terminalResults.set(
+        request.terminalResult.reference.reference,
+        structuredClone(request.terminalResult),
+      );
+    }
+
+    if (this.options.failAt === "terminal_after_publication_before_ack") {
+      throw new Error("injected terminal acknowledgement loss after publication");
+    }
+    if (this.options.failAt === "terminal_before_retirement") {
+      throw new Error("injected terminal failure before checkpoint retirement");
+    }
+
+    this.checkpoints.delete(executionId);
+
+    const result: TerminalExecutionCommitResult = {
+      terminalEvent: request.terminalEvent,
+      eventSequence: request.terminalEvent.sequence,
+      eventId: request.terminalEvent.id,
+      checkpoint: this.checkpoints.get(executionId),
+    };
+    validateTerminalExecutionCommit(request, result);
+
+    if (this.options.failAt === "terminal_after_retirement_before_ack") {
+      throw new Error("injected terminal acknowledgement loss after retirement");
+    }
+
+    return result;
+  }
+
+  public async loadTerminalEvent(executionId: string): Promise<ExecutionEvent<unknown> | undefined> {
+    const event = this.findTerminalEvent(executionId);
+    return event === undefined ? undefined : structuredClone(event);
+  }
+
+  public async loadTerminalResult(
+    reference: TerminalExecutionResultReference,
+  ): Promise<TerminalExecutionResultRecord | undefined> {
+    return structuredClone(this.terminalResults.get(reference.reference));
+  }
+
+
   public loadCheckpoint(executionId: string): WorkflowCheckpoint | undefined {
     const checkpoint = this.checkpoints.get(executionId);
     return checkpoint === undefined ? undefined : cloneCheckpoint(checkpoint);
@@ -249,6 +339,17 @@ export class InMemoryStepCompletionCommitPort implements ResumableDurabilityPort
       const event = events[index];
       if (event?.type === "workflow.step.completed") {
         return event as StepCompletionCommitRequest["completionEvent"];
+      }
+    }
+    return undefined;
+  }
+
+  private findTerminalEvent(executionId: string): ExecutionEvent<unknown> | undefined {
+    const events = this.events.get(executionId) ?? [];
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event !== undefined && isTerminalExecutionEvent(event)) {
+        return event;
       }
     }
     return undefined;

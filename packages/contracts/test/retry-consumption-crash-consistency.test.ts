@@ -259,6 +259,9 @@ describe("retry consumption crash consistency", () => {
       loadEventCursor: (id) => port.loadEventCursor(id),
       commitStepCompletion: (request) => port.commitStepCompletion(request),
       commitAttemptFailure: (request) => port.commitAttemptFailure(request),
+      commitTerminalExecution: (request) => port.commitTerminalExecution(request),
+      loadTerminalEvent: (id) => port.loadTerminalEvent(id),
+      loadTerminalResult: (reference) => port.loadTerminalResult(reference),
       append: async <T,>(event: ExecutionEvent<T>) => {
         const payload = event.payload as Partial<AttemptFailureEventPayload>;
         if (event.type === "workflow.step.attempt.failed" && payload.willRetry === true) {

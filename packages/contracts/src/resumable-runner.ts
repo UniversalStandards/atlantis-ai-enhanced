@@ -1,6 +1,7 @@
 import {
   assertWithinBudget,
   BudgetExceededError,
+  type ExecutionBudget,
   type EventSink,
   type ExecutionEvent,
   type ExecutionUsage,
@@ -28,7 +29,12 @@ import {
 } from "./execution-control.js";
 import { coordinateAtomicResumableCompletion } from "./resumable-completion-coordinator.js";
 import { commitAtomicAttemptFailure } from "./resumable-attempt-failure-transition.js";
-import type { ResumableDurabilityPort } from "./step-completion-commit.js";
+import {
+  terminalExecutionEventsEqual,
+  validateTerminalExecutionCommit,
+  type ResumableDurabilityPort,
+  type TerminalExecutionResultReference,
+} from "./step-completion-commit.js";
 
 export interface ResumableWorkflow<I, O> {
   readonly id: string;
@@ -298,6 +304,119 @@ function validateCheckpoint<I, O>(
   }
 }
 
+function terminalPayload(event: Readonly<ExecutionEvent<unknown>>): Record<string, unknown> {
+  if (event.payload === null || typeof event.payload !== "object" || Array.isArray(event.payload)) {
+    throw new InvalidCheckpointError("Terminal execution event payload is invalid");
+  }
+  return event.payload as Record<string, unknown>;
+}
+
+function readNumber(payload: Readonly<Record<string, unknown>>, field: string): number {
+  const value = payload[field];
+  if (!Number.isSafeInteger(value)) {
+    throw new InvalidCheckpointError(`Terminal execution event ${field} is invalid`);
+  }
+  return value as number;
+}
+
+function readTerminalUsage(payload: Readonly<Record<string, unknown>>): ExecutionUsage {
+  const usage = payload.usage;
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    throw new InvalidCheckpointError("Terminal execution event usage is invalid");
+  }
+  const candidate = usage as Partial<ExecutionUsage>;
+  for (const field of [
+    "toolCalls",
+    "retries",
+    "iterations",
+    "inputTokens",
+    "outputTokens",
+    "durationMs",
+    "costUsd",
+  ] as const) {
+    if (typeof candidate[field] !== "number" || !Number.isFinite(candidate[field])) {
+      throw new InvalidCheckpointError(`Terminal execution event usage ${field} is invalid`);
+    }
+  }
+  return candidate as ExecutionUsage;
+}
+
+function readResultReference(
+  payload: Readonly<Record<string, unknown>>,
+): TerminalExecutionResultReference {
+  const result = payload.result;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new InvalidCheckpointError("Completed terminal event result reference is invalid");
+  }
+  const reference = result as Partial<TerminalExecutionResultReference>;
+  if (
+    reference.kind !== "terminal-result-reference" ||
+    reference.version !== 1 ||
+    typeof reference.reference !== "string" ||
+    reference.reference.trim().length === 0
+  ) {
+    throw new InvalidCheckpointError("Completed terminal event result reference is invalid");
+  }
+  return reference as TerminalExecutionResultReference;
+}
+
+function validateTerminalPayloadVersion(payload: Readonly<Record<string, unknown>>): void {
+  if (payload.terminalSchemaVersion !== 1) {
+    throw new InvalidCheckpointError("Terminal execution event schema version is invalid");
+  }
+}
+
+async function restoreTerminalOutcome<O>(
+  event: Readonly<ExecutionEvent<unknown>>,
+  durability: ResumableDurabilityPort,
+  context: WorkflowContext,
+): Promise<O> {
+  const payload = terminalPayload(event);
+  validateTerminalPayloadVersion(payload);
+  restoreUsage(context.usage, readTerminalUsage(payload));
+  if (event.type === "execution.completed") {
+    const resultReference = readResultReference(payload);
+    const result = await durability.loadTerminalResult(resultReference);
+    if (result === undefined) {
+      throw new InvalidCheckpointError("Completed terminal result is unavailable");
+    }
+    return result.value as O;
+  }
+  if (event.type === "execution.cancelled") {
+    const reason = typeof payload.reason === "string" ? payload.reason : undefined;
+    throw new ExecutionCancelledError(reason);
+  }
+  if (event.type === "execution.timed_out") {
+    throw new ExecutionTimedOutError(
+      readNumber(payload, "deadlineAtMs"),
+      readNumber(payload, "observedAtMs"),
+    );
+  }
+  if (event.type === "execution.failed") {
+    if (payload.reason === "approval_rejected") {
+      throw new ApprovalRejectedError(payload.approval as ResolvedApproval);
+    }
+    if (payload.reason === "retry_budget_exhausted") {
+      throw new RetryBudgetExhaustedError(
+        payload.stepId as string,
+        readNumber(payload, "stepIndex"),
+        readNumber(payload, "consumedAttempts"),
+        readNumber(payload, "maxRetries"),
+      );
+    }
+    if (payload.reason === "budget_exceeded") {
+      throw new BudgetExceededError(
+        payload.dimension as keyof ExecutionBudget,
+        readNumber(payload, "limit"),
+        readNumber(payload, "observed"),
+      );
+    }
+    const error = typeof payload.error === "string" ? payload.error : "Execution failed";
+    throw new Error(error);
+  }
+  throw new InvalidCheckpointError("Execution terminal event type is invalid");
+}
+
 function requireDurability(options: Readonly<ResumableRunnerOptions>): ResumableDurabilityPort {
   if (options.durability === undefined) {
     throw new InvalidCheckpointError(
@@ -336,6 +455,21 @@ export class ResumableSequentialWorkflowRunner {
       );
     }
 
+    const terminalEvent = await durability.loadTerminalEvent(context.executionId);
+    if (terminalEvent !== undefined) {
+      if (loaded !== undefined) {
+        await durability
+          .commitTerminalExecution({
+            terminalEvent,
+            checkpoint: loaded,
+            expectedCheckpointRevision: loaded.revision,
+            completedStepIds: loaded.completedStepIds,
+          })
+          .catch(() => undefined);
+      }
+      return restoreTerminalOutcome<O>(terminalEvent, durability, context);
+    }
+
     let checkpoint = loaded;
     let value: unknown = checkpoint?.value ?? workflow.mapInput?.(input) ?? input;
     let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
@@ -345,9 +479,9 @@ export class ResumableSequentialWorkflowRunner {
     let sequence = cursor.sequence;
     let parentEventId = cursor.parentEventId;
 
-    const append = async <T>(type: ExecutionEvent<T>["type"], payload: T): Promise<void> => {
+    const createEvent = <T>(type: ExecutionEvent<T>["type"], payload: T): ExecutionEvent<T> => {
       const id = this.options.nextEventId();
-      const event: ExecutionEvent<T> = {
+      return {
         id,
         executionId: context.executionId,
         sequence: sequence + 1,
@@ -357,9 +491,13 @@ export class ResumableSequentialWorkflowRunner {
         ...(parentEventId === undefined ? {} : { parentEventId }),
         payload,
       };
+    };
+
+    const append = async <T>(type: ExecutionEvent<T>["type"], payload: T): Promise<void> => {
+      const event = createEvent(type, payload);
       await durability.append(event);
       sequence = event.sequence;
-      parentEventId = id;
+      parentEventId = event.id;
     };
 
     const saveCheckpoint = async (): Promise<void> => {
@@ -380,6 +518,60 @@ export class ResumableSequentialWorkflowRunner {
         },
         checkpoint?.revision,
       );
+    };
+
+    const completedPrefix = (): readonly string[] =>
+      workflow.steps.slice(0, nextStepIndex).map((item) => item.id);
+
+    const commitTerminal = async <T extends Record<string, unknown>>(
+      type: ExecutionEvent<T & { readonly completedStepIds: readonly string[] }>["type"],
+      payload: T,
+      terminalResult?: { readonly value: unknown },
+    ): Promise<void> => {
+      const completedStepIds = completedPrefix();
+      const resultReference: TerminalExecutionResultReference = {
+        kind: "terminal-result-reference",
+        version: 1,
+        reference: `${context.executionId}:terminal-result:${sequence + 1}`,
+      };
+      const event = createEvent(type, {
+        ...payload,
+        terminalSchemaVersion: 1,
+        usage: copyUsage(context.usage),
+        completedStepIds,
+        ...(terminalResult === undefined ? {} : { result: resultReference }),
+      });
+      const request = {
+        terminalEvent: event as ExecutionEvent<unknown>,
+        checkpoint,
+        expectedCheckpointRevision: checkpoint?.revision,
+        completedStepIds,
+        ...(terminalResult === undefined
+          ? {}
+          : {
+              terminalResult: {
+                reference: resultReference,
+                value: terminalResult.value,
+              },
+            }),
+      } as const;
+
+      try {
+        const result = await durability.commitTerminalExecution(request);
+        validateTerminalExecutionCommit(request, result);
+        checkpoint = result.checkpoint;
+        sequence = result.eventSequence;
+        parentEventId = result.eventId;
+      } catch (error) {
+        const published = await durability.loadTerminalEvent(context.executionId);
+        if (published !== undefined && terminalExecutionEventsEqual(published, event)) {
+          sequence = published.sequence;
+          parentEventId = published.id;
+          checkpoint = await durability.load(context.executionId);
+          return;
+        }
+        throw error;
+      }
     };
 
     await append("execution.started", {
@@ -631,71 +823,58 @@ export class ResumableSequentialWorkflowRunner {
 
       assertWithinBudget(context);
       const output = workflow.mapOutput ? workflow.mapOutput(value) : (value as O);
-      await append("execution.completed", {
+      await commitTerminal("execution.completed", {
         workflowId: workflow.id,
         completedSteps: workflow.steps.length,
-      });
-
-      if (checkpoint !== undefined) {
-        await durability.clear(context.executionId, checkpoint.revision);
-      }
+      }, { value: output });
       return output;
     } catch (error) {
       if (error instanceof ApprovalRequiredError) {
         throw error;
       }
       if (error instanceof ApprovalRejectedError) {
-        if (checkpoint !== undefined) {
-          await durability.clear(context.executionId, checkpoint.revision);
-          checkpoint = undefined;
-        }
-        await append("execution.failed", {
+        await commitTerminal("execution.failed", {
           workflowId: workflow.id,
           reason: "approval_rejected",
           approvalId: error.approval.request.approvalId,
           stepId: error.approval.request.stepId,
+          approval: error.approval,
         });
       } else if (error instanceof ExecutionCancelledError) {
-        if (checkpoint !== undefined) {
-          await durability.clear(context.executionId, checkpoint.revision);
-          checkpoint = undefined;
-        }
-        await append("execution.cancelled", {
+        await commitTerminal("execution.cancelled", {
           workflowId: workflow.id,
           reason: error.reason,
           nextStepIndex,
         });
       } else if (error instanceof ExecutionTimedOutError) {
-        if (checkpoint !== undefined) {
-          await durability.clear(context.executionId, checkpoint.revision);
-          checkpoint = undefined;
-        }
-        await append("execution.timed_out", {
+        await commitTerminal("execution.timed_out", {
           workflowId: workflow.id,
           deadlineAtMs: error.deadlineAtMs,
           observedAtMs: error.observedAtMs,
           nextStepIndex,
         });
       } else if (error instanceof RetryBudgetExhaustedError) {
-        // The checkpoint is deliberately retained: it is the authoritative
-        // proof that this step already spent its attempts. Clearing it would
-        // let a restart begin the workflow again with a fresh budget.
-        await append("execution.failed", {
+        // Exhaustion is terminal, so it is published and retired through the
+        // same authoritative terminal transition as every other terminal
+        // disposition. Recovery then replays that evidence instead of granting
+        // the step another execution.
+        await commitTerminal("execution.failed", {
           workflowId: workflow.id,
           reason: "retry_budget_exhausted",
           stepId: error.stepId,
           stepIndex: error.stepIndex,
+          consumedAttempts: error.consumedAttempts,
+          maxRetries: error.maxRetries,
           error: error.message,
         });
       } else if (error instanceof BudgetExceededError) {
-        if (checkpoint !== undefined) {
-          await durability.clear(context.executionId, checkpoint.revision);
-          checkpoint = undefined;
-        }
-        await append("execution.failed", {
+        await commitTerminal("execution.failed", {
           workflowId: workflow.id,
           reason: "budget_exceeded",
           error: error.message,
+          dimension: error.dimension,
+          limit: error.limit,
+          observed: error.observed,
         });
       } else {
         const authoritativeCursor = await durability.loadEventCursor(context.executionId);

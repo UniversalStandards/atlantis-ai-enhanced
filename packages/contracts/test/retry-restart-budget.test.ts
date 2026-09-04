@@ -146,10 +146,14 @@ describe("durable retry accounting", () => {
         RetryBudgetExhaustedError,
       );
       expect(calls).toBe(2);
-      expect(resumedContext.usage.retries).toBe(1);
     }
 
-    expect(checkpoints.checkpoint?.usage.retries).toBe(1);
+    // Exhaustion is terminal, so the checkpoint is retired and the durable
+    // terminal evidence is what every later restart replays.
+    expect(checkpoints.checkpoint).toBeUndefined();
+    expect(
+      events.events.filter((event) => event.type === "execution.failed"),
+    ).toHaveLength(1);
     expect(
       events.events
         .filter((event) => event.type === "workflow.step.attempt.started")

@@ -20,6 +20,48 @@ export interface StepCompletionCommitResult {
   readonly eventId: string;
 }
 
+export type TerminalExecutionEventType = Extract<
+  ExecutionEvent["type"],
+  "execution.completed" | "execution.failed" | "execution.cancelled" | "execution.timed_out"
+>;
+
+export interface TerminalExecutionCommitRequest {
+  readonly terminalEvent: ExecutionEvent<unknown>;
+  readonly checkpoint: WorkflowCheckpoint | undefined;
+  readonly expectedCheckpointRevision: number | undefined;
+  readonly completedStepIds: readonly string[];
+  readonly terminalResult?: TerminalExecutionResultRecord;
+}
+
+export interface TerminalExecutionCommitResult {
+  readonly terminalEvent: ExecutionEvent<unknown>;
+  readonly eventSequence: number;
+  readonly eventId: string;
+  readonly checkpoint: WorkflowCheckpoint | undefined;
+}
+
+export interface TerminalExecutionResultReference {
+  readonly kind: "terminal-result-reference";
+  readonly version: 1;
+  readonly reference: string;
+}
+
+export interface TerminalExecutionResultRecord {
+  readonly reference: TerminalExecutionResultReference;
+  readonly value: unknown;
+}
+
+export interface TerminalExecutionPayloadBase {
+  readonly terminalSchemaVersion: 1;
+  readonly workflowId: string;
+  readonly completedStepIds: readonly string[];
+  readonly usage: ExecutionUsage;
+}
+
+export interface TerminalExecutionCompletedPayload extends TerminalExecutionPayloadBase {
+  readonly result: TerminalExecutionResultReference;
+}
+
 /**
  * Provider-neutral durability boundary for a completed workflow step.
  *
@@ -75,6 +117,16 @@ export interface AttemptFailureCommitPort {
   ): Promise<Readonly<AttemptFailureCommitResult>>;
 }
 
+export interface TerminalExecutionCommitPort {
+  commitTerminalExecution(
+    request: Readonly<TerminalExecutionCommitRequest>,
+  ): Promise<Readonly<TerminalExecutionCommitResult>>;
+  loadTerminalEvent(executionId: string): Promise<ExecutionEvent<unknown> | undefined>;
+  loadTerminalResult(
+    reference: TerminalExecutionResultReference,
+  ): Promise<TerminalExecutionResultRecord | undefined>;
+}
+
 /**
  * Authoritative provider-neutral persistence boundary used by resumable
  * execution. The same consistency domain owns ordinary execution events,
@@ -90,6 +142,7 @@ export interface ResumableDurabilityPort
   extends CheckpointStore,
     StepCompletionCommitPort,
     AttemptFailureCommitPort,
+    TerminalExecutionCommitPort,
     EventSink {
   loadEventCursor(executionId: string): Promise<ExecutionEventCursor>;
 }
@@ -98,6 +151,13 @@ export class InvalidStepCompletionCommitError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "InvalidStepCompletionCommitError";
+  }
+}
+
+export class InvalidTerminalExecutionCommitError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidTerminalExecutionCommitError";
   }
 }
 
@@ -385,4 +445,189 @@ export function validateAttemptFailureCommit(
     );
   }
   return committed;
+}
+
+export function isTerminalExecutionEvent(
+  event: Readonly<ExecutionEvent<unknown>>,
+): event is ExecutionEvent<unknown> & { readonly type: TerminalExecutionEventType } {
+  return (
+    event.type === "execution.completed" ||
+    event.type === "execution.failed" ||
+    event.type === "execution.cancelled" ||
+    event.type === "execution.timed_out"
+  );
+}
+
+export function terminalExecutionEventsEqual(
+  left: Readonly<ExecutionEvent<unknown>>,
+  right: Readonly<ExecutionEvent<unknown>>,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.executionId === right.executionId &&
+    left.sequence === right.sequence &&
+    left.type === right.type &&
+    left.occurredAt === right.occurredAt &&
+    left.actor === right.actor &&
+    left.parentEventId === right.parentEventId &&
+    sameCheckpointValue(left.payload, right.payload)
+  );
+}
+
+function payloadCompletedStepIds(event: Readonly<ExecutionEvent<unknown>>): readonly string[] {
+  const payload = terminalPayload(event);
+  validateTerminalSchema(payload);
+  return payload.completedStepIds;
+}
+
+function terminalPayload(
+  event: Readonly<ExecutionEvent<unknown>>,
+): TerminalExecutionPayloadBase & Record<string, unknown> {
+  const payload = event.payload;
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal event payload must be a versioned object",
+    );
+  }
+  return payload as TerminalExecutionPayloadBase & Record<string, unknown>;
+}
+
+function validateTerminalSchema(
+  payload: Readonly<TerminalExecutionPayloadBase & Record<string, unknown>>,
+): void {
+  if (payload.terminalSchemaVersion !== 1) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal event payload schema version is invalid",
+    );
+  }
+  if (typeof payload.workflowId !== "string" || payload.workflowId.length === 0) {
+    throw new InvalidTerminalExecutionCommitError("terminal event workflowId is invalid");
+  }
+  const completedStepIds = payload.completedStepIds;
+  if (
+    !Array.isArray(completedStepIds) ||
+    completedStepIds.some((stepId) => typeof stepId !== "string" || stepId.length === 0)
+  ) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal event payload completedStepIds must be a string prefix array",
+    );
+  }
+  validateUsage(payload.usage);
+}
+
+function validateUsage(usage: ExecutionUsage): void {
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    throw new InvalidTerminalExecutionCommitError("terminal event usage is invalid");
+  }
+  for (const field of [
+    "toolCalls",
+    "retries",
+    "iterations",
+    "inputTokens",
+    "outputTokens",
+    "durationMs",
+    "costUsd",
+  ] as const) {
+    const value = usage[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new InvalidTerminalExecutionCommitError(
+        `terminal event usage ${field} is invalid`,
+      );
+    }
+  }
+}
+
+function validateTerminalResultReference(
+  reference: Readonly<TerminalExecutionResultReference>,
+): void {
+  if (
+    reference === null ||
+    typeof reference !== "object" ||
+    reference.kind !== "terminal-result-reference" ||
+    reference.version !== 1 ||
+    typeof reference.reference !== "string" ||
+    reference.reference.trim().length === 0
+  ) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal result reference is invalid",
+    );
+  }
+}
+
+export function validateTerminalExecutionCommit(
+  request: Readonly<TerminalExecutionCommitRequest>,
+  result: Readonly<TerminalExecutionCommitResult>,
+): ExecutionEvent<unknown> {
+  const event = request.terminalEvent;
+  if (!isTerminalExecutionEvent(event)) {
+    throw new InvalidTerminalExecutionCommitError("terminal execution event type is invalid");
+  }
+  const payload = terminalPayload(event);
+  validateTerminalSchema(payload);
+  if (event.type === "execution.completed") {
+    const result = payload.result as TerminalExecutionResultReference | undefined;
+    if (result === undefined) {
+      throw new InvalidTerminalExecutionCommitError(
+        "completed terminal event requires a result reference",
+      );
+    }
+    validateTerminalResultReference(result);
+    if (request.terminalResult === undefined) {
+      throw new InvalidTerminalExecutionCommitError(
+        "completed terminal transition requires protected result persistence",
+      );
+    }
+    validateTerminalResultReference(request.terminalResult.reference);
+    if (!sameCheckpointValue(request.terminalResult.reference, result)) {
+      throw new InvalidTerminalExecutionCommitError(
+        "terminal result record must match completed event reference",
+      );
+    }
+  } else if (request.terminalResult !== undefined) {
+    throw new InvalidTerminalExecutionCommitError(
+      "only completed terminal transitions may persist a result",
+    );
+  }
+  if (request.checkpoint === undefined && request.expectedCheckpointRevision !== undefined) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal execution without checkpoint cannot expect a checkpoint revision",
+    );
+  }
+  if (
+    request.checkpoint !== undefined &&
+    request.checkpoint.revision !== request.expectedCheckpointRevision
+  ) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal execution expected checkpoint revision does not match checkpoint",
+    );
+  }
+  if (!sameCompletedStepIds(payloadCompletedStepIds(event), request.completedStepIds)) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal event completedStepIds does not match requested completed prefix",
+    );
+  }
+  if (
+    request.checkpoint !== undefined &&
+    (!sameCompletedStepIds(request.checkpoint.completedStepIds, request.completedStepIds) ||
+      request.checkpoint.executionId !== event.executionId)
+  ) {
+    throw new InvalidTerminalExecutionCommitError(
+      "terminal event must preserve the active checkpoint execution prefix",
+    );
+  }
+  if (
+    !terminalExecutionEventsEqual(result.terminalEvent, event) ||
+    result.eventSequence !== event.sequence ||
+    result.eventId !== event.id
+  ) {
+    throw new InvalidTerminalExecutionCommitError(
+      "acknowledged terminal event does not match requested terminal transition",
+    );
+  }
+  if (result.checkpoint !== undefined) {
+    throw new InvalidTerminalExecutionCommitError(
+      "acknowledged terminal transition must retire the checkpoint",
+    );
+  }
+  return result.terminalEvent;
 }

@@ -107,4 +107,100 @@ describe("InMemoryStepCompletionCommitPort resumed transition", () => {
     expect(port.loadCompletionEvent("execution-1")).toBeUndefined();
     await expect(port.loadEventCursor("execution-1")).resolves.toEqual({ sequence: 0 });
   });
+
+  it("publishes terminal evidence and retires the checkpoint in one authority", async () => {
+    const initial: WorkflowCheckpoint = {
+      executionId: "execution-1",
+      workflowId: "recovery-workflow",
+      workflowVersion: "1",
+      nextStepIndex: 1,
+      completedStepIds: ["first"],
+      value: 3,
+      usage: usage(1),
+      lastEventSequence: 4,
+      parentEventId: "event-4",
+      revision: 1,
+    };
+    const terminalEvent: ExecutionEvent<unknown> = {
+      id: "event-5",
+      executionId: "execution-1",
+      sequence: 5,
+      type: "execution.cancelled",
+      occurredAt: "2026-09-02T19:00:00.000Z",
+      actor: "runner",
+      parentEventId: "event-4",
+      payload: {
+        terminalSchemaVersion: 1,
+        workflowId: "recovery-workflow",
+        reason: "operator cancelled",
+        nextStepIndex: 1,
+        completedStepIds: ["first"],
+        usage: usage(1),
+      },
+    };
+    const port = new InMemoryStepCompletionCommitPort({ initialCheckpoints: [initial] });
+
+    await expect(
+      port.commitTerminalExecution({
+        terminalEvent,
+        checkpoint: initial,
+        expectedCheckpointRevision: 1,
+        completedStepIds: ["first"],
+      }),
+    ).resolves.toMatchObject({
+      terminalEvent,
+      eventSequence: 5,
+      eventId: "event-5",
+      checkpoint: undefined,
+    });
+    expect(port.loadCheckpoint("execution-1")).toBeUndefined();
+    await expect(port.loadTerminalEvent("execution-1")).resolves.toEqual(terminalEvent);
+  });
+
+  it("keeps terminal evidence and checkpoint after post-publication acknowledgement loss", async () => {
+    const initial: WorkflowCheckpoint = {
+      executionId: "execution-1",
+      workflowId: "recovery-workflow",
+      workflowVersion: "1",
+      nextStepIndex: 1,
+      completedStepIds: ["first"],
+      value: 3,
+      usage: usage(1),
+      lastEventSequence: 4,
+      parentEventId: "event-4",
+      revision: 1,
+    };
+    const terminalEvent: ExecutionEvent<unknown> = {
+      id: "event-5",
+      executionId: "execution-1",
+      sequence: 5,
+      type: "execution.cancelled",
+      occurredAt: "2026-09-02T19:00:00.000Z",
+      actor: "runner",
+      parentEventId: "event-4",
+      payload: {
+        terminalSchemaVersion: 1,
+        workflowId: "recovery-workflow",
+        reason: "operator cancelled",
+        nextStepIndex: 1,
+        completedStepIds: ["first"],
+        usage: usage(1),
+      },
+    };
+    const port = new InMemoryStepCompletionCommitPort({
+      failAt: "terminal_after_publication_before_ack",
+      initialCheckpoints: [initial],
+    });
+
+    await expect(
+      port.commitTerminalExecution({
+        terminalEvent,
+        checkpoint: initial,
+        expectedCheckpointRevision: 1,
+        completedStepIds: ["first"],
+      }),
+    ).rejects.toThrow("injected terminal acknowledgement loss after publication");
+    expect(port.loadCheckpoint("execution-1")).toEqual(initial);
+    await expect(port.loadTerminalEvent("execution-1")).resolves.toEqual(terminalEvent);
+  });
 });
