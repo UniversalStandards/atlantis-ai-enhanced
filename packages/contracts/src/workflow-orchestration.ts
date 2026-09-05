@@ -1,4 +1,5 @@
 import {
+  BudgetExceededError,
   assertWithinBudget,
   type EventSink,
   type ExecutionEvent,
@@ -126,6 +127,8 @@ export interface OrchestrateWorkflowRequest<I, O> {
   readonly events: EventSink;
   readonly supervisorFactory?: SupervisorFactory<I, O>;
   readonly returnToWorkflow?: ReturnToWorkflowHandler<O>;
+  /** Injectable evidence clock. Defaults to wall clock; tests/harnesses should provide a deterministic clock. */
+  readonly now?: () => Date;
 }
 
 export async function orchestrateWorkflow<I, O>(
@@ -133,10 +136,10 @@ export async function orchestrateWorkflow<I, O>(
 ): Promise<O> {
   const workflow = request.registry.get<I, O>(request.workflowId, request.workflowVersion);
   assertContextIdentity(workflow, request.context);
-  assertWithinBudget(request.context);
 
   let sequence = 0;
   let parentEventId: string | undefined;
+  const now = request.now ?? (() => new Date());
   const append = async <T>(type: ExecutionEvent<T>["type"], payload: T): Promise<void> => {
     sequence += 1;
     const id = `${request.context.executionId}:${sequence}`;
@@ -145,13 +148,44 @@ export async function orchestrateWorkflow<I, O>(
       executionId: request.context.executionId,
       sequence,
       type,
-      occurredAt: new Date(0).toISOString(),
+      occurredAt: now().toISOString(),
       actor: "workflow-orchestrator",
       ...(parentEventId ? { parentEventId } : {}),
       payload,
     });
     parentEventId = id;
   };
+
+  const appendFailure = async (phase: string, error: unknown): Promise<void> => {
+    const normalized = normalizeError(error);
+    await append("execution.failed", {
+      workflowId: workflow.id,
+      workflowVersion: workflow.version,
+      phase,
+      error: normalized,
+    });
+  };
+
+  const assertBudget = async (phase: string): Promise<void> => {
+    try {
+      assertWithinBudget(request.context);
+    } catch (error) {
+      if (error instanceof BudgetExceededError) {
+        await append("budget.exceeded", {
+          workflowId: workflow.id,
+          workflowVersion: workflow.version,
+          phase,
+          dimension: error.dimension,
+          limit: error.limit,
+          observed: error.observed,
+        });
+      }
+      await appendFailure(phase, error);
+      throw error;
+    }
+  };
+
+  await assertBudget("preflight");
 
   const decision = decideWorkflowRoute(
     workflow as WorkflowDefinition<unknown, unknown>,
@@ -160,65 +194,101 @@ export async function orchestrateWorkflow<I, O>(
   await append("execution.started", { route: decision });
 
   if (decision.route === "supervisor") {
-    throw new SupervisorResolutionError(
+    const error = new SupervisorResolutionError(
       "Supervisor-only execution requires an explicit supervisor entry contract; implicit workflow bypass is prohibited",
     );
+    await appendFailure("route", error);
+    throw error;
   }
 
+  let workflowOutput: O;
   try {
-    const output = await workflow.run(request.input, request.context);
-    assertWithinBudget(request.context);
-    await append("execution.completed", {
-      workflowId: workflow.id,
-      workflowVersion: workflow.version,
-      returnedFromSupervisor: false,
-    });
-    return output;
+    workflowOutput = await workflow.run(request.input, request.context);
   } catch (error) {
     if (!(error instanceof UnhandledWorkflowConditionError) || decision.route !== "hybrid") {
+      await appendFailure("workflow", error);
       throw error;
     }
+    return handleHybridEscalation(error);
+  }
 
+  await assertBudget("workflow.completed");
+  await append("execution.completed", {
+    workflowId: workflow.id,
+    workflowVersion: workflow.version,
+    returnedFromSupervisor: false,
+  });
+  return workflowOutput;
+
+  async function handleHybridEscalation(
+    condition: UnhandledWorkflowConditionError<I>,
+  ): Promise<O> {
     const factory = request.supervisorFactory;
     const returnToWorkflow = request.returnToWorkflow;
     if (!factory) {
-      throw new SupervisorResolutionError("Hybrid escalation requires an explicit supervisor factory");
+      const error = new SupervisorResolutionError(
+        "Hybrid escalation requires an explicit supervisor factory",
+      );
+      await appendFailure("supervisor.configuration", error);
+      throw error;
     }
     if (!returnToWorkflow) {
-      throw new SupervisorResolutionError(
+      const error = new SupervisorResolutionError(
         "Hybrid escalation requires an explicit return-to-workflow handler",
       );
+      await appendFailure("supervisor.configuration", error);
+      throw error;
     }
 
     await append("supervisor.escalated", {
       workflowId: workflow.id,
       workflowVersion: workflow.version,
-      reason: error.reason,
+      reason: condition.reason,
     });
 
-    assertWithinBudget(request.context);
-    const resolution = await factory(error).resolve(request.context);
-    assertWithinBudget(request.context);
+    await assertBudget("supervisor.preflight");
+
+    let resolution: SupervisorResolution<O>;
+    try {
+      resolution = await factory(condition).resolve(request.context);
+    } catch (error) {
+      await appendFailure("supervisor.resolve", error);
+      throw error;
+    }
+
+    await assertBudget("supervisor.resolved");
 
     if (
       resolution.workflowId !== workflow.id ||
       resolution.workflowVersion !== workflow.version
     ) {
-      throw new WorkflowReturnMismatchError(
+      const error = new WorkflowReturnMismatchError(
         workflow.id,
         workflow.version,
         resolution.workflowId,
         resolution.workflowVersion,
       );
+      await appendFailure("supervisor.return-validation", error);
+      throw error;
     }
 
+    // Persist the complete provider-neutral resolution before claiming a return-to-workflow boundary.
+    // EventSink implementations provide the durable/replayable evidence contract; no parallel store is added here.
     await append("supervisor.returned", {
       workflowId: resolution.workflowId,
       workflowVersion: resolution.workflowVersion,
+      resolution: resolution.output,
     });
 
-    const output = await returnToWorkflow(resolution.output, request.context);
-    assertWithinBudget(request.context);
+    let output: O;
+    try {
+      output = await returnToWorkflow(resolution.output, request.context);
+    } catch (error) {
+      await appendFailure("workflow.return", error);
+      throw error;
+    }
+
+    await assertBudget("workflow.returned");
     await append("execution.completed", {
       workflowId: workflow.id,
       workflowVersion: workflow.version,
@@ -240,4 +310,11 @@ function assertContextIdentity<I, O>(
       context.workflowVersion,
     );
   }
+}
+
+function normalizeError(error: unknown): { readonly name: string; readonly message: string } {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  return { name: "Error", message: String(error) };
 }
