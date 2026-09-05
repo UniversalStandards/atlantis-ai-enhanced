@@ -13,7 +13,9 @@ import {
   WorkflowRegistrationConflictError,
   WorkflowReturnMismatchError,
   orchestrateWorkflow,
-} from "../src/workflow-orchestration.js";
+} from "../src/index.js";
+
+const FIXED_TIME = "2026-09-05T07:30:00.000Z";
 
 function context(mode: WorkflowContext["mode"] = "workflow"): WorkflowContext {
   return {
@@ -65,6 +67,10 @@ function workflow(run: WorkflowDefinition<string, string>["run"]): WorkflowDefin
   };
 }
 
+function now(): Date {
+  return new Date(FIXED_TIME);
+}
+
 describe("VersionedWorkflowRegistry", () => {
   it("performs exact version lookup and rejects conflicting registration", () => {
     const registry = new VersionedWorkflowRegistry();
@@ -78,7 +84,7 @@ describe("VersionedWorkflowRegistry", () => {
 });
 
 describe("orchestrateWorkflow", () => {
-  it("completes a deterministic registered workflow and records route/completion", async () => {
+  it("completes a registered workflow with deterministic, non-epoch audit time", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(workflow(async (input) => `ok:${input}`));
     const evidence = sink();
@@ -91,6 +97,7 @@ describe("orchestrateWorkflow", () => {
         input: "alpha",
         context: context("workflow"),
         events: evidence.sink,
+        now,
       }),
     ).resolves.toBe("ok:alpha");
 
@@ -98,9 +105,10 @@ describe("orchestrateWorkflow", () => {
       "execution.started",
       "execution.completed",
     ]);
+    expect(evidence.events.every((event) => event.occurredAt === FIXED_TIME)).toBe(true);
   });
 
-  it("escalates an unhandled hybrid condition and executes explicit return-to-workflow before completion", async () => {
+  it("persists supervisor resolution before explicit return-to-workflow completion", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(
       workflow(async (input) => {
@@ -118,6 +126,7 @@ describe("orchestrateWorkflow", () => {
         input: "beta",
         context: context("hybrid"),
         events: evidence.sink,
+        now,
         supervisorFactory: (condition) => ({
           reason: condition.reason,
           input: condition.input,
@@ -143,10 +152,15 @@ describe("orchestrateWorkflow", () => {
       "supervisor.returned",
       "execution.completed",
     ]);
+    expect(evidence.events[2]?.payload).toMatchObject({
+      workflowId: "demo",
+      workflowVersion: "1.0.0",
+      resolution: "supervised:beta",
+    });
     expect(evidence.events[3]?.parentEventId).toBe(evidence.events[2]?.id);
   });
 
-  it("fails closed on mismatched supervisor return without invoking workflow return or success evidence", async () => {
+  it("fails closed on mismatched supervisor return with terminal failure evidence", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(
       workflow(async (input) => {
@@ -164,6 +178,7 @@ describe("orchestrateWorkflow", () => {
         input: "gamma",
         context: context("hybrid"),
         events: evidence.sink,
+        now,
         supervisorFactory: (condition) => ({
           reason: condition.reason,
           input: condition.input,
@@ -184,10 +199,11 @@ describe("orchestrateWorkflow", () => {
 
     expect(returned).toBe(false);
     expect(evidence.events.some((event) => event.type === "supervisor.returned")).toBe(false);
+    expect(evidence.events.at(-1)?.type).toBe("execution.failed");
     expect(evidence.events.some((event) => event.type === "execution.completed")).toBe(false);
   });
 
-  it("does not convert supervisor failure into return/completion success", async () => {
+  it("records supervisor failure without return/completion success", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(
       workflow(async (input) => {
@@ -204,6 +220,7 @@ describe("orchestrateWorkflow", () => {
         input: "delta",
         context: context("hybrid"),
         events: evidence.sink,
+        now,
         supervisorFactory: (condition) => ({
           reason: condition.reason,
           input: condition.input,
@@ -218,10 +235,11 @@ describe("orchestrateWorkflow", () => {
     ).rejects.toBeInstanceOf(SupervisorResolutionError);
 
     expect(evidence.events.some((event) => event.type === "supervisor.returned")).toBe(false);
+    expect(evidence.events.at(-1)?.type).toBe("execution.failed");
     expect(evidence.events.some((event) => event.type === "execution.completed")).toBe(false);
   });
 
-  it("requires an explicit return-to-workflow handler for hybrid escalation", async () => {
+  it("requires an explicit return-to-workflow handler and records the configuration failure", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(
       workflow(async (input) => {
@@ -238,6 +256,7 @@ describe("orchestrateWorkflow", () => {
         input: "eta",
         context: context("hybrid"),
         events: evidence.sink,
+        now,
         supervisorFactory: (condition) => ({
           reason: condition.reason,
           input: condition.input,
@@ -252,10 +271,13 @@ describe("orchestrateWorkflow", () => {
       }),
     ).rejects.toThrow(/return-to-workflow/);
 
-    expect(evidence.events.map((event) => event.type)).toEqual(["execution.started"]);
+    expect(evidence.events.map((event) => event.type)).toEqual([
+      "execution.started",
+      "execution.failed",
+    ]);
   });
 
-  it("fails closed when budget is exceeded rather than escalating", async () => {
+  it("records preflight budget rejection instead of leaving an audit gap", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(workflow(async (input) => `ok:${input}`));
     const evidence = sink();
@@ -270,13 +292,45 @@ describe("orchestrateWorkflow", () => {
         input: "epsilon",
         context: overBudget,
         events: evidence.sink,
+        now,
       }),
     ).rejects.toThrow(/maxToolCalls/);
 
-    expect(evidence.events).toHaveLength(0);
+    expect(evidence.events.map((event) => event.type)).toEqual([
+      "budget.exceeded",
+      "execution.failed",
+    ]);
+    expect(evidence.events.some((event) => event.type === "execution.started")).toBe(false);
   });
 
-  it("rejects supervisor-only routing instead of silently bypassing workflow return semantics", async () => {
+  it("records ordinary workflow failure as terminal evidence", async () => {
+    const registry = new VersionedWorkflowRegistry();
+    registry.register(
+      workflow(async () => {
+        throw new Error("deterministic workflow failure");
+      }),
+    );
+    const evidence = sink();
+
+    await expect(
+      orchestrateWorkflow({
+        registry,
+        workflowId: "demo",
+        workflowVersion: "1.0.0",
+        input: "theta",
+        context: context("workflow"),
+        events: evidence.sink,
+        now,
+      }),
+    ).rejects.toThrow("deterministic workflow failure");
+
+    expect(evidence.events.map((event) => event.type)).toEqual([
+      "execution.started",
+      "execution.failed",
+    ]);
+  });
+
+  it("rejects supervisor-only routing with terminal failure evidence", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(workflow(async (input) => `ok:${input}`));
     const evidence = sink();
@@ -289,9 +343,13 @@ describe("orchestrateWorkflow", () => {
         input: "zeta",
         context: context("supervisor"),
         events: evidence.sink,
+        now,
       }),
     ).rejects.toBeInstanceOf(SupervisorResolutionError);
 
-    expect(evidence.events.map((event) => event.type)).toEqual(["execution.started"]);
+    expect(evidence.events.map((event) => event.type)).toEqual([
+      "execution.started",
+      "execution.failed",
+    ]);
   });
 });
