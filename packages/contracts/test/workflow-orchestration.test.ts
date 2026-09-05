@@ -100,7 +100,7 @@ describe("orchestrateWorkflow", () => {
     ]);
   });
 
-  it("escalates an unhandled hybrid condition and records explicit return before completion", async () => {
+  it("escalates an unhandled hybrid condition and executes explicit return-to-workflow before completion", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(
       workflow(async (input) => {
@@ -108,6 +108,7 @@ describe("orchestrateWorkflow", () => {
       }),
     );
     const evidence = sink();
+    const returnInputs: string[] = [];
 
     await expect(
       orchestrateWorkflow({
@@ -128,9 +129,14 @@ describe("orchestrateWorkflow", () => {
             };
           },
         }),
+        async returnToWorkflow(supervisorOutput) {
+          returnInputs.push(supervisorOutput);
+          return `workflow-resumed:${supervisorOutput}`;
+        },
       }),
-    ).resolves.toBe("supervised:beta");
+    ).resolves.toBe("workflow-resumed:supervised:beta");
 
+    expect(returnInputs).toEqual(["supervised:beta"]);
     expect(evidence.events.map((event) => event.type)).toEqual([
       "execution.started",
       "supervisor.escalated",
@@ -140,7 +146,7 @@ describe("orchestrateWorkflow", () => {
     expect(evidence.events[3]?.parentEventId).toBe(evidence.events[2]?.id);
   });
 
-  it("fails closed on mismatched supervisor return without success evidence", async () => {
+  it("fails closed on mismatched supervisor return without invoking workflow return or success evidence", async () => {
     const registry = new VersionedWorkflowRegistry();
     registry.register(
       workflow(async (input) => {
@@ -148,6 +154,7 @@ describe("orchestrateWorkflow", () => {
       }),
     );
     const evidence = sink();
+    let returned = false;
 
     await expect(
       orchestrateWorkflow({
@@ -168,9 +175,14 @@ describe("orchestrateWorkflow", () => {
             };
           },
         }),
+        async returnToWorkflow(output) {
+          returned = true;
+          return output;
+        },
       }),
     ).rejects.toBeInstanceOf(WorkflowReturnMismatchError);
 
+    expect(returned).toBe(false);
     expect(evidence.events.some((event) => event.type === "supervisor.returned")).toBe(false);
     expect(evidence.events.some((event) => event.type === "execution.completed")).toBe(false);
   });
@@ -199,11 +211,48 @@ describe("orchestrateWorkflow", () => {
             throw new SupervisorResolutionError("reference supervisor failed");
           },
         }),
+        async returnToWorkflow(output) {
+          return output;
+        },
       }),
     ).rejects.toBeInstanceOf(SupervisorResolutionError);
 
     expect(evidence.events.some((event) => event.type === "supervisor.returned")).toBe(false);
     expect(evidence.events.some((event) => event.type === "execution.completed")).toBe(false);
+  });
+
+  it("requires an explicit return-to-workflow handler for hybrid escalation", async () => {
+    const registry = new VersionedWorkflowRegistry();
+    registry.register(
+      workflow(async (input) => {
+        throw new UnhandledWorkflowConditionError("needs supervisor", input);
+      }),
+    );
+    const evidence = sink();
+
+    await expect(
+      orchestrateWorkflow({
+        registry,
+        workflowId: "demo",
+        workflowVersion: "1.0.0",
+        input: "eta",
+        context: context("hybrid"),
+        events: evidence.sink,
+        supervisorFactory: (condition) => ({
+          reason: condition.reason,
+          input: condition.input,
+          async resolve() {
+            return {
+              workflowId: "demo",
+              workflowVersion: "1.0.0",
+              output: "supervised:eta",
+            };
+          },
+        }),
+      }),
+    ).rejects.toThrow(/return-to-workflow/);
+
+    expect(evidence.events.map((event) => event.type)).toEqual(["execution.started"]);
   });
 
   it("fails closed when budget is exceeded rather than escalating", async () => {
