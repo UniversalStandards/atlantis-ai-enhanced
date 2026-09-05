@@ -240,3 +240,19 @@ export function assertWithinBudget(context: WorkflowContext): void {
     }
   }
 }
+
+export {
+  SupervisorResolutionError,
+  UnhandledWorkflowConditionError,
+  UnknownWorkflowError,
+  VersionedWorkflowRegistry,
+  WorkflowRegistrationConflictError,
+  WorkflowReturnMismatchError,
+  decideWorkflowRoute,
+  orchestrateWorkflow,
+  type OrchestrateWorkflowRequest,
+  type ReturnToWorkflowHandler,
+  type SupervisorFactory,
+  type SupervisorResolution,
+  type WorkflowRouteDecision,
+} from "./workflow-orchestration.js";
