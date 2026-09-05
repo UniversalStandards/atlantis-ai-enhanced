@@ -60,6 +60,11 @@ export type SupervisorFactory<I, O> = (
   condition: UnhandledWorkflowConditionError<I>,
 ) => SupervisorEscalation<I, SupervisorResolution<O>>;
 
+export type ReturnToWorkflowHandler<O> = (
+  supervisorOutput: O,
+  context: WorkflowContext,
+) => Promise<O>;
+
 export interface WorkflowRouteDecision {
   readonly mode: ExecutionMode;
   readonly workflowId: string;
@@ -120,6 +125,7 @@ export interface OrchestrateWorkflowRequest<I, O> {
   readonly context: WorkflowContext;
   readonly events: EventSink;
   readonly supervisorFactory?: SupervisorFactory<I, O>;
+  readonly returnToWorkflow?: ReturnToWorkflowHandler<O>;
 }
 
 export async function orchestrateWorkflow<I, O>(
@@ -174,8 +180,14 @@ export async function orchestrateWorkflow<I, O>(
     }
 
     const factory = request.supervisorFactory;
+    const returnToWorkflow = request.returnToWorkflow;
     if (!factory) {
       throw new SupervisorResolutionError("Hybrid escalation requires an explicit supervisor factory");
+    }
+    if (!returnToWorkflow) {
+      throw new SupervisorResolutionError(
+        "Hybrid escalation requires an explicit return-to-workflow handler",
+      );
     }
 
     await append("supervisor.escalated", {
@@ -204,12 +216,15 @@ export async function orchestrateWorkflow<I, O>(
       workflowId: resolution.workflowId,
       workflowVersion: resolution.workflowVersion,
     });
+
+    const output = await returnToWorkflow(resolution.output, request.context);
+    assertWithinBudget(request.context);
     await append("execution.completed", {
       workflowId: workflow.id,
       workflowVersion: workflow.version,
       returnedFromSupervisor: true,
     });
-    return resolution.output;
+    return output;
   }
 }
 
