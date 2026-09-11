@@ -233,9 +233,12 @@ export type {
 export {
   InvalidSelfImprovementPatchEvidenceError,
   SelfImprovementEvaluationDidNotFailError,
+  SelfImprovementOperationalFeatureGateDisabledError,
+  proposeSelfImprovementFromAuthorizedOperationalCandidate,
   proposeSelfImprovementFromFailedEvaluation,
 } from "./self-improvement-development-workflow.js";
 export type {
+  AuthorizedSelfImprovementOperationalAdmission,
   SelfImprovementPatchEvidence,
   SelfImprovementPatchGenerator,
   SelfImprovementPatchRequest,

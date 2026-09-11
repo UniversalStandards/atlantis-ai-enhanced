@@ -1,6 +1,6 @@
 import type { EvaluationResult } from "@atlantis/contracts";
 import {
-  validateSelfImprovementOperationalCandidateAuthorization,
+  authorizeSelfImprovementOperationalCandidateAdmission,
   type SelfImprovementOperationalCandidateAuthorization,
 } from "@atlantis/contracts/self-improvement-operational-candidate-authorization";
 
@@ -38,6 +38,7 @@ export interface SelfImprovementPatchGenerator {
 
 export interface AuthorizedSelfImprovementOperationalAdmission {
   readonly authorization: unknown;
+  readonly expectedAdmission: unknown;
   readonly featureGateEnabled: boolean;
   readonly repository: string;
   readonly baseRevision: string;
@@ -146,7 +147,10 @@ export async function proposeSelfImprovementFromAuthorizedOperationalCandidate(
   }
 
   const authorization: Readonly<SelfImprovementOperationalCandidateAuthorization> =
-    validateSelfImprovementOperationalCandidateAuthorization(admission.authorization);
+    authorizeSelfImprovementOperationalCandidateAdmission(
+      admission.authorization,
+      admission.expectedAdmission,
+    );
 
   if (authorization.executionEnvironment !== "non-production" || authorization.authorityBoundary !== "no-prohibited-authority") {
     throw new InvalidSelfImprovementPatchEvidenceError(
