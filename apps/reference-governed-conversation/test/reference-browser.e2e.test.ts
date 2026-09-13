@@ -3,7 +3,11 @@ import {
   ApprovalRejectedError,
   ApprovalRequiredError,
 } from "@atlantis/contracts/approval-control";
-import { GovernedConversationService } from "@atlantis/event-store/governed-conversation";
+import {
+  ConversationApprovalStateError,
+  GovernedConversationService,
+} from "@atlantis/event-store/governed-conversation";
+import { InMemoryEventStore, type EventStore, type StoredEvent } from "@atlantis/event-store";
 
 import { ReferenceConversationApp, renderReferenceAppShell } from "../src/reference-app.js";
 
@@ -19,6 +23,66 @@ function deterministicClock(): () => string {
   ];
   let index = 0;
   return () => timestamps[index++] ?? "2026-09-05T00:00:59.000Z";
+}
+
+class ConcurrentApprovalStore implements EventStore {
+  private readonly store = new InMemoryEventStore();
+  private injected = false;
+
+  public append<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    if (!this.injected && event.eventType === "conversation.tool.approved") {
+      this.injected = true;
+      const payload = event.payload as {
+        readonly tenantId: string;
+        readonly userId: string;
+        readonly approvalId: string;
+        readonly requestVersion: number;
+        readonly toolName?: string;
+        readonly requestedBy?: string;
+      };
+      this.store.append(
+        {
+          ...event,
+          eventId: "event-race-approved",
+          payload: Object.freeze({
+            tenantId: payload.tenantId,
+            userId: payload.userId,
+            approvalId: payload.approvalId,
+            requestVersion: payload.requestVersion,
+            toolName: payload.toolName,
+            requestedBy: payload.requestedBy,
+            resolvedBy: "reviewer-race",
+          }),
+        },
+        expectedVersion,
+      );
+    }
+    return this.store.append(event, expectedVersion);
+  }
+
+  public readStream(streamId: string, afterVersion?: number): readonly StoredEvent[] {
+    return this.store.readStream(streamId, afterVersion);
+  }
+
+  public readAll(afterSequence?: number): readonly StoredEvent[] {
+    return this.store.readAll(afterSequence);
+  }
+
+  public getStreamVersion(streamId: string): number {
+    return this.store.getStreamVersion(streamId);
+  }
 }
 
 describe("reference browser governed conversation path", () => {
@@ -73,6 +137,7 @@ describe("reference browser governed conversation path", () => {
         resolvedAt: "2026-09-05T00:00:06.000Z",
       }),
     ).toThrow(ApprovalRejectedError);
+    expect(app.view().pendingApproval).toBeNull();
     expect(
       app.readAuditEvents().some((event) => event.eventType === "conversation.tool.approved"),
     ).toBe(false);
@@ -107,6 +172,54 @@ describe("reference browser governed conversation path", () => {
     expect(() => app.readConversation()).toThrow("conversation access denied for tenant/user context");
     expect(app.view().conversationId).toBeNull();
     expect(renderReferenceAppShell(app.view())).toContain("conversation'>none<");
+  });
+
+  it("preserves only redacted audit evidence when the owner reopens a deleted conversation", async () => {
+    const app = new ReferenceConversationApp(
+      new GovernedConversationService(undefined, undefined, deterministicClock()),
+    );
+    app.signIn({ tenantId: "tenant-a", userId: "user-a" });
+    const conversationId = app.createConversation();
+
+    await expect(app.sendMessage("delete me")).resolves.toEqual(["mock:delete ", "me "]);
+    app.deleteConversation();
+    app.openConversation(conversationId);
+
+    expect(() => app.readConversation()).toThrow("conversation not found");
+    const redactedContents = app
+      .readAuditEvents()
+      .filter((event) => event.eventType === "conversation.message")
+      .map((event) => (event.payload as { readonly message?: { readonly content: string } }).message?.content);
+    expect(redactedContents).toEqual(["[deleted]", "[deleted]"]);
+    expect(app.view()).toMatchObject({
+      conversationId,
+      messages: [],
+    });
+  });
+
+  it("clears pending approval when a concurrent resolver already finalized the request", () => {
+    const app = new ReferenceConversationApp(
+      new GovernedConversationService(
+        new ConcurrentApprovalStore(),
+        undefined,
+        deterministicClock(),
+      ),
+    );
+    app.signIn({ tenantId: "tenant-a", userId: "user-a" });
+    app.createConversation();
+    const request = app.requestHarmlessTool("echo-status");
+
+    expect(() =>
+      app.executePendingTool({
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+        requestVersion: request.requestVersion,
+        decision: "approved",
+        resolvedBy: "reviewer-a",
+        resolvedAt: "2026-09-05T00:00:06.000Z",
+      }),
+    ).toThrow(ConversationApprovalStateError);
+    expect(app.view().pendingApproval).toBeNull();
   });
 
   it("escapes dynamic shell fields before rendering", () => {

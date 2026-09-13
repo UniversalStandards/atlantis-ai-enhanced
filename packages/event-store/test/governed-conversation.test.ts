@@ -5,9 +5,11 @@ import {
 } from "../../contracts/src/approval-control.js";
 import {
   ConversationAccessDeniedError,
+  ConversationApprovalStateError,
   GovernedConversationService,
   InvalidConversationIdentityError,
 } from "../src/governed-conversation.js";
+import { InMemoryEventStore, type EventStore, type StoredEvent } from "../src/index.js";
 
 const timestamps = ["2026-09-05T00:00:00.000Z","2026-09-05T00:00:01.000Z","2026-09-05T00:00:02.000Z","2026-09-05T00:00:03.000Z","2026-09-05T00:00:04.000Z","2026-09-05T00:00:05.000Z"];
 function deterministicClock(): () => string { let index = 0; return () => timestamps[index++] ?? "2026-09-05T00:00:59.000Z"; }
@@ -20,6 +22,66 @@ const reviewerApproval = Object.freeze({
   resolvedBy: "reviewer-a",
   resolvedAt: "2026-09-05T00:00:05.000Z",
 });
+
+class ConcurrentApprovalStore implements EventStore {
+  private readonly store = new InMemoryEventStore();
+  private injected = false;
+
+  public append<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    if (!this.injected && event.eventType === "conversation.tool.approved") {
+      this.injected = true;
+      const payload = event.payload as {
+        readonly tenantId: string;
+        readonly userId: string;
+        readonly approvalId: string;
+        readonly requestVersion: number;
+        readonly toolName?: string;
+        readonly requestedBy?: string;
+      };
+      this.store.append(
+        {
+          ...event,
+          eventId: "event-race-approved",
+          payload: Object.freeze({
+            tenantId: payload.tenantId,
+            userId: payload.userId,
+            approvalId: payload.approvalId,
+            requestVersion: payload.requestVersion,
+            toolName: payload.toolName,
+            requestedBy: payload.requestedBy,
+            resolvedBy: "reviewer-race",
+          }),
+        },
+        expectedVersion,
+      );
+    }
+    return this.store.append(event, expectedVersion);
+  }
+
+  public readStream(streamId: string, afterVersion?: number): readonly StoredEvent[] {
+    return this.store.readStream(streamId, afterVersion);
+  }
+
+  public readAll(afterSequence?: number): readonly StoredEvent[] {
+    return this.store.readAll(afterSequence);
+  }
+
+  public getStreamVersion(streamId: string): number {
+    return this.store.getStreamVersion(streamId);
+  }
+}
 
 describe("governed conversation vertical slice", () => {
   it("persists state, streams mock output, gates a tool, audits, and deletes", async () => {
@@ -56,6 +118,9 @@ describe("governed conversation vertical slice", () => {
     expect(() =>
       service.readAuditEvents({ tenantId: "tenant-b", userId: actor.userId }, id),
     ).toThrow(ConversationAccessDeniedError);
+    expect(() => service.readConversation(actor, "missing-conversation")).toThrow(
+      ConversationAccessDeniedError,
+    );
   });
 
   it("binds approval execution to the exact tenant and user context", () => {
@@ -82,5 +147,46 @@ describe("governed conversation vertical slice", () => {
         },
       ),
     ).toThrow(ApprovalRejectedError);
+    expect(() =>
+      service.executeHarmlessTool(actor, request, {
+        ...reviewerApproval,
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+      }),
+    ).toThrow(ConversationApprovalStateError);
+  });
+
+  it("rejects replayed approval executions for the same approval request", () => {
+    const service = new GovernedConversationService(undefined, undefined, deterministicClock());
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+    const approval = {
+      ...reviewerApproval,
+      approvalId: request.approvalId,
+      executionId: request.executionId,
+    };
+
+    expect(service.executeHarmlessTool(actor, request, approval)).toBe("tool:echo-status:ok");
+    expect(() => service.executeHarmlessTool(actor, request, approval)).toThrow(
+      ConversationApprovalStateError,
+    );
+  });
+
+  it("translates concurrent approval races into the governed terminal-state error", () => {
+    const service = new GovernedConversationService(
+      new ConcurrentApprovalStore(),
+      undefined,
+      deterministicClock(),
+    );
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+
+    expect(() =>
+      service.executeHarmlessTool(actor, request, {
+        ...reviewerApproval,
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+      }),
+    ).toThrow(ConversationApprovalStateError);
   });
 });

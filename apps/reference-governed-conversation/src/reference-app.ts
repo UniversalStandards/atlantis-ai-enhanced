@@ -1,8 +1,13 @@
 import {
+  ConversationApprovalStateError,
   GovernedConversationService,
   type ConversationSnapshot,
 } from "@atlantis/event-store/governed-conversation";
-import type { ApprovalRequest, ApprovalResolution } from "@atlantis/contracts/approval-control";
+import {
+  ApprovalRejectedError,
+  type ApprovalRequest,
+  type ApprovalResolution,
+} from "@atlantis/contracts/approval-control";
 import type { StoredEvent } from "@atlantis/event-store";
 
 export interface ReferenceIdentity {
@@ -96,7 +101,19 @@ export class ReferenceConversationApp {
     if (request === null) throw new Error("no pending approval request");
     if (request.executionId !== conversationId) throw new Error("pending approval does not match active conversation");
     this.ensureOwnedConversation(identity, conversationId);
-    return this.service.executeHarmlessTool(identity, request, resolution);
+    try {
+      const result = this.service.executeHarmlessTool(identity, request, resolution);
+      this.pendingApproval = null;
+      return result;
+    } catch (error) {
+      if (
+        error instanceof ApprovalRejectedError ||
+        error instanceof ConversationApprovalStateError
+      ) {
+        this.pendingApproval = null;
+      }
+      throw error;
+    }
   }
 
   public approvePendingTool(resolvedBy: string, resolvedAt: string): string {
@@ -125,12 +142,11 @@ export class ReferenceConversationApp {
 
   public readConversation(): ConversationSnapshot {
     const { identity, conversationId } = this.requireSession();
-    return this.service.readConversation(identity, conversationId);
+    return this.ensureOwnedConversation(identity, conversationId);
   }
 
   public readAuditEvents(): readonly StoredEvent[] {
     const { identity, conversationId } = this.requireSession();
-    this.ensureOwnedConversation(identity, conversationId);
     return this.service.readAuditEvents(identity, conversationId);
   }
 
@@ -147,12 +163,12 @@ export class ReferenceConversationApp {
       });
     }
     try {
-      const snapshot = this.ensureOwnedConversation(identity, conversationId);
+      const snapshot = this.service.readConversation(identity, conversationId);
       return Object.freeze({
         identity,
         conversationId,
         messages: snapshot.messages,
-        pendingApproval: this.pendingApproval,
+        pendingApproval: snapshot.deleted ? null : this.pendingApproval,
         auditEvents: this.service.readAuditEvents(identity, conversationId),
       });
     } catch {
