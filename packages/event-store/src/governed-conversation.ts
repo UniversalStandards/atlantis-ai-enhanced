@@ -174,15 +174,6 @@ export class GovernedConversationService {
   }
   public executeHarmlessTool(identity: ConversationIdentity, request: ApprovalRequest, resolution?: ApprovalResolution): string {
    const actor = normalizeIdentity(identity);
-   if (
-     request.metadata.tenantId !== actor.tenantId ||
-     request.metadata.userId !== actor.userId ||
-     request.requestedBy !== actor.userId
-   ) {
-     throw new ConversationAccessDeniedError(
-       "approval request does not match tenant/user context",
-     );
-   }
    const record = this.requireActiveConversation(actor, request.executionId);
    const toolName = request.metadata.toolName ?? "unknown";
    this.requirePendingToolApproval(record, request);
@@ -266,6 +257,9 @@ export class GovernedConversationService {
    );
    if (
      matchingRequest === undefined ||
+     request.metadata.tenantId !== record.snapshot.tenantId ||
+     request.metadata.userId !== record.snapshot.userId ||
+     request.requestedBy !== record.snapshot.userId ||
      matchingRequest.payload.tenantId !== record.snapshot.tenantId ||
      matchingRequest.payload.userId !== record.snapshot.userId ||
      matchingRequest.payload.toolName !== request.metadata.toolName ||

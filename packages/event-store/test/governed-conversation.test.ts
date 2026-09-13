@@ -172,6 +172,40 @@ describe("governed conversation vertical slice", () => {
     );
   });
 
+  it("rejects forged approval requests that were never recorded as pending", () => {
+    const service = new GovernedConversationService(undefined, undefined, deterministicClock());
+    const id = service.createConversation(actor.tenantId, actor.userId);
+
+    expect(() =>
+      service.executeHarmlessTool(
+        actor,
+        {
+          approvalId: "approval-forged",
+          executionId: id,
+          requestVersion: 1,
+          stepId: "tool:echo-status",
+          action: "invoke harmless demonstration tool echo-status",
+          reason: "demonstration tools require explicit approval",
+          requestedBy: actor.userId,
+          requestedAt: "2026-09-05T00:00:01.000Z",
+          metadata: Object.freeze({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            toolName: "echo-status",
+          }),
+        },
+        {
+          approvalId: "approval-forged",
+          executionId: id,
+          requestVersion: 1,
+          decision: "approved",
+          resolvedBy: "reviewer-a",
+          resolvedAt: "2026-09-05T00:00:05.000Z",
+        },
+      ),
+    ).toThrow(ConversationApprovalStateError);
+  });
+
   it("translates concurrent approval races into the governed terminal-state error", () => {
     const service = new GovernedConversationService(
       new ConcurrentApprovalStore(),

@@ -1,4 +1,5 @@
 import {
+  ConversationAccessDeniedError,
   ConversationApprovalStateError,
   GovernedConversationService,
   type ConversationSnapshot,
@@ -171,7 +172,10 @@ export class ReferenceConversationApp {
         pendingApproval: snapshot.deleted ? null : this.pendingApproval,
         auditEvents: this.service.readAuditEvents(identity, conversationId),
       });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof ConversationAccessDeniedError)) {
+        throw error;
+      }
       return Object.freeze({
         identity,
         conversationId: null,
