@@ -294,22 +294,28 @@ export class GovernedConversationService {
    eventType: "conversation.tool.approved" | "conversation.tool.rejected",
    payload: ConversationEventPayload,
   ): void {
-   try {
-     this.append(request.executionId, eventType, payload, record.streamVersion);
-   } catch (error) {
-     if (!(error instanceof ConcurrencyConflictError)) {
-       throw error;
+   let currentRecord = record;
+   for (let attempt = 0; attempt < 3; attempt += 1) {
+     try {
+       this.append(request.executionId, eventType, payload, currentRecord.streamVersion);
+       return;
+     } catch (error) {
+       if (!(error instanceof ConcurrencyConflictError)) {
+         throw error;
+       }
+       currentRecord = this.requireActiveConversation(
+         {
+           tenantId: currentRecord.snapshot.tenantId,
+           userId: currentRecord.snapshot.userId,
+         },
+         request.executionId,
+       );
+       this.requirePendingToolApproval(currentRecord, request);
      }
-     const refreshedRecord = this.requireActiveConversation(
-       {
-         tenantId: record.snapshot.tenantId,
-         userId: record.snapshot.userId,
-       },
-       request.executionId,
-     );
-     this.requirePendingToolApproval(refreshedRecord, request);
-     this.append(request.executionId, eventType, payload, refreshedRecord.streamVersion);
    }
+   throw new ConversationApprovalStateError(
+     "approval request could not be finalized before concurrent state changes",
+   );
   }
   private readConversationRecord(id: string): ConversationRecord {
    for (let attempt = 0; attempt < 3; attempt += 1) {
