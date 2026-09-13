@@ -141,6 +141,9 @@ describe("reference browser governed conversation path", () => {
     expect(
       app.readAuditEvents().some((event) => event.eventType === "conversation.tool.approved"),
     ).toBe(false);
+    expect(
+      app.readAuditEvents().some((event) => event.eventType === "conversation.tool.rejected"),
+    ).toBe(true);
   });
 
   it("fails closed for missing or mismatched tenant/user identity context", () => {
