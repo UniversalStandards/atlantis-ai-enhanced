@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ApprovalRequiredError } from "@atlantis/contracts/approval-control";
+import {
+  ApprovalRejectedError,
+  ApprovalRequiredError,
+} from "@atlantis/contracts/approval-control";
 import { GovernedConversationService } from "@atlantis/event-store/governed-conversation";
 
 import { ReferenceConversationApp, renderReferenceAppShell } from "../src/reference-app.js";
@@ -30,7 +33,8 @@ describe("reference browser governed conversation path", () => {
     expect(await app.sendMessage("hello atlantis")).toEqual(["mock:hello ", "atlantis "]);
     expect(app.readConversation().messages[1]?.content).toBe("mock:hello atlantis");
 
-    app.requestHarmlessTool("echo-status");
+    const request = app.requestHarmlessTool("echo-status");
+    expect(request.metadata).toMatchObject({ tenantId: "tenant-a", userId: "user-a" });
     expect(() => app.executePendingTool()).toThrow(ApprovalRequiredError);
     expect(app.approvePendingTool("reviewer-a", "2026-09-05T00:00:06.000Z")).toBe("tool:echo-status:ok");
 
@@ -49,6 +53,29 @@ describe("reference browser governed conversation path", () => {
     expect(() => app.readConversation()).toThrow("conversation not created");
     expect(app.view().conversationId).toBeNull();
     expect(renderReferenceAppShell(app.view())).toContain("conversation'>none<");
+  });
+
+  it("shows approval denial without fabricating successful audit evidence", () => {
+    const app = new ReferenceConversationApp(
+      new GovernedConversationService(undefined, undefined, deterministicClock()),
+    );
+    app.signIn({ tenantId: "tenant-a", userId: "user-a" });
+    app.createConversation();
+    const request = app.requestHarmlessTool("echo-status");
+
+    expect(() =>
+      app.executePendingTool({
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+        requestVersion: request.requestVersion,
+        decision: "rejected",
+        resolvedBy: "reviewer-a",
+        resolvedAt: "2026-09-05T00:00:06.000Z",
+      }),
+    ).toThrow(ApprovalRejectedError);
+    expect(
+      app.readAuditEvents().some((event) => event.eventType === "conversation.tool.approved"),
+    ).toBe(false);
   });
 
   it("fails closed for missing or mismatched tenant/user identity context", () => {
@@ -77,7 +104,7 @@ describe("reference browser governed conversation path", () => {
 
     app.signIn({ tenantId: "tenant-b", userId: "user-b" });
     app.openConversation(deletedConversationId);
-    expect(() => app.readConversation()).toThrow("conversation not found");
+    expect(() => app.readConversation()).toThrow("conversation access denied for tenant/user context");
     expect(app.view().conversationId).toBeNull();
     expect(renderReferenceAppShell(app.view())).toContain("conversation'>none<");
   });

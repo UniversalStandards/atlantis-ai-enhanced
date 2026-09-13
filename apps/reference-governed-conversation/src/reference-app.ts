@@ -75,13 +75,17 @@ export class ReferenceConversationApp {
   public async sendMessage(content: string): Promise<readonly string[]> {
     const { identity, conversationId } = this.requireSession();
     this.ensureOwnedConversation(identity, conversationId);
-    return this.service.sendMessage(conversationId, requireNonEmpty(content, "content"));
+    return this.service.sendMessage(identity, conversationId, requireNonEmpty(content, "content"));
   }
 
   public requestHarmlessTool(toolName: string): ApprovalRequest {
     const { identity, conversationId } = this.requireSession();
     this.ensureOwnedConversation(identity, conversationId);
-    const request = this.service.buildToolApproval(conversationId, requireNonEmpty(toolName, "toolName"));
+    const request = this.service.buildToolApproval(
+      identity,
+      conversationId,
+      requireNonEmpty(toolName, "toolName"),
+    );
     this.pendingApproval = request;
     return request;
   }
@@ -92,7 +96,7 @@ export class ReferenceConversationApp {
     if (request === null) throw new Error("no pending approval request");
     if (request.executionId !== conversationId) throw new Error("pending approval does not match active conversation");
     this.ensureOwnedConversation(identity, conversationId);
-    return this.service.executeHarmlessTool(request, resolution);
+    return this.service.executeHarmlessTool(identity, request, resolution);
   }
 
   public approvePendingTool(resolvedBy: string, resolvedAt: string): string {
@@ -114,20 +118,20 @@ export class ReferenceConversationApp {
   public deleteConversation(): void {
     const { identity, conversationId } = this.requireSession();
     this.ensureOwnedConversation(identity, conversationId);
-    this.service.deleteConversation(conversationId);
+    this.service.deleteConversation(identity, conversationId);
     this.currentConversationId = null;
     this.pendingApproval = null;
   }
 
   public readConversation(): ConversationSnapshot {
     const { identity, conversationId } = this.requireSession();
-    return this.ensureOwnedConversation(identity, conversationId);
+    return this.service.readConversation(identity, conversationId);
   }
 
   public readAuditEvents(): readonly StoredEvent[] {
     const { identity, conversationId } = this.requireSession();
     this.ensureOwnedConversation(identity, conversationId);
-    return this.service.readAuditEvents(conversationId);
+    return this.service.readAuditEvents(identity, conversationId);
   }
 
   public view(): ReferenceBrowserView {
@@ -149,7 +153,7 @@ export class ReferenceConversationApp {
         conversationId,
         messages: snapshot.messages,
         pendingApproval: this.pendingApproval,
-        auditEvents: this.service.readAuditEvents(conversationId),
+        auditEvents: this.service.readAuditEvents(identity, conversationId),
       });
     } catch {
       return Object.freeze({
@@ -175,11 +179,8 @@ export class ReferenceConversationApp {
   }
 
   private ensureOwnedConversation(identity: ReferenceIdentity, conversationId: string): ConversationSnapshot {
-    const snapshot = this.service.readConversation(conversationId);
+    const snapshot = this.service.readConversation(identity, conversationId);
     if (snapshot.deleted) throw new Error("conversation not found");
-    if (snapshot.tenantId !== identity.tenantId || snapshot.userId !== identity.userId) {
-      throw new Error("conversation access denied for tenant/user context");
-    }
     return snapshot;
   }
 }
