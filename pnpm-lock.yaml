@@ -18,6 +18,22 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7
 
+  apps/reference-governed-conversation:
+    dependencies:
+      '@atlantis/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@atlantis/event-store':
+        specifier: workspace:*
+        version: link:../../packages/event-store
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7
+
   packages/contracts:
     devDependencies:
       typescript:
