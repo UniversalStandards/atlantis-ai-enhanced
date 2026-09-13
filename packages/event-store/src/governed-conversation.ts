@@ -75,6 +75,7 @@ interface ConversationEventPayload {
   readonly message?: ConversationMessage;
   readonly approvalId?: string;
   readonly requestVersion?: number;
+  readonly stepId?: string;
   readonly toolName?: string;
   readonly action?: string;
   readonly reason?: string;
@@ -172,6 +173,7 @@ export class GovernedConversationService {
      userId: record.snapshot.userId,
      approvalId: request.approvalId,
      requestVersion: request.requestVersion,
+     stepId: request.stepId,
      toolName: normalizedToolName,
      action: request.action,
      reason: request.reason,
@@ -182,8 +184,8 @@ export class GovernedConversationService {
   public executeHarmlessTool(identity: ConversationIdentity, request: ApprovalRequest, resolution?: ApprovalResolution): string {
    const actor = normalizeIdentity(identity);
    const record = this.requireActiveConversation(actor, request.executionId);
-   const toolName = request.metadata.toolName ?? "unknown";
-   this.requirePendingToolApproval(record, request);
+   const pendingRequest = this.requirePendingToolApproval(record, request);
+   const toolName = pendingRequest.payload.toolName ?? "unknown";
    try {
      const approval = requireApproved(request, resolution);
      this.appendTerminalToolApproval(record, request, "conversation.tool.approved", {
@@ -256,19 +258,22 @@ export class GovernedConversationService {
   private requirePendingToolApproval(
    record: ConversationRecord,
    request: ApprovalRequest,
-  ): void {
+  ): StoredEvent<ConversationEventPayload> {
    const matchingRequest = record.events.find((event) =>
      event.eventType === "conversation.tool.requested" &&
+     event.streamId === request.executionId &&
      event.payload.approvalId === request.approvalId &&
      event.payload.requestVersion === request.requestVersion,
    );
    if (
      matchingRequest === undefined ||
+     request.executionId !== record.snapshot.conversationId ||
      request.metadata.tenantId !== record.snapshot.tenantId ||
      request.metadata.userId !== record.snapshot.userId ||
      request.requestedBy !== record.snapshot.userId ||
      matchingRequest.payload.tenantId !== record.snapshot.tenantId ||
      matchingRequest.payload.userId !== record.snapshot.userId ||
+     matchingRequest.payload.stepId !== request.stepId ||
      matchingRequest.payload.toolName !== request.metadata.toolName ||
      matchingRequest.payload.requestedBy !== request.requestedBy ||
      matchingRequest.payload.action !== request.action ||
@@ -288,6 +293,7 @@ export class GovernedConversationService {
    ) {
      throw new ConversationApprovalStateError("approval request is already resolved");
    }
+   return matchingRequest;
   }
   private appendTerminalToolApproval(
    record: ConversationRecord,

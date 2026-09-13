@@ -206,6 +206,24 @@ describe("governed conversation vertical slice", () => {
     ).toThrow(ConversationApprovalStateError);
   });
 
+  it("rejects approval requests whose step binding does not match the recorded pending request", () => {
+    const service = new GovernedConversationService(undefined, undefined, deterministicClock());
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+
+    expect(() =>
+      service.executeHarmlessTool(
+        actor,
+        { ...request, stepId: "tool:other-status" },
+        {
+          ...reviewerApproval,
+          approvalId: request.approvalId,
+          executionId: request.executionId,
+        },
+      ),
+    ).toThrow(ConversationApprovalStateError);
+  });
+
   it("translates concurrent approval races into the governed terminal-state error", () => {
     const service = new GovernedConversationService(
       new ConcurrentApprovalStore(),
