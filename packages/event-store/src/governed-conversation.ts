@@ -62,6 +62,13 @@ export class ConversationApprovalStateError extends Error {
   }
 }
 
+export class ConversationNotFoundError extends Error {
+  public constructor() {
+    super("conversation not found");
+    this.name = "ConversationNotFoundError";
+  }
+}
+
 interface ConversationEventPayload {
   readonly tenantId: string;
   readonly userId: string;
@@ -226,7 +233,7 @@ export class GovernedConversationService {
    try {
      record = this.readConversationRecord(id);
    } catch (error) {
-     if (error instanceof Error && error.message === "conversation not found") {
+     if (error instanceof ConversationNotFoundError) {
        throw new ConversationAccessDeniedError("conversation access denied for tenant/user context");
      }
      throw error;
@@ -316,7 +323,7 @@ export class GovernedConversationService {
      const events = this.store.readStream(id) as readonly StoredEvent<ConversationEventPayload>[];
      const first = events[0];
      if (first === undefined) {
-       throw new Error("conversation not found");
+       throw new ConversationNotFoundError();
      }
      const messages: ConversationMessage[] = [];
      let deleted = false;

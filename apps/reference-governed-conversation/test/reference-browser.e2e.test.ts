@@ -195,9 +195,10 @@ describe("reference browser governed conversation path", () => {
       .map((event) => (event.payload as { readonly message?: { readonly content: string } }).message?.content);
     expect(redactedContents).toEqual(["[deleted]", "[deleted]"]);
     expect(app.view()).toMatchObject({
-      conversationId,
+      conversationId: null,
       messages: [],
     });
+    expect(renderReferenceAppShell(app.view())).toContain("conversation'>none<");
   });
 
   it("clears pending approval when a concurrent resolver already finalized the request", () => {

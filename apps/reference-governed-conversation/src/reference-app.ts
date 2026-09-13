@@ -165,9 +165,10 @@ export class ReferenceConversationApp {
     }
     try {
       const snapshot = this.service.readConversation(identity, conversationId);
+      const visibleConversationId = snapshot.deleted ? null : conversationId;
       return Object.freeze({
         identity,
-        conversationId,
+        conversationId: visibleConversationId,
         messages: snapshot.messages,
         pendingApproval: snapshot.deleted ? null : this.pendingApproval,
         auditEvents: this.service.readAuditEvents(identity, conversationId),
