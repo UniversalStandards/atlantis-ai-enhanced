@@ -1,0 +1,37 @@
+{
+  "name": "@atlantis/event-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./abortable-execution-writer": "./src/abortable-execution-writer.ts",
+    "./browser-content-observer": "./src/browser-content-observer.ts",
+    "./browser-content-observer-conformance": "./src/browser-content-observer-conformance.ts",
+    "./day7-release-readiness-artifact": "./src/day7-release-readiness-artifact.ts",
+    "./execution-event-sink": "./src/execution-event-sink.ts",
+    "./execution-replay-evidence": "./src/execution-replay-evidence.ts",
+    "./execution-summary": "./src/execution-summary.ts",
+    "./execution-topology": "./src/execution-topology.ts",
+    "./external-effect-ownership-evidence-context": "./src/external-effect-ownership-evidence-context.ts",
+    "./external-effect-ownership-loss-context": "./src/external-effect-ownership-loss-context.ts",
+    "./persistence-uncertainty-recovery-selection": "./src/persistence-uncertainty-recovery-selection.ts",
+    "./persistence-uncertainty-repository": "./src/persistence-uncertainty-repository.ts",
+    "./provider-neutral-benchmark": "./src/provider-neutral-benchmark.ts",
+    "./self-improvement-patch-generator": "./src/self-improvement-patch-generator.ts",
+    "./task-entrypoint": "./src/task-entrypoint.ts",
+    "./resumable-task-entrypoint": "./src/resumable-task-entrypoint.ts",
+    "./untrusted-browser-content": "./src/untrusted-browser-content.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

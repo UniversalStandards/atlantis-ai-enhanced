@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "upstream_repository": "UniversalStandards/UniversalStandards",
+  "adopted_ref": "main",
+  "adopted_commit": "8d309029ee94ba82f1eb72aa78c6d34965bbf1c1",
+  "project_tier": "canonical",
+  "required_controls": [
+    "AGENTS.md",
+    ".github/copilot-instructions.md",
+    "capability-escalation",
+    "continuous-learning",
+    "independent-verification"
+  ],
+  "local_strengthening": [
+    "ATLANTIS provider-neutral architecture rules",
+    "explicit consequential-action approval controls",
+    "durable execution and recovery invariants",
+    "SEC-20 supply-chain gates",
+    "release-control evidence requirements"
+  ],
+  "intentional_deviations": [],
+  "last_reviewed_at": "2026-09-03T09:30:00-07:00"
+}
