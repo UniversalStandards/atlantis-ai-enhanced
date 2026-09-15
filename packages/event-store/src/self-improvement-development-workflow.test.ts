@@ -134,6 +134,44 @@ describe("proposeSelfImprovementFromFailedEvaluation", () => {
   });
 
   it.each([
+    ["executionId", "   "],
+    ["observedProblem", "\n\t"],
+    ["objective", "  "],
+  ] as const)("rejects blank request %s before patch generation", async (field, value) => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, [field]: value },
+        { generate },
+      ),
+    ).rejects.toThrow(`request.${field} must be a non-empty string`);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-finite score, empty reasons, or empty metrics in the triggering evaluation", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, evaluation: Object.freeze({ ...failedRequest.evaluation, score: Number.NaN }) },
+        { generate },
+      ),
+    ).rejects.toThrow("evaluation.score must be a finite number");
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, evaluation: Object.freeze({ ...failedRequest.evaluation, reasons: Object.freeze([]) }) },
+        { generate },
+      ),
+    ).rejects.toThrow("evaluation.reasons must contain at least one non-empty reason");
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, evaluation: Object.freeze({ ...failedRequest.evaluation, metrics: Object.freeze({}) }) },
+        { generate },
+      ),
+    ).rejects.toThrow("evaluation.metrics must contain at least one metric");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["executionId", "exec-substituted"],
     ["observedProblem", "different problem"],
     ["objective", "different objective"],
@@ -255,6 +293,31 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
         operationalAdmission(),
       ),
     ).rejects.toThrow("generated isolatedBranch must remain inside the authorized isolated workspace namespace");
+    expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("rejects non-canonical isolated workspace namespaces in authorization", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const authorization = { ...operationalAuthorization(), isolatedWorkspaceNamespace: "proposal//" };
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ authorization }),
+      ),
+    ).rejects.toThrow("must be canonical");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-canonical generated branch paths inside the authorized namespace", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence({ isolatedBranch: "proposal/run-1/extra" })));
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission(),
+      ),
+    ).rejects.toThrow("must identify a single canonical run branch");
     expect(generate).toHaveBeenCalledOnce();
   });
 

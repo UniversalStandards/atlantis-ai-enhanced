@@ -63,6 +63,27 @@ function requireBound(actual: string, expected: string, field: string): string {
   return normalized;
 }
 
+function requireCanonicalIsolatedBranch(branch: string): string {
+  const isolatedBranch = requireNonBlank(branch, "isolatedBranch");
+  if (!isolatedBranch.startsWith("proposal/") && !isolatedBranch.startsWith("sprint/")) {
+    throw new InvalidConcreteSelfImprovementPatchError(
+      "isolatedBranch must use an isolated sprint/ or proposal/ branch namespace.",
+    );
+  }
+  if (isolatedBranch.includes("//") || isolatedBranch.includes(" ") || isolatedBranch.endsWith("/")) {
+    throw new InvalidConcreteSelfImprovementPatchError(
+      "isolatedBranch must be canonical and must not contain spaces, duplicate separators, or trailing '/'.",
+    );
+  }
+  const [, suffix = ""] = isolatedBranch.split("/", 2);
+  if (suffix.trim().length === 0) {
+    throw new InvalidConcreteSelfImprovementPatchError(
+      "isolatedBranch must include a non-empty run identifier within the isolated namespace.",
+    );
+  }
+  return isolatedBranch;
+}
+
 /**
  * Concrete orchestration for the development-only patch-generator boundary.
  *
@@ -91,12 +112,7 @@ export class EvidenceBackedSelfImprovementPatchGenerator implements SelfImprovem
     requireBound(patch.executionId, executionId, "executionId");
     requireBound(patch.observedProblem, observedProblem, "observedProblem");
     requireBound(patch.objective, objective, "objective");
-    const isolatedBranch = requireNonBlank(patch.isolatedBranch, "isolatedBranch");
-    if (!isolatedBranch.startsWith("proposal/") && !isolatedBranch.startsWith("sprint/")) {
-      throw new InvalidConcreteSelfImprovementPatchError(
-        "isolatedBranch must use an isolated sprint/ or proposal/ branch namespace.",
-      );
-    }
+    const isolatedBranch = requireCanonicalIsolatedBranch(patch.isolatedBranch);
     const patchArtifactId = requireNonBlank(patch.patchArtifactId, "patchArtifactId");
 
     const testResult = await this.tests.run(patch);

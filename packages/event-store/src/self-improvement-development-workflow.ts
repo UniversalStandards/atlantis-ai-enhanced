@@ -65,15 +65,24 @@ export class SelfImprovementOperationalFeatureGateDisabledError extends Error {
   }
 }
 
+function requireNonBlank(value: string, field: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new InvalidSelfImprovementPatchEvidenceError(`${field} must be a non-empty string.`);
+  }
+  return normalized;
+}
+
 function requireBound(actual: string, expected: string, field: string): void {
-  if (actual.trim() !== expected.trim()) {
+  if (requireNonBlank(actual, field) !== requireNonBlank(expected, field)) {
     throw new InvalidSelfImprovementPatchEvidenceError(`${field} must remain bound to the failing evaluation request.`);
   }
 }
 
 function requireOperationalBinding(actual: string, expected: string, field: string): void {
-  const normalizedExpected = expected.trim();
-  if (normalizedExpected.length === 0 || actual.trim() !== normalizedExpected) {
+  const normalizedExpected = requireNonBlank(expected, `admission.${field}`);
+  const normalizedActual = requireNonBlank(actual, `authorization.${field}`);
+  if (normalizedActual !== normalizedExpected) {
     throw new InvalidSelfImprovementPatchEvidenceError(
       `operational candidate ${field} must match the admitted execution context.`,
     );
@@ -81,13 +90,62 @@ function requireOperationalBinding(actual: string, expected: string, field: stri
 }
 
 function requireAuthorizedWorkspaceNamespace(namespace: string): string {
-  const normalized = namespace.trim();
-  if (normalized.length === 0 || !normalized.endsWith("/")) {
+  const normalized = requireNonBlank(namespace, "authorization.isolatedWorkspaceNamespace");
+  if (!normalized.endsWith("/")) {
     throw new InvalidSelfImprovementPatchEvidenceError(
       "operational candidate isolatedWorkspaceNamespace must be a non-empty branch namespace ending in '/'.",
     );
   }
+  if (!normalized.startsWith("proposal/") && !normalized.startsWith("sprint/")) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      "operational candidate isolatedWorkspaceNamespace must begin with proposal/ or sprint/.",
+    );
+  }
+  if (normalized.includes("//") || normalized.includes(" ") || normalized.startsWith("/")) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      "operational candidate isolatedWorkspaceNamespace must be canonical and must not contain spaces, duplicate separators, or leading '/'.",
+    );
+  }
   return normalized;
+}
+
+function requireBoundFailingEvaluation(evaluation: Readonly<EvaluationResult>): void {
+  if (evaluation.passed !== false) {
+    throw new SelfImprovementEvaluationDidNotFailError();
+  }
+  if (!Number.isFinite(evaluation.score)) {
+    throw new InvalidSelfImprovementPatchEvidenceError("evaluation.score must be a finite number.");
+  }
+  const reasons = evaluation.reasons
+    .map((reason, index) => requireNonBlank(reason, `evaluation.reasons[${index}]`));
+  if (reasons.length === 0) {
+    throw new InvalidSelfImprovementPatchEvidenceError("evaluation.reasons must contain at least one non-empty reason.");
+  }
+  const metricEntries = Object.entries(evaluation.metrics);
+  if (metricEntries.length === 0) {
+    throw new InvalidSelfImprovementPatchEvidenceError("evaluation.metrics must contain at least one metric.");
+  }
+  for (const [metric, value] of metricEntries) {
+    requireNonBlank(metric, "evaluation.metrics key");
+    if (!Number.isFinite(value)) {
+      throw new InvalidSelfImprovementPatchEvidenceError(`evaluation.metrics.${metric} must be finite.`);
+    }
+  }
+}
+
+function requireIsolatedBranchWithinNamespace(isolatedBranch: string, namespace: string): void {
+  const normalizedBranch = requireNonBlank(isolatedBranch, "generated.isolatedBranch");
+  if (!normalizedBranch.startsWith(namespace)) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      "generated isolatedBranch must remain inside the authorized isolated workspace namespace.",
+    );
+  }
+  const suffix = normalizedBranch.slice(namespace.length);
+  if (suffix.length === 0 || suffix.includes("/") || suffix.includes(" ")) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      "generated isolatedBranch must identify a single canonical run branch inside the authorized namespace.",
+    );
+  }
 }
 
 /**
@@ -103,14 +161,15 @@ export async function proposeSelfImprovementFromFailedEvaluation(
   request: Readonly<SelfImprovementPatchRequest>,
   generator: SelfImprovementPatchGenerator,
 ): Promise<Readonly<SelfImprovementProposal>> {
-  if (request.evaluation.passed !== false) {
-    throw new SelfImprovementEvaluationDidNotFailError();
-  }
+  const executionId = requireNonBlank(request.executionId, "request.executionId");
+  const observedProblem = requireNonBlank(request.observedProblem, "request.observedProblem");
+  const objective = requireNonBlank(request.objective, "request.objective");
+  requireBoundFailingEvaluation(request.evaluation);
 
   const generated = await generator.generate(request);
-  requireBound(generated.executionId, request.executionId, "executionId");
-  requireBound(generated.observedProblem, request.observedProblem, "observedProblem");
-  requireBound(generated.objective, request.objective, "objective");
+  requireBound(generated.executionId, executionId, "executionId");
+  requireBound(generated.observedProblem, observedProblem, "observedProblem");
+  requireBound(generated.objective, objective, "objective");
 
   if (generated.evaluationPassed !== true) {
     throw new InvalidSelfImprovementPatchEvidenceError(
@@ -165,11 +224,7 @@ export async function proposeSelfImprovementFromAuthorizedOperationalCandidate(
   const scopedGenerator: SelfImprovementPatchGenerator = Object.freeze({
     async generate(scopedRequest: Readonly<SelfImprovementPatchRequest>): Promise<Readonly<SelfImprovementPatchEvidence>> {
       const generated = await generator.generate(scopedRequest);
-      if (!generated.isolatedBranch.trim().startsWith(isolatedWorkspaceNamespace)) {
-        throw new InvalidSelfImprovementPatchEvidenceError(
-          "generated isolatedBranch must remain inside the authorized isolated workspace namespace.",
-        );
-      }
+      requireIsolatedBranchWithinNamespace(generated.isolatedBranch, isolatedWorkspaceNamespace);
       return generated;
     },
   });

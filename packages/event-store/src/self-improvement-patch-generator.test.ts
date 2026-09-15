@@ -105,6 +105,17 @@ describe("EvidenceBackedSelfImprovementPatchGenerator", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "proposal/",
+    "proposal//run",
+    "proposal/run with space",
+    "sprint/",
+  ])("rejects non-canonical isolated branch '%s' before test execution", async (isolatedBranch) => {
+    const { generator, run } = fixture({ patch: { isolatedBranch } });
+    await expect(generator.generate(request)).rejects.toThrow("isolatedBranch");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate evidence identities", async () => {
     const prepare = vi.fn(async () => Object.freeze(patch({ patchArtifactId: "artifact-shared" })));
     const generator = new EvidenceBackedSelfImprovementPatchGenerator(
