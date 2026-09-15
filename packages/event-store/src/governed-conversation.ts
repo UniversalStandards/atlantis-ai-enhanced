@@ -9,7 +9,7 @@ import {
   InMemoryEventStore,
   type EventStore,
   type StoredEvent,
-} from "./index.js";
+} from "./event-store-core.js";
 
 export interface ConversationIdentity {
   readonly tenantId: string;
