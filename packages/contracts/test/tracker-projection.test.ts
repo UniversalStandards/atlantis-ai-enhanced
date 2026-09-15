@@ -88,10 +88,10 @@ describe("tracker projection contract", () => {
     const pullRequest = createTrackerPullRequestProjection(pullRequestInput());
 
     expect(issue.sourceRevision).toBe(
-      "TO_BE_FILLED_ISSUE_HASH",
+      "9618d05d603954e5543ece4d0b2803acfd5c43609b506d6e532ad9e8bda26cc1",
     );
     expect(pullRequest.sourceRevision).toBe(
-      "TO_BE_FILLED_PR_HASH",
+      "1eec20b78b4f811877697632c0b35b456b1037f94cfdc2c844faec757b85fe35",
     );
     expect(issue.projectionVersion).toEqual(TRACKER_PROJECTION_VERSION);
     expect(pullRequest.projectionVersion).toEqual(TRACKER_PROJECTION_VERSION);
