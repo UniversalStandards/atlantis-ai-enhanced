@@ -2,6 +2,7 @@ export {
   assertAuthorityClass,
   controlPlaneAuthorityClasses,
   createAuthorityDescriptor,
+  normalizeAuthorityDescriptor,
   selectAuthorityForClass,
   validateAuthorityDescriptor,
   type CodingAgentAuthorityDescriptor,

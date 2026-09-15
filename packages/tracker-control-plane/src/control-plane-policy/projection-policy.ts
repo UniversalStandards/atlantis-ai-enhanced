@@ -1,4 +1,7 @@
-import type { ControlPlaneAuthorityDescriptor } from "./authority.js";
+import {
+  normalizeAuthorityDescriptor,
+  type ControlPlaneAuthorityDescriptor,
+} from "./authority.js";
 import {
   requireEnumValue,
   requirePolicyVersion,
@@ -63,6 +66,7 @@ export function classifyProjectionCandidate(
     projectionClassifications,
   );
   const matchedSystemControlLabels = normalizeSystemControlLabels(request.labels);
+  const sourceIdentity = normalizeAuthorityDescriptor(request.sourceIdentity);
   const shouldExcludeProgramWork = requestedClassification === "program-work"
     && matchedSystemControlLabels.length > 0;
   const classification = shouldExcludeProgramWork
@@ -71,7 +75,7 @@ export function classifyProjectionCandidate(
 
   return Object.freeze({
     policyVersion,
-    sourceIdentity: request.sourceIdentity,
+    sourceIdentity,
     requestedClassification,
     classification,
     projectedAsProgramWork: classification === "program-work",

@@ -88,6 +88,9 @@ describe("drift policy", () => {
       }),
     );
     expect(duplicateRows.outcome).toBe("human-review");
+    if (duplicateRows.outcome !== "human-review") {
+      throw new Error("expected human-review outcome");
+    }
     expect(duplicateRows.automaticDeletionPermitted).toBe(false);
     expect(duplicateRows.incident.owner).toBe("tracker-control-plane");
     expect(duplicateRows.incident.sla).toEqual(incidentSlaPolicy().P1);
@@ -122,6 +125,9 @@ describe("drift policy", () => {
         }),
       );
       expect(blocked.outcome).toBe("blocked");
+      if (blocked.outcome !== "blocked") {
+        throw new Error("expected blocked outcome");
+      }
       expect(blocked.failClosed).toBe(true);
       expect(blocked.incident.owner).toBe("tracker-control-plane");
       expect(blocked.incident.sla).toEqual(incidentSlaPolicy().P1);

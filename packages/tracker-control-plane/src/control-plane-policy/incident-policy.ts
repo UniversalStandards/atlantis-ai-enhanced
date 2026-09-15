@@ -1,4 +1,7 @@
-import type { ControlPlaneAuthorityDescriptor } from "./authority.js";
+import {
+  normalizeAuthorityDescriptor,
+  type ControlPlaneAuthorityDescriptor,
+} from "./authority.js";
 import type { ProjectionClassification } from "./projection-policy.js";
 import {
   InvalidTrackerControlPlanePolicyError,
@@ -134,6 +137,8 @@ function validateIncidentProvenance(
 export function validateControlPlaneIncident(
   incident: ControlPlaneIncident,
 ): Readonly<ControlPlaneIncident> {
+  const sourceIdentity = normalizeAuthorityDescriptor(incident.sourceIdentity);
+  const targetIdentity = normalizeAuthorityDescriptor(incident.targetIdentity);
   return Object.freeze({
     policyVersion: requirePolicyVersion(incident.policyVersion),
     incidentId: requireNonBlank("incidentId", incident.incidentId),
@@ -150,8 +155,8 @@ export function validateControlPlaneIncident(
       incident.escalationState,
       controlPlaneIncidentEscalationStates,
     ),
-    sourceIdentity: incident.sourceIdentity,
-    targetIdentity: incident.targetIdentity,
+    sourceIdentity,
+    targetIdentity,
     classification: requireEnumValue(
       "classification",
       incident.classification,

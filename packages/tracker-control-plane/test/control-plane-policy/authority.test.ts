@@ -24,8 +24,8 @@ function authority(authorityClass: ControlPlaneAuthorityClass): ControlPlaneAuth
 
 describe("control-plane authority policy", () => {
   it("validates non-interchangeable role descriptors", () => {
-    const descriptors = controlPlaneAuthorityClasses.map((authorityClass) =>
-      validateAuthorityDescriptor(authority(authorityClass))
+    const descriptors: ControlPlaneAuthorityDescriptor[] = controlPlaneAuthorityClasses.map(
+      (authorityClass) => authority(authorityClass),
     );
     expect(descriptors).toHaveLength(controlPlaneAuthorityClasses.length);
     for (const expectedClass of controlPlaneAuthorityClasses) {

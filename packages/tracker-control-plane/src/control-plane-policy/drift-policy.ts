@@ -1,4 +1,7 @@
-import type { ControlPlaneAuthorityDescriptor } from "./authority.js";
+import {
+  normalizeAuthorityDescriptor,
+  type ControlPlaneAuthorityDescriptor,
+} from "./authority.js";
 import type { ProjectionClassification } from "./projection-policy.js";
 import {
   validateControlPlaneIncident,
@@ -87,7 +90,11 @@ export interface ControlPlaneRemediationPort {
 
 function requireIncident(
   incident: ControlPlaneIncident | undefined,
-  request: DriftEvaluationRequest,
+  request: Readonly<{
+    driftClassification: DriftClassification;
+    sourceIdentity: ControlPlaneAuthorityDescriptor;
+    targetIdentity: ControlPlaneAuthorityDescriptor;
+  }>,
 ): Readonly<ControlPlaneIncident> {
   if (incident === undefined) {
     throw new InvalidTrackerControlPlanePolicyError(
@@ -117,6 +124,8 @@ export function evaluateDrift(
     request.driftClassification,
     driftClassifications,
   );
+  const sourceIdentity = normalizeAuthorityDescriptor(request.sourceIdentity);
+  const targetIdentity = normalizeAuthorityDescriptor(request.targetIdentity);
 
   switch (driftClassification) {
     case "safe-stale-mirror":
@@ -125,8 +134,8 @@ export function evaluateDrift(
         outcome: "automatic-remediation",
         driftClassification,
         projectionClassification: request.projectionClassification,
-        sourceIdentity: request.sourceIdentity,
-        targetIdentity: request.targetIdentity,
+        sourceIdentity,
+        targetIdentity,
         remediation: "reconcile-stale-mirror",
       });
     case "missing-unambiguous-row":
@@ -135,8 +144,8 @@ export function evaluateDrift(
         outcome: "automatic-remediation",
         driftClassification,
         projectionClassification: request.projectionClassification,
-        sourceIdentity: request.sourceIdentity,
-        targetIdentity: request.targetIdentity,
+        sourceIdentity,
+        targetIdentity,
         remediation: "create-unambiguous-row",
       });
     case "duplicate-rows":
@@ -146,9 +155,13 @@ export function evaluateDrift(
         outcome: "human-review",
         driftClassification,
         projectionClassification: request.projectionClassification,
-        sourceIdentity: request.sourceIdentity,
-        targetIdentity: request.targetIdentity,
-        incident: requireIncident(request.incident, request),
+        sourceIdentity,
+        targetIdentity,
+        incident: requireIncident(request.incident, {
+          driftClassification,
+          sourceIdentity,
+          targetIdentity,
+        }),
         automaticDeletionPermitted: false,
       });
     case "ambiguous-mapping":
@@ -159,9 +172,13 @@ export function evaluateDrift(
         outcome: "blocked",
         driftClassification,
         projectionClassification: request.projectionClassification,
-        sourceIdentity: request.sourceIdentity,
-        targetIdentity: request.targetIdentity,
-        incident: requireIncident(request.incident, request),
+        sourceIdentity,
+        targetIdentity,
+        incident: requireIncident(request.incident, {
+          driftClassification,
+          sourceIdentity,
+          targetIdentity,
+        }),
         failClosed: true,
       });
   }

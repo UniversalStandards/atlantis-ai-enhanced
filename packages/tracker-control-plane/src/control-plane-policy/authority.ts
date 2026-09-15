@@ -118,11 +118,19 @@ export function validateAuthorityDescriptor<TClass extends ControlPlaneAuthority
   }) as Readonly<ControlPlaneAuthorityDescriptorBase<TClass>>;
 }
 
+export function normalizeAuthorityDescriptor(
+  descriptor: ControlPlaneAuthorityDescriptor,
+): ControlPlaneAuthorityDescriptor {
+  return validateAuthorityDescriptor(
+    descriptor,
+  ) as unknown as ControlPlaneAuthorityDescriptor;
+}
+
 export function assertAuthorityClass<TClass extends ControlPlaneAuthorityClass>(
   descriptor: ControlPlaneAuthorityDescriptor,
   expectedClass: TClass,
 ): Extract<ControlPlaneAuthorityDescriptor, { readonly authorityClass: TClass }> {
-  const validated = validateAuthorityDescriptor(descriptor);
+  const validated = normalizeAuthorityDescriptor(descriptor);
   if (validated.authorityClass !== expectedClass) {
     throw new InvalidTrackerControlPlanePolicyError(
       `authorityClass ${validated.authorityClass} cannot satisfy ${expectedClass} authority`,
@@ -138,7 +146,7 @@ export function selectAuthorityForClass<TClass extends ControlPlaneAuthorityClas
   authorities: readonly ControlPlaneAuthorityDescriptor[],
   expectedClass: TClass,
 ): Extract<ControlPlaneAuthorityDescriptor, { readonly authorityClass: TClass }> {
-  const validated = authorities.map((authority) => validateAuthorityDescriptor(authority));
+  const validated = authorities.map((authority) => normalizeAuthorityDescriptor(authority));
   const matches = validated.filter(
     (authority) => authority.authorityClass === expectedClass,
   );
@@ -164,7 +172,7 @@ export function createAuthorityDescriptor<TClass extends ControlPlaneAuthorityCl
     evidence: readonly string[];
   }>,
 ): Extract<ControlPlaneAuthorityDescriptor, { readonly authorityClass: TClass }> {
-  return validateAuthorityDescriptor({
+  const descriptor = validateAuthorityDescriptor({
     policyVersion: trackerControlPlanePolicyVersion,
     authorityClass,
     authorityId: input.authorityId,
@@ -178,5 +186,9 @@ export function createAuthorityDescriptor<TClass extends ControlPlaneAuthorityCl
       justification: input.justification,
       evidence: input.evidence,
     },
-  }) as Extract<ControlPlaneAuthorityDescriptor, { readonly authorityClass: TClass }>;
+  });
+  return descriptor as unknown as Extract<
+    ControlPlaneAuthorityDescriptor,
+    { readonly authorityClass: TClass }
+  >;
 }
