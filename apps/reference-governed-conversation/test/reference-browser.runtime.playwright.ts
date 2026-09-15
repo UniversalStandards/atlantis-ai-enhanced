@@ -22,7 +22,7 @@ const appReference = join(
   "apps/reference-governed-conversation/src/reference-app.ts",
 );
 const contractApproval = join(repositoryRoot, "packages/contracts/src/approval-control.ts");
-const eventStoreIndex = join(repositoryRoot, "packages/event-store/src/index.ts");
+const eventStoreCore = join(repositoryRoot, "packages/event-store/src/event-store-core.ts");
 const eventStoreConversation = join(
   repositoryRoot,
   "packages/event-store/src/governed-conversation.ts",
@@ -46,7 +46,7 @@ await execFile(
     appBrowserRuntime,
     appReference,
     contractApproval,
-    eventStoreIndex,
+    eventStoreCore,
     eventStoreConversation,
   ],
   { cwd: repositoryRoot },
@@ -80,7 +80,7 @@ function createHtml(): string {
     <button data-testid="request-tool">Request tool</button>
     <button data-testid="execute-tool">Execute pending tool</button>
     <label>Resolved by <input data-testid="resolved-by" value="reviewer-a" /></label>
-    <label>Resolved at <input data-testid="resolved-at" value="2026-09-05T00:00:06.000Z" /></label>
+    <label>Resolved at <input data-testid="resolved-at" value="2999-01-01T00:00:00.000Z" /></label>
     <button data-testid="approve-tool">Approve pending tool</button>
     <button data-testid="delete-conversation">Delete conversation</button>
     <section data-testid="shell"></section>
