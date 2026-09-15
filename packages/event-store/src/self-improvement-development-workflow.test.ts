@@ -77,8 +77,24 @@ function operationalAdmission(
   overrides: Partial<AuthorizedSelfImprovementOperationalAdmission> = {},
 ): AuthorizedSelfImprovementOperationalAdmission {
   const authorization = operationalAuthorization();
+  const expectedAdmission = Object.freeze({
+    candidateId: authorization.candidateId,
+    repository: authorization.repository,
+    baseRevision: authorization.baseRevision,
+    configurationDigest: authorization.configurationDigest,
+    credentialClass: authorization.credentialClass,
+    networkBoundary: authorization.networkBoundary,
+    verificationGates: authorization.verificationGates,
+    decisionEvidence: authorization.decisionEvidence,
+    approvalIdentities: Object.freeze({
+      architecture: "test-architecture",
+      operations: "test-operations",
+      "security-network": "test-security-network",
+    }),
+  });
   return {
     authorization,
+    expectedAdmission,
     featureGateEnabled: true,
     repository: authorization.repository,
     baseRevision: authorization.baseRevision,
@@ -114,6 +130,44 @@ describe("proposeSelfImprovementFromFailedEvaluation", () => {
     await expect(
       proposeSelfImprovementFromFailedEvaluation(passingRequest, { generate }),
     ).rejects.toBeInstanceOf(SelfImprovementEvaluationDidNotFailError);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["executionId", "   "],
+    ["observedProblem", "\n\t"],
+    ["objective", "  "],
+  ] as const)("rejects blank request %s before patch generation", async (field, value) => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, [field]: value },
+        { generate },
+      ),
+    ).rejects.toThrow(`request.${field} must be a non-empty string`);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-finite score, empty reasons, or empty metrics in the triggering evaluation", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, evaluation: Object.freeze({ ...failedRequest.evaluation, score: Number.NaN }) },
+        { generate },
+      ),
+    ).rejects.toThrow("evaluation.score must be a finite number");
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, evaluation: Object.freeze({ ...failedRequest.evaluation, reasons: Object.freeze([]) }) },
+        { generate },
+      ),
+    ).rejects.toThrow("evaluation.reasons must contain at least one non-empty reason");
+    await expect(
+      proposeSelfImprovementFromFailedEvaluation(
+        { ...failedRequest, evaluation: Object.freeze({ ...failedRequest.evaluation, metrics: Object.freeze({}) }) },
+        { generate },
+      ),
+    ).rejects.toThrow("evaluation.metrics must contain at least one metric");
     expect(generate).not.toHaveBeenCalled();
   });
 
@@ -199,6 +253,20 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it("rejects missing expected admission decisions before patch generation", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const { networkBoundary: _missing, ...missingExpected } = operationalAdmission().expectedAdmission as Record<string, unknown>;
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ expectedAdmission: missingExpected }),
+      ),
+    ).rejects.toThrow("expectedAdmission.networkBoundary");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["repository", "UniversalStandards/other-repository"],
     ["baseRevision", "other-base-revision"],
@@ -226,5 +294,82 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
       ),
     ).rejects.toThrow("generated isolatedBranch must remain inside the authorized isolated workspace namespace");
     expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("rejects non-canonical isolated workspace namespaces in authorization", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const authorization = { ...operationalAuthorization(), isolatedWorkspaceNamespace: "proposal//" };
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ authorization }),
+      ),
+    ).rejects.toThrow("must be canonical");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-canonical generated branch paths inside the authorized namespace", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence({ isolatedBranch: "proposal/run-1/extra" })));
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission(),
+      ),
+    ).rejects.toThrow("must identify a single canonical run branch");
+    expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it("rejects prohibited authority in the admitted candidate", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const authorization = { ...operationalAuthorization(), authorityBoundary: "merge-allowed" };
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ authorization }),
+      ),
+    ).rejects.toThrow("authorityBoundary must prove no-prohibited-authority");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects substituted approval identity in expected admission", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const admission = operationalAdmission();
+    const expectedAdmission = {
+      ...(admission.expectedAdmission as Record<string, unknown>),
+      approvalIdentities: {
+        ...((admission.expectedAdmission as { approvalIdentities: Record<string, string> }).approvalIdentities),
+        "security-network": "different-security-network-approver",
+      },
+    };
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ expectedAdmission }),
+      ),
+    ).rejects.toThrow("security-network approval identity does not match expected admission value");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["networkBoundary", "expanded-network"],
+    ["credentialClass", "expanded-credential-class"],
+  ] as const)("rejects unapproved %s expansion before patch generation", async (field, value) => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const authorization = { ...operationalAuthorization(), [field]: value };
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ authorization }),
+      ),
+    ).rejects.toThrow(`${field} does not match expected admission value`);
+    expect(generate).not.toHaveBeenCalled();
   });
 });
