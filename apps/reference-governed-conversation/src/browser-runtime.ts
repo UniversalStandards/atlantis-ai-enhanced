@@ -69,7 +69,7 @@ export function mountReferenceConversationBrowserApp(
   };
   const safeRender = async (result?: string, error?: string) => {
     try {
-      render(result, error);
+      await render(result, error);
     } catch (cause) {
       showError(cause instanceof Error ? cause.message : String(cause));
     }
