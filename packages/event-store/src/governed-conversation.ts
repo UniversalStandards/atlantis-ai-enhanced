@@ -99,6 +99,8 @@ interface ConversationRecord {
 
 const INVALID_CONVERSATION_STREAM_MESSAGE =
   "conversation stream must start with conversation.created";
+const INVALID_CONVERSATION_PAYLOAD_MESSAGE =
+  "conversation.created payload is invalid";
 
 function requireNonEmpty(field: string, value: string): string {
   const normalized = value.trim();
@@ -257,7 +259,8 @@ export class GovernedConversationService {
      if (
        error instanceof ConversationNotFoundError ||
        (error instanceof ConversationApprovalStateError &&
-         error.message === INVALID_CONVERSATION_STREAM_MESSAGE)
+         (error.message === INVALID_CONVERSATION_STREAM_MESSAGE ||
+           error.message === INVALID_CONVERSATION_PAYLOAD_MESSAGE))
      ) {
        throw new ConversationAccessDeniedError("conversation access denied for tenant/user context");
      }
@@ -381,7 +384,7 @@ export class GovernedConversationService {
      const tenantId = first.payload.tenantId;
      const userId = first.payload.userId;
      if (typeof tenantId !== "string" || tenantId.trim().length === 0 || typeof userId !== "string" || userId.trim().length === 0) {
-       throw new ConversationApprovalStateError("conversation.created payload is invalid");
+       throw new ConversationApprovalStateError(INVALID_CONVERSATION_PAYLOAD_MESSAGE);
      }
      const messages: ConversationMessage[] = [];
      let deleted = false;
