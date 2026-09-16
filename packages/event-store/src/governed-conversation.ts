@@ -1,5 +1,20 @@
-import { requireApproved, type ApprovalRequest, type ApprovalResolution } from "../../contracts/src/approval-control.js";
-import { InMemoryEventStore, type EventStore, type StoredEvent } from "./index.js";
+import {
+  ApprovalRejectedError,
+  requireApproved,
+  type ApprovalRequest,
+  type ApprovalResolution,
+} from "../../contracts/src/approval-control.js";
+import {
+  ConcurrencyConflictError,
+  InMemoryEventStore,
+  type EventStore,
+  type StoredEvent,
+} from "./event-store-core.js";
+
+export interface ConversationIdentity {
+  readonly tenantId: string;
+  readonly userId: string;
+}
 
 export interface ConversationMessage {
   readonly id: string;
@@ -26,12 +41,85 @@ export class EchoMockConversationProvider implements DeterministicConversationPr
   }
 }
 
+export class InvalidConversationIdentityError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidConversationIdentityError";
+  }
+}
+
+export class ConversationAccessDeniedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "ConversationAccessDeniedError";
+  }
+}
+
+export class ConversationApprovalStateError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "ConversationApprovalStateError";
+  }
+}
+
+export class ConversationNotFoundError extends Error {
+  public constructor() {
+    super("conversation not found");
+    this.name = "ConversationNotFoundError";
+  }
+}
+
 interface ConversationEventPayload {
   readonly tenantId: string;
   readonly userId: string;
   readonly message?: ConversationMessage;
   readonly approvalId?: string;
+  readonly requestVersion?: number;
+  readonly stepId?: string;
   readonly toolName?: string;
+  readonly action?: string;
+  readonly reason?: string;
+  readonly requestedBy?: string;
+  readonly resolvedBy?: string;
+}
+
+interface ConversationRecord {
+  readonly snapshot: ConversationSnapshot;
+  readonly events: readonly StoredEvent<ConversationEventPayload>[];
+  readonly streamVersion: number;
+}
+
+function requireNonEmpty(field: string, value: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new InvalidConversationIdentityError(`${field} must be non-empty`);
+  }
+  return normalized;
+}
+
+function normalizeIdentity(identity: ConversationIdentity): ConversationIdentity {
+  return Object.freeze({
+    tenantId: requireNonEmpty("tenantId", identity.tenantId),
+    userId: requireNonEmpty("userId", identity.userId),
+  });
+}
+
+function redactAuditEvent(
+  event: StoredEvent<ConversationEventPayload>,
+): StoredEvent<ConversationEventPayload> {
+  if (event.payload.message === undefined) {
+    return event;
+  }
+  return Object.freeze({
+    ...event,
+    payload: Object.freeze({
+      ...event.payload,
+      message: Object.freeze({
+        ...event.payload.message,
+        content: "[deleted]",
+      }),
+    }),
+  });
 }
 
 export class GovernedConversationService {
@@ -42,31 +130,233 @@ export class GovernedConversationService {
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
   private nextId(prefix: string): string { this.counter += 1; return `${prefix}-${this.counter}`; }
-  private append(id: string, eventType: string, payload: ConversationEventPayload): void {
-    this.store.append({ streamId: id, eventId: this.nextId("event"), eventType, payload, occurredAt: this.now(), traceId: id, correlationId: id }, this.store.getStreamVersion(id));
+  private append(
+   id: string,
+   eventType: string,
+   payload: ConversationEventPayload,
+   expectedVersion: number,
+  ): StoredEvent<ConversationEventPayload> {
+   return this.store.append({ streamId: id, eventId: this.nextId("event"), eventType, payload, occurredAt: this.now(), traceId: id, correlationId: id }, expectedVersion);
   }
   public createConversation(tenantId: string, userId: string): string {
-    const id = this.nextId("conversation"); this.append(id, "conversation.created", { tenantId, userId }); return id;
+   const identity = normalizeIdentity({ tenantId, userId });
+   const id = this.nextId("conversation"); this.append(id, "conversation.created", identity, 0); return id;
   }
-  public async sendMessage(id: string, content: string): Promise<readonly string[]> {
-    const snapshot = this.readConversation(id); if (snapshot.deleted) throw new Error("conversation is deleted");
-    this.append(id, "conversation.message", { tenantId: snapshot.tenantId, userId: snapshot.userId, message: Object.freeze({ id: this.nextId("message"), role: "user", content }) });
-    const chunks: string[] = []; for await (const chunk of this.provider.stream(content)) chunks.push(chunk);
-    this.append(id, "conversation.message", { tenantId: snapshot.tenantId, userId: snapshot.userId, message: Object.freeze({ id: this.nextId("message"), role: "assistant", content: chunks.join("").trimEnd(), model: Object.freeze({ family: "mock", capability: "conversation" }) }) });
-    return Object.freeze(chunks);
+  public async sendMessage(identity: ConversationIdentity, id: string, content: string): Promise<readonly string[]> {
+   const record = this.requireActiveConversation(identity, id);
+   const normalizedContent = requireNonEmpty("content", content);
+   const userMessage = this.append(id, "conversation.message", { tenantId: record.snapshot.tenantId, userId: record.snapshot.userId, message: Object.freeze({ id: this.nextId("message"), role: "user", content: normalizedContent }) }, record.streamVersion);
+   const chunks: string[] = []; for await (const chunk of this.provider.stream(normalizedContent)) chunks.push(chunk);
+   this.append(id, "conversation.message", { tenantId: record.snapshot.tenantId, userId: record.snapshot.userId, message: Object.freeze({ id: this.nextId("message"), role: "assistant", content: chunks.join("").trimEnd(), model: Object.freeze({ family: "mock", capability: "conversation" }) }) }, userMessage.streamVersion);
+   return Object.freeze(chunks);
   }
-  public buildToolApproval(id: string, toolName: string): ApprovalRequest {
-    const s = this.readConversation(id); return Object.freeze({ approvalId: this.nextId("approval"), executionId: id, requestVersion: 1, stepId: `tool:${toolName}`, action: `invoke harmless demonstration tool ${toolName}`, reason: "demonstration tools require explicit approval", requestedBy: s.userId, requestedAt: this.now(), metadata: Object.freeze({ tenantId: s.tenantId, toolName }) });
+  public buildToolApproval(identity: ConversationIdentity, id: string, toolName: string): ApprovalRequest {
+   const normalizedToolName = requireNonEmpty("toolName", toolName);
+   const record = this.requireActiveConversation(identity, id);
+   const request = Object.freeze({
+     approvalId: this.nextId("approval"),
+     executionId: id,
+     requestVersion: 1,
+     stepId: `tool:${normalizedToolName}`,
+     action: `invoke harmless demonstration tool ${normalizedToolName}`,
+     reason: "demonstration tools require explicit approval",
+     requestedBy: record.snapshot.userId,
+     requestedAt: this.now(),
+     metadata: Object.freeze({
+       tenantId: record.snapshot.tenantId,
+       userId: record.snapshot.userId,
+       toolName: normalizedToolName,
+     }),
+   });
+   this.append(id, "conversation.tool.requested", {
+     tenantId: record.snapshot.tenantId,
+     userId: record.snapshot.userId,
+     approvalId: request.approvalId,
+     requestVersion: request.requestVersion,
+     stepId: request.stepId,
+     toolName: normalizedToolName,
+     action: request.action,
+     reason: request.reason,
+     requestedBy: request.requestedBy,
+   }, record.streamVersion);
+   return request;
   }
-  public executeHarmlessTool(request: ApprovalRequest, resolution?: ApprovalResolution): string {
-    const approval = requireApproved(request, resolution); const s = this.readConversation(request.executionId); const toolName = request.metadata.toolName ?? "unknown";
-    this.append(request.executionId, "conversation.tool.approved", { tenantId: s.tenantId, userId: s.userId, approvalId: approval.request.approvalId, toolName }); return `tool:${toolName}:ok`;
+  public executeHarmlessTool(identity: ConversationIdentity, request: ApprovalRequest, resolution?: ApprovalResolution): string {
+   const actor = normalizeIdentity(identity);
+   const record = this.requireActiveConversation(actor, request.executionId);
+   const pendingRequest = this.requirePendingToolApproval(record, request);
+   const toolName = pendingRequest.payload.toolName ?? "unknown";
+   try {
+     const approval = requireApproved(request, resolution);
+     this.appendTerminalToolApproval(record, request, "conversation.tool.approved", {
+       tenantId: record.snapshot.tenantId,
+       userId: record.snapshot.userId,
+       approvalId: approval.request.approvalId,
+       requestVersion: approval.request.requestVersion,
+       toolName,
+       requestedBy: approval.request.requestedBy,
+       resolvedBy: approval.resolution.resolvedBy,
+     });
+     return `tool:${toolName}:ok`;
+   } catch (error) {
+     if (error instanceof ApprovalRejectedError) {
+       this.appendTerminalToolApproval(record, request, "conversation.tool.rejected", {
+         tenantId: record.snapshot.tenantId,
+         userId: record.snapshot.userId,
+         approvalId: error.approval.request.approvalId,
+         requestVersion: error.approval.request.requestVersion,
+         toolName,
+         requestedBy: error.approval.request.requestedBy,
+         resolvedBy: error.approval.resolution.resolvedBy,
+       });
+     }
+     throw error;
+   }
   }
-  public deleteConversation(id: string): void { const s = this.readConversation(id); if (!s.deleted) this.append(id, "conversation.deleted", { tenantId: s.tenantId, userId: s.userId }); }
-  public readConversation(id: string): ConversationSnapshot {
-    const events = this.store.readStream(id) as readonly StoredEvent<ConversationEventPayload>[]; const first = events[0]; if (first === undefined) throw new Error("conversation not found");
-    const messages: ConversationMessage[] = []; let deleted = false; for (const event of events) { if (event.eventType === "conversation.message" && event.payload.message !== undefined) messages.push(event.payload.message); if (event.eventType === "conversation.deleted") deleted = true; }
-    return Object.freeze({ conversationId: id, tenantId: first.payload.tenantId, userId: first.payload.userId, messages: deleted ? Object.freeze([]) : Object.freeze(messages), deleted });
+  public deleteConversation(identity: ConversationIdentity, id: string): void {
+   const record = this.requireOwnedConversation(identity, id);
+   if (!record.snapshot.deleted) {
+     this.append(id, "conversation.deleted", {
+       tenantId: record.snapshot.tenantId,
+       userId: record.snapshot.userId,
+     }, record.streamVersion);
+   }
   }
-  public readAuditEvents(id: string): readonly StoredEvent[] { return this.store.readStream(id); }
+  public readConversation(identity: ConversationIdentity, id: string): ConversationSnapshot {
+   return this.requireOwnedConversation(identity, id).snapshot;
+  }
+  public readAuditEvents(identity: ConversationIdentity, id: string): readonly StoredEvent[] {
+   const record = this.requireOwnedConversation(identity, id);
+   return record.snapshot.deleted ? Object.freeze(record.events.map(redactAuditEvent)) : record.events;
+  }
+  private requireOwnedConversation(identity: ConversationIdentity, id: string): ConversationRecord {
+   const actor = normalizeIdentity(identity);
+   let record: ConversationRecord;
+   try {
+     record = this.readConversationRecord(id);
+   } catch (error) {
+     if (error instanceof ConversationNotFoundError) {
+       throw new ConversationAccessDeniedError("conversation access denied for tenant/user context");
+     }
+     throw error;
+   }
+   if (
+     record.snapshot.tenantId !== actor.tenantId ||
+     record.snapshot.userId !== actor.userId
+   ) {
+     throw new ConversationAccessDeniedError("conversation access denied for tenant/user context");
+   }
+   return record;
+  }
+  private requireActiveConversation(identity: ConversationIdentity, id: string): ConversationRecord {
+   const record = this.requireOwnedConversation(identity, id);
+   if (record.snapshot.deleted) {
+     throw new Error("conversation is deleted");
+   }
+   return record;
+  }
+  private requirePendingToolApproval(
+   record: ConversationRecord,
+   request: ApprovalRequest,
+  ): StoredEvent<ConversationEventPayload> {
+   const matchingRequest = record.events.find((event) =>
+     event.eventType === "conversation.tool.requested" &&
+     event.streamId === request.executionId &&
+     event.payload.approvalId === request.approvalId &&
+     event.payload.requestVersion === request.requestVersion,
+   );
+   if (
+     matchingRequest === undefined ||
+     request.executionId !== record.snapshot.conversationId ||
+     request.metadata.tenantId !== record.snapshot.tenantId ||
+     request.metadata.userId !== record.snapshot.userId ||
+     request.requestedBy !== record.snapshot.userId ||
+     matchingRequest.payload.tenantId !== record.snapshot.tenantId ||
+     matchingRequest.payload.userId !== record.snapshot.userId ||
+     matchingRequest.payload.stepId !== request.stepId ||
+     matchingRequest.payload.toolName !== request.metadata.toolName ||
+     matchingRequest.payload.requestedBy !== request.requestedBy ||
+     matchingRequest.payload.action !== request.action ||
+     matchingRequest.payload.reason !== request.reason
+   ) {
+     throw new ConversationApprovalStateError(
+       "approval request does not match a pending governed tool request",
+     );
+   }
+   if (
+     record.events.some((event) =>
+       event.payload.approvalId === request.approvalId &&
+       event.payload.requestVersion === request.requestVersion &&
+       (event.eventType === "conversation.tool.approved" ||
+         event.eventType === "conversation.tool.rejected"),
+     )
+   ) {
+     throw new ConversationApprovalStateError("approval request is already resolved");
+   }
+   return matchingRequest;
+  }
+  private appendTerminalToolApproval(
+   record: ConversationRecord,
+   request: ApprovalRequest,
+   eventType: "conversation.tool.approved" | "conversation.tool.rejected",
+   payload: ConversationEventPayload,
+  ): void {
+   let currentRecord = record;
+   for (let attempt = 0; attempt < 3; attempt += 1) {
+     try {
+       this.append(request.executionId, eventType, payload, currentRecord.streamVersion);
+       return;
+     } catch (error) {
+       if (!(error instanceof ConcurrencyConflictError)) {
+         throw error;
+       }
+       currentRecord = this.requireActiveConversation(
+         {
+           tenantId: currentRecord.snapshot.tenantId,
+           userId: currentRecord.snapshot.userId,
+         },
+         request.executionId,
+       );
+       this.requirePendingToolApproval(currentRecord, request);
+     }
+   }
+   throw new ConversationApprovalStateError(
+     "approval request could not be finalized before concurrent state changes",
+   );
+  }
+  private readConversationRecord(id: string): ConversationRecord {
+   for (let attempt = 0; attempt < 3; attempt += 1) {
+     const events = this.store.readStream(id) as readonly StoredEvent<ConversationEventPayload>[];
+     const first = events[0];
+     if (first === undefined) {
+       throw new ConversationNotFoundError();
+     }
+     const messages: ConversationMessage[] = [];
+     let deleted = false;
+     for (const event of events) {
+       if (event.eventType === "conversation.message" && event.payload.message !== undefined) {
+         messages.push(event.payload.message);
+       }
+       if (event.eventType === "conversation.deleted") {
+         deleted = true;
+       }
+     }
+     const streamVersion = events.at(-1)?.streamVersion ?? 0;
+     if (this.store.getStreamVersion(id) !== streamVersion) {
+       continue;
+     }
+     return Object.freeze({
+       snapshot: Object.freeze({
+         conversationId: id,
+         tenantId: first.payload.tenantId,
+         userId: first.payload.userId,
+         messages: deleted ? Object.freeze([]) : Object.freeze(messages),
+         deleted,
+       }),
+       events,
+       streamVersion,
+     });
+   }
+   throw new ConversationApprovalStateError("conversation state changed during read");
+  }
 }
