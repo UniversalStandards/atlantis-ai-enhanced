@@ -372,7 +372,10 @@ export class GovernedConversationService {
    for (let attempt = 0; attempt < 3; attempt += 1) {
      const events = this.store.readStream(id) as readonly StoredEvent<ConversationEventPayload>[];
      const first = events[0];
-     if (first === undefined || first.eventType !== "conversation.created") {
+     if (first === undefined) {
+       throw new ConversationNotFoundError();
+     }
+     if (first.eventType !== "conversation.created") {
        throw new ConversationApprovalStateError(INVALID_CONVERSATION_STREAM_MESSAGE);
      }
      const tenantId = first.payload.tenantId;
