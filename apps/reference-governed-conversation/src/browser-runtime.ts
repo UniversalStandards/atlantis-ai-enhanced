@@ -20,15 +20,15 @@ function bindClick(
   document: Document,
   testId: string,
   handler: () => Promise<string> | string,
-  render: (result?: string, error?: string) => void,
+  render: (result?: string, error?: string) => Promise<void> | void,
 ): void {
   requireElement<HTMLButtonElement>(document, `[data-testid="${testId}"]`).addEventListener(
     "click",
     async () => {
       try {
-        render(await handler(), undefined);
+        await render(await handler(), undefined);
       } catch (error) {
-        render(undefined, error instanceof Error ? error.message : String(error));
+        await render(undefined, error instanceof Error ? error.message : String(error));
       }
     },
   );
@@ -39,16 +39,14 @@ export function mountReferenceConversationBrowserApp(
   app: ReferenceConversationApp = new ReferenceConversationApp(),
 ): void {
   const shell = requireElement<HTMLElement>(document, "[data-testid='shell']");
+  const showError = (message: string) => {
+    setText(document, "error", message);
+    setText(document, "result", "");
+  };
 
   const render = (result?: string, error?: string) => {
     const view = app.view();
-    const auditEvents = (() => {
-      try {
-        return app.readAuditEvents();
-      } catch {
-        return [] as const;
-      }
-    })();
+    const auditEvents = view.auditEvents;
     shell.innerHTML = renderReferenceAppShell(view);
     setText(
       document,
@@ -69,6 +67,13 @@ export function mountReferenceConversationBrowserApp(
     setText(document, "error", error ?? "");
     setText(document, "result", result ?? "");
   };
+  const safeRender = async (result?: string, error?: string) => {
+    try {
+      render(result, error);
+    } catch (cause) {
+      showError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
 
   bindClick(
     document,
@@ -80,31 +85,31 @@ export function mountReferenceConversationBrowserApp(
       });
       return "signed-in";
     },
-    render,
+    safeRender,
   );
   bindClick(document, "sign-out", () => {
     app.signOut();
     return "signed-out";
-  }, render);
-  bindClick(document, "create-conversation", () => app.createConversation(), render);
+  }, safeRender);
+  bindClick(document, "create-conversation", () => app.createConversation(), safeRender);
   bindClick(document, "open-conversation", () => {
     app.openConversation(readValue(document, "open-conversation-id"));
     return "opened";
-  }, render);
+  }, safeRender);
   bindClick(document, "send-message", async () =>
-    (await app.sendMessage(readValue(document, "message-input"))).join(""), render);
+    (await app.sendMessage(readValue(document, "message-input"))).join(""), safeRender);
   bindClick(document, "request-tool", () =>
-    app.requestHarmlessTool(readValue(document, "tool-name")).approvalId, render);
-  bindClick(document, "execute-tool", () => app.executePendingTool(), render);
+    app.requestHarmlessTool(readValue(document, "tool-name")).approvalId, safeRender);
+  bindClick(document, "execute-tool", () => app.executePendingTool(), safeRender);
   bindClick(document, "approve-tool", () =>
     app.approvePendingTool(
       readValue(document, "resolved-by"),
       readValue(document, "resolved-at"),
-    ), render);
+    ), safeRender);
   bindClick(document, "delete-conversation", () => {
     app.deleteConversation();
     return "deleted";
-  }, render);
+  }, safeRender);
 
   render();
 }

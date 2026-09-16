@@ -83,11 +83,17 @@ function createHtml(): string {
     <label>Resolved at <input data-testid="resolved-at" value="2999-01-01T00:00:00.000Z" /></label>
     <button data-testid="approve-tool">Approve pending tool</button>
     <button data-testid="delete-conversation">Delete conversation</button>
-    <section data-testid="shell"></section>
-    <pre data-testid="audit-types"></pre>
-    <pre data-testid="audit-message-contents"></pre>
-    <pre data-testid="error"></pre>
-    <pre data-testid="result"></pre>
+    <section
+      data-testid="shell"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label="Governed conversation state"
+    ></section>
+    <pre data-testid="audit-types" role="log" aria-live="polite" aria-label="Audit event types"></pre>
+    <pre data-testid="audit-message-contents" aria-label="Audit message contents"></pre>
+    <pre data-testid="error" role="alert" aria-live="assertive"></pre>
+    <pre data-testid="result" role="status" aria-live="polite"></pre>
     <script type="module">
       import { mountReferenceConversationBrowserApp } from "/apps/reference-governed-conversation/src/browser-runtime.js";
       mountReferenceConversationBrowserApp(document);
@@ -143,6 +149,11 @@ test.afterAll(async () => {
 test("runs sign-in, conversation, approval gate, audit evidence, and deletion in a real browser runtime", async ({ page }) => {
   await page.goto(origin);
 
+  await expect(page.getByTestId("shell")).toHaveAttribute("role", "status");
+  await expect(page.getByTestId("shell")).toHaveAttribute("aria-live", "polite");
+  await expect(page.getByTestId("result")).toHaveAttribute("role", "status");
+  await expect(page.getByTestId("error")).toHaveAttribute("role", "alert");
+
   await page.getByTestId("create-conversation").click();
   await expect(page.getByTestId("error")).toHaveText("reference sign-in required");
 
@@ -162,6 +173,7 @@ test("runs sign-in, conversation, approval gate, audit evidence, and deletion in
 
   await page.getByTestId("request-tool").click();
   await expect(page.locator("[data-context='pending-approval']")).toContainText("approval-");
+  await expect(page.getByTestId("audit-types")).toContainText("conversation.tool.requested");
 
   await page.getByTestId("execute-tool").click();
   await expect(page.getByTestId("error")).toContainText("Approval approval-");

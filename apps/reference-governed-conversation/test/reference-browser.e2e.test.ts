@@ -85,6 +85,15 @@ class ConcurrentApprovalStore implements EventStore {
   }
 }
 
+class AuditReadFailureService extends GovernedConversationService {
+  public override readAuditEvents(
+    _identity: { readonly tenantId: string; readonly userId: string },
+    _id: string,
+  ): readonly StoredEvent[] {
+    throw new Error("audit read failed");
+  }
+}
+
 describe("reference browser governed conversation path", () => {
   it("supports sign-in, deterministic streaming, explicit approval, audit evidence, and bounded deletion", async () => {
     const app = new ReferenceConversationApp(
@@ -224,6 +233,16 @@ describe("reference browser governed conversation path", () => {
       }),
     ).toThrow(ConversationApprovalStateError);
     expect(app.view().pendingApproval).toBeNull();
+  });
+
+  it("does not mask audit-read failures once the conversation itself is readable", () => {
+    const app = new ReferenceConversationApp(
+      new AuditReadFailureService(undefined, undefined, deterministicClock()),
+    );
+    app.signIn({ tenantId: "tenant-a", userId: "user-a" });
+    app.createConversation();
+
+    expect(() => app.view()).toThrow("audit read failed");
   });
 
   it("escapes dynamic shell fields before rendering", () => {

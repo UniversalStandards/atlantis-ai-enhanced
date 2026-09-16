@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ApprovalRejectedError,
   ApprovalRequiredError,
+  InvalidApprovalError,
 } from "../../contracts/src/approval-control.js";
 import {
   ConversationAccessDeniedError,
@@ -92,7 +93,25 @@ describe("governed conversation vertical slice", () => {
     const request = service.buildToolApproval(actor, id, "echo-status");
     expect(() => service.executeHarmlessTool(actor, request)).toThrow(ApprovalRequiredError);
     expect(service.executeHarmlessTool(actor, request, { ...reviewerApproval, approvalId: request.approvalId, executionId: request.executionId, requestVersion: request.requestVersion })).toBe("tool:echo-status:ok");
-    expect(service.readAuditEvents(actor, id).some((event) => event.eventType === "conversation.tool.approved")).toBe(true);
+    const approvalEvent = service
+      .readAuditEvents(actor, id)
+      .find((event) => event.eventType === "conversation.tool.approved");
+    expect(approvalEvent?.payload).toMatchObject({
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+      executionId: request.executionId,
+      approvalId: request.approvalId,
+      requestVersion: request.requestVersion,
+      stepId: request.stepId,
+      toolName: request.metadata.toolName,
+      action: request.action,
+      reason: request.reason,
+      requestedBy: request.requestedBy,
+      requestedAt: request.requestedAt,
+      resolvedBy: reviewerApproval.resolvedBy,
+      resolvedAt: reviewerApproval.resolvedAt,
+      decision: "approved",
+    });
     service.deleteConversation(actor, id);
     expect(service.readConversation(actor, id)).toMatchObject({ deleted: true, messages: [] });
     const redactedMessages = service
@@ -222,6 +241,137 @@ describe("governed conversation vertical slice", () => {
         },
       ),
     ).toThrow(ConversationApprovalStateError);
+  });
+
+  it("rejects approval requests whose action, reason, or tool binding does not match the recorded pending request", () => {
+    const service = new GovernedConversationService(undefined, undefined, deterministicClock());
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+    const resolution = {
+      ...reviewerApproval,
+      approvalId: request.approvalId,
+      executionId: request.executionId,
+      requestVersion: request.requestVersion,
+    };
+
+    expect(() =>
+      service.executeHarmlessTool(
+        actor,
+        { ...request, action: "invoke harmless demonstration tool different-tool" },
+        resolution,
+      ),
+    ).toThrow(ConversationApprovalStateError);
+    expect(() =>
+      service.executeHarmlessTool(
+        actor,
+        { ...request, reason: "different reason" },
+        resolution,
+      ),
+    ).toThrow(ConversationApprovalStateError);
+    expect(() =>
+      service.executeHarmlessTool(
+        actor,
+        {
+          ...request,
+          metadata: Object.freeze({
+            ...request.metadata,
+            toolName: "different-tool",
+          }),
+        },
+        resolution,
+      ),
+    ).toThrow(ConversationApprovalStateError);
+  });
+
+  it("persists rejected approval resolution evidence without dropping the exact request binding", () => {
+    const service = new GovernedConversationService(undefined, undefined, deterministicClock());
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+
+    expect(() =>
+      service.executeHarmlessTool(actor, request, {
+        ...reviewerApproval,
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+        requestVersion: request.requestVersion,
+        decision: "rejected",
+        comment: "denied for test proof",
+      }),
+    ).toThrow(ApprovalRejectedError);
+    const rejectionEvent = service
+      .readAuditEvents(actor, id)
+      .find((event) => event.eventType === "conversation.tool.rejected");
+    expect(rejectionEvent?.payload).toMatchObject({
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+      executionId: request.executionId,
+      approvalId: request.approvalId,
+      requestVersion: request.requestVersion,
+      stepId: request.stepId,
+      toolName: request.metadata.toolName,
+      action: request.action,
+      reason: request.reason,
+      requestedBy: request.requestedBy,
+      requestedAt: request.requestedAt,
+      resolvedBy: reviewerApproval.resolvedBy,
+      resolvedAt: reviewerApproval.resolvedAt,
+      decision: "rejected",
+      comment: "denied for test proof",
+    });
+  });
+
+  it("fails closed on malformed approval payloads before treating them as ownership errors", () => {
+    const service = new GovernedConversationService(undefined, undefined, deterministicClock());
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+
+    expect(() =>
+      service.executeHarmlessTool(actor, {
+        ...request,
+        requestVersion: 0,
+      }),
+    ).toThrow(InvalidApprovalError);
+    expect(() =>
+      service.executeHarmlessTool(actor, {
+        ...request,
+        requestedAt: "not-a-timestamp",
+      }),
+    ).toThrow(InvalidApprovalError);
+    expect(() =>
+      service.executeHarmlessTool(actor, request, {
+        ...reviewerApproval,
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+        requestVersion: request.requestVersion,
+        resolvedAt: "not-a-timestamp",
+      }),
+    ).toThrow(InvalidApprovalError);
+    expect(() =>
+      service.executeHarmlessTool(
+        { tenantId: " ", userId: actor.userId },
+        request,
+      ),
+    ).toThrow(InvalidConversationIdentityError);
+  });
+
+  it("requires governed streams to start with conversation.created", () => {
+    const store = new InMemoryEventStore();
+    store.append(
+      {
+        streamId: "conversation-1",
+        eventId: "event-1",
+        eventType: "unrelated.aggregate.created",
+        payload: Object.freeze({ tenantId: actor.tenantId, userId: actor.userId }),
+        occurredAt: "2026-09-05T00:00:00.000Z",
+        traceId: "conversation-1",
+      },
+      0,
+    );
+    const service = new GovernedConversationService(store, undefined, deterministicClock());
+
+    expect(() => service.readConversation(actor, "conversation-1")).toThrow(
+      ConversationAccessDeniedError,
+    );
   });
 
   it("translates concurrent approval races into the governed terminal-state error", () => {

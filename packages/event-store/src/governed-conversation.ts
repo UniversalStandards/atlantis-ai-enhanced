@@ -1,8 +1,11 @@
 import {
   ApprovalRejectedError,
+  InvalidApprovalError,
   requireApproved,
+  type ResolvedApproval,
   type ApprovalRequest,
   type ApprovalResolution,
+  normalizeApprovalRequest,
 } from "../../contracts/src/approval-control.js";
 import {
   ConcurrencyConflictError,
@@ -72,6 +75,7 @@ export class ConversationNotFoundError extends Error {
 interface ConversationEventPayload {
   readonly tenantId: string;
   readonly userId: string;
+  readonly executionId?: string;
   readonly message?: ConversationMessage;
   readonly approvalId?: string;
   readonly requestVersion?: number;
@@ -80,7 +84,11 @@ interface ConversationEventPayload {
   readonly action?: string;
   readonly reason?: string;
   readonly requestedBy?: string;
+  readonly requestedAt?: string;
   readonly resolvedBy?: string;
+  readonly resolvedAt?: string;
+  readonly decision?: "approved" | "rejected";
+  readonly comment?: string;
 }
 
 interface ConversationRecord {
@@ -102,6 +110,18 @@ function normalizeIdentity(identity: ConversationIdentity): ConversationIdentity
     tenantId: requireNonEmpty("tenantId", identity.tenantId),
     userId: requireNonEmpty("userId", identity.userId),
   });
+}
+
+function requireApprovalMetadataField(
+  key: string,
+  metadata: Readonly<Record<string, string>>,
+  field = `metadata.${key}`,
+): string {
+  const value = (metadata as Readonly<Record<string, string | undefined>>)[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new InvalidApprovalError(`${field} must be a non-blank string`);
+  }
+  return value.trim();
 }
 
 function redactAuditEvent(
@@ -171,6 +191,7 @@ export class GovernedConversationService {
    this.append(id, "conversation.tool.requested", {
      tenantId: record.snapshot.tenantId,
      userId: record.snapshot.userId,
+     executionId: request.executionId,
      approvalId: request.approvalId,
      requestVersion: request.requestVersion,
      stepId: request.stepId,
@@ -178,37 +199,32 @@ export class GovernedConversationService {
      action: request.action,
      reason: request.reason,
      requestedBy: request.requestedBy,
+     requestedAt: request.requestedAt,
    }, record.streamVersion);
    return request;
   }
   public executeHarmlessTool(identity: ConversationIdentity, request: ApprovalRequest, resolution?: ApprovalResolution): string {
    const actor = normalizeIdentity(identity);
-   const record = this.requireActiveConversation(actor, request.executionId);
-   const pendingRequest = this.requirePendingToolApproval(record, request);
+   const normalizedRequest = normalizeApprovalRequest(request);
+   const boundRequest = Object.freeze({
+     ...normalizedRequest,
+     metadata: Object.freeze({
+       ...normalizedRequest.metadata,
+       tenantId: requireApprovalMetadataField("tenantId", normalizedRequest.metadata),
+       userId: requireApprovalMetadataField("userId", normalizedRequest.metadata),
+       toolName: requireApprovalMetadataField("toolName", normalizedRequest.metadata),
+     }),
+   });
+   const record = this.requireActiveConversation(actor, boundRequest.executionId);
+   const pendingRequest = this.requirePendingToolApproval(record, boundRequest);
    const toolName = pendingRequest.payload.toolName ?? "unknown";
    try {
-     const approval = requireApproved(request, resolution);
-     this.appendTerminalToolApproval(record, request, "conversation.tool.approved", {
-       tenantId: record.snapshot.tenantId,
-       userId: record.snapshot.userId,
-       approvalId: approval.request.approvalId,
-       requestVersion: approval.request.requestVersion,
-       toolName,
-       requestedBy: approval.request.requestedBy,
-       resolvedBy: approval.resolution.resolvedBy,
-     });
+     const approval = requireApproved(boundRequest, resolution);
+     this.appendTerminalToolApproval(record, approval, "conversation.tool.approved");
      return `tool:${toolName}:ok`;
    } catch (error) {
      if (error instanceof ApprovalRejectedError) {
-       this.appendTerminalToolApproval(record, request, "conversation.tool.rejected", {
-         tenantId: record.snapshot.tenantId,
-         userId: record.snapshot.userId,
-         approvalId: error.approval.request.approvalId,
-         requestVersion: error.approval.request.requestVersion,
-         toolName,
-         requestedBy: error.approval.request.requestedBy,
-         resolvedBy: error.approval.resolution.resolvedBy,
-       });
+       this.appendTerminalToolApproval(record, error.approval, "conversation.tool.rejected");
      }
      throw error;
    }
@@ -273,9 +289,11 @@ export class GovernedConversationService {
      request.requestedBy !== record.snapshot.userId ||
      matchingRequest.payload.tenantId !== record.snapshot.tenantId ||
      matchingRequest.payload.userId !== record.snapshot.userId ||
+     matchingRequest.payload.executionId !== request.executionId ||
      matchingRequest.payload.stepId !== request.stepId ||
      matchingRequest.payload.toolName !== request.metadata.toolName ||
      matchingRequest.payload.requestedBy !== request.requestedBy ||
+     matchingRequest.payload.requestedAt !== request.requestedAt ||
      matchingRequest.payload.action !== request.action ||
      matchingRequest.payload.reason !== request.reason
    ) {
@@ -297,14 +315,33 @@ export class GovernedConversationService {
   }
   private appendTerminalToolApproval(
    record: ConversationRecord,
-   request: ApprovalRequest,
+   approval: ResolvedApproval,
    eventType: "conversation.tool.approved" | "conversation.tool.rejected",
-   payload: ConversationEventPayload,
   ): void {
+   const toolName = requireApprovalMetadataField("toolName", approval.request.metadata);
+   const payload = Object.freeze({
+     tenantId: record.snapshot.tenantId,
+     userId: record.snapshot.userId,
+     executionId: approval.request.executionId,
+     approvalId: approval.request.approvalId,
+     requestVersion: approval.request.requestVersion,
+     stepId: approval.request.stepId,
+     toolName,
+     action: approval.request.action,
+     reason: approval.request.reason,
+     requestedBy: approval.request.requestedBy,
+     requestedAt: approval.request.requestedAt,
+     resolvedBy: approval.resolution.resolvedBy,
+     resolvedAt: approval.resolution.resolvedAt,
+     decision: approval.resolution.decision,
+     ...(approval.resolution.comment === undefined
+       ? {}
+       : { comment: approval.resolution.comment }),
+   });
    let currentRecord = record;
    for (let attempt = 0; attempt < 3; attempt += 1) {
      try {
-       this.append(request.executionId, eventType, payload, currentRecord.streamVersion);
+       this.append(approval.request.executionId, eventType, payload, currentRecord.streamVersion);
        return;
      } catch (error) {
        if (!(error instanceof ConcurrencyConflictError)) {
@@ -315,9 +352,9 @@ export class GovernedConversationService {
            tenantId: currentRecord.snapshot.tenantId,
            userId: currentRecord.snapshot.userId,
          },
-         request.executionId,
+         approval.request.executionId,
        );
-       this.requirePendingToolApproval(currentRecord, request);
+       this.requirePendingToolApproval(currentRecord, approval.request);
      }
    }
    throw new ConversationApprovalStateError(
@@ -328,8 +365,13 @@ export class GovernedConversationService {
    for (let attempt = 0; attempt < 3; attempt += 1) {
      const events = this.store.readStream(id) as readonly StoredEvent<ConversationEventPayload>[];
      const first = events[0];
-     if (first === undefined) {
+     if (first === undefined || first.eventType !== "conversation.created") {
        throw new ConversationNotFoundError();
+     }
+     const tenantId = first.payload.tenantId;
+     const userId = first.payload.userId;
+     if (typeof tenantId !== "string" || tenantId.trim().length === 0 || typeof userId !== "string" || userId.trim().length === 0) {
+       throw new ConversationApprovalStateError("conversation.created payload is invalid");
      }
      const messages: ConversationMessage[] = [];
      let deleted = false;
@@ -348,8 +390,8 @@ export class GovernedConversationService {
      return Object.freeze({
        snapshot: Object.freeze({
          conversationId: id,
-         tenantId: first.payload.tenantId,
-         userId: first.payload.userId,
+         tenantId,
+         userId,
          messages: deleted ? Object.freeze([]) : Object.freeze(messages),
          deleted,
        }),

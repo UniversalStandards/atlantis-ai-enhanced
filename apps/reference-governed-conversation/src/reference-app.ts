@@ -68,9 +68,10 @@ export class ReferenceConversationApp {
 
   public createConversation(): string {
     const identity = this.requireSignedInIdentity();
-    this.currentConversationId = this.service.createConversation(identity.tenantId, identity.userId);
+    const conversationId = this.service.createConversation(identity.tenantId, identity.userId);
+    this.currentConversationId = conversationId;
     this.pendingApproval = null;
-    return this.currentConversationId;
+    return conversationId;
   }
 
   public openConversation(conversationId: string): void {
@@ -163,16 +164,9 @@ export class ReferenceConversationApp {
         auditEvents: Object.freeze([]),
       });
     }
+    let snapshot: ConversationSnapshot;
     try {
-      const snapshot = this.service.readConversation(identity, conversationId);
-      const visibleConversationId = snapshot.deleted ? null : conversationId;
-      return Object.freeze({
-        identity,
-        conversationId: visibleConversationId,
-        messages: snapshot.messages,
-        pendingApproval: snapshot.deleted ? null : this.pendingApproval,
-        auditEvents: this.service.readAuditEvents(identity, conversationId),
-      });
+      snapshot = this.service.readConversation(identity, conversationId);
     } catch (error) {
       if (!(error instanceof ConversationAccessDeniedError)) {
         throw error;
@@ -185,6 +179,14 @@ export class ReferenceConversationApp {
         auditEvents: Object.freeze([]),
       });
     }
+    const visibleConversationId = snapshot.deleted ? null : conversationId;
+    return Object.freeze({
+      identity,
+      conversationId: visibleConversationId,
+      messages: snapshot.messages,
+      pendingApproval: snapshot.deleted ? null : this.pendingApproval,
+      auditEvents: this.service.readAuditEvents(identity, conversationId),
+    });
   }
 
   private requireSignedInIdentity(): ReferenceIdentity {
