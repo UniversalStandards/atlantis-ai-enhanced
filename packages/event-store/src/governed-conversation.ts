@@ -97,6 +97,9 @@ interface ConversationRecord {
   readonly streamVersion: number;
 }
 
+const INVALID_CONVERSATION_STREAM_MESSAGE =
+  "conversation stream must start with conversation.created";
+
 function requireNonEmpty(field: string, value: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) {
@@ -251,7 +254,11 @@ export class GovernedConversationService {
    try {
      record = this.readConversationRecord(id);
    } catch (error) {
-     if (error instanceof ConversationNotFoundError) {
+     if (
+       error instanceof ConversationNotFoundError ||
+       (error instanceof ConversationApprovalStateError &&
+         error.message === INVALID_CONVERSATION_STREAM_MESSAGE)
+     ) {
        throw new ConversationAccessDeniedError("conversation access denied for tenant/user context");
      }
      throw error;
@@ -366,7 +373,7 @@ export class GovernedConversationService {
      const events = this.store.readStream(id) as readonly StoredEvent<ConversationEventPayload>[];
      const first = events[0];
      if (first === undefined || first.eventType !== "conversation.created") {
-       throw new ConversationNotFoundError();
+       throw new ConversationApprovalStateError(INVALID_CONVERSATION_STREAM_MESSAGE);
      }
      const tenantId = first.payload.tenantId;
      const userId = first.payload.userId;
