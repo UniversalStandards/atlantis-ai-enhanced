@@ -388,6 +388,12 @@ describe("tracker projection contract", () => {
     expect(() =>
       createTrackerIssueProjection({
         ...issueInput(),
+        labels: Object.assign(["tracker"], { 4294967295: "contracts" }),
+      }),
+    ).toThrow(/labels must not contain non-index properties/);
+    expect(() =>
+      createTrackerIssueProjection({
+        ...issueInput(),
         labels: ["e\u0301", "\u00e9"],
       }),
     ).toThrow(/duplicate semantic entries/);

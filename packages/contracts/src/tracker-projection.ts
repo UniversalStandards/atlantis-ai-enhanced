@@ -916,7 +916,7 @@ function arrayIndexKey(key: string): number | null {
     return null;
   }
   const index = Number(key);
-  return Number.isSafeInteger(index) ? index : null;
+  return Number.isSafeInteger(index) && index <= 0xfffffffe ? index : null;
 }
 
 function identityKey(value: string | number): string {
