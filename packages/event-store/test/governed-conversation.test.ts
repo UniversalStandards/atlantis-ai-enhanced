@@ -415,6 +415,29 @@ describe("governed conversation vertical slice", () => {
    expect(persistedMessages).toEqual(["[deleted]", "[deleted]"]);
   });
 
+  it("keeps generated ids unique when multiple service instances share durable storage", async () => {
+   const storage = new InMemoryAtomicSnapshotStorage();
+   const serviceA = new GovernedConversationService(
+     new DurableSnapshotEventStore(storage),
+     undefined,
+     deterministicClock(),
+   );
+   const serviceB = new GovernedConversationService(
+     new DurableSnapshotEventStore(storage),
+     undefined,
+     deterministicClock(),
+   );
+   const conversationA = serviceA.createConversation(actor.tenantId, actor.userId);
+
+   expect(serviceB.createConversation(actor.tenantId, "user-b")).toBe("conversation-3");
+   await expect(serviceA.sendMessage(actor, conversationA, "hello again")).resolves.toEqual([
+     "mock:hello ",
+     "again ",
+   ]);
+   const eventIds = new DurableSnapshotEventStore(storage).readAll().map((event) => event.eventId);
+   expect(new Set(eventIds).size).toBe(eventIds.length);
+  });
+
   it("requires governed streams to start with conversation.created", () => {
     const store = new InMemoryEventStore();
     store.append(

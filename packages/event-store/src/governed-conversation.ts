@@ -254,7 +254,6 @@ function pendingApprovalFromRecord(
 
 export class GovernedConversationService {
   private counter = 0;
-  private counterInitialized = false;
   public constructor(
     private readonly store: EventStore = new InMemoryEventStore(),
     private readonly provider: DeterministicConversationProvider = new EchoMockConversationProvider(),
@@ -266,15 +265,11 @@ export class GovernedConversationService {
       }),
   ) {}
   private nextId(prefix: string): string {
-    this.initializeCounterFromStore();
+    this.syncCounterWithStore();
     this.counter += 1;
     return `${prefix}-${this.counter}`;
   }
-  private initializeCounterFromStore(): void {
-    if (this.counterInitialized) {
-      return;
-    }
-    this.counterInitialized = true;
+  private syncCounterWithStore(): void {
     for (const event of this.store.readAll()) {
       this.counter = Math.max(
         this.counter,
