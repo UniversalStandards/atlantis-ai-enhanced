@@ -1,6 +1,7 @@
 import {
   ConversationAccessDeniedError,
   ConversationApprovalStateError,
+  ConversationPolicyDeniedError,
   GovernedConversationService,
   type ConversationSnapshot,
 } from "@atlantis/event-store/governed-conversation";
@@ -22,6 +23,11 @@ export interface ReferenceBrowserView {
   readonly messages: ConversationSnapshot["messages"];
   readonly pendingApproval: ApprovalRequest | null;
   readonly auditEvents: readonly StoredEvent[];
+}
+
+export interface ReferenceBrowserSessionState {
+  readonly identity: ReferenceIdentity | null;
+  readonly conversationId: string | null;
 }
 
 function requireNonEmpty(value: string, field: string): string {
@@ -76,7 +82,21 @@ export class ReferenceConversationApp {
 
   public openConversation(conversationId: string): void {
     this.currentConversationId = requireNonEmpty(conversationId, "conversationId");
-    this.pendingApproval = null;
+    if (this.currentIdentity === null) {
+      this.pendingApproval = null;
+      return;
+    }
+    try {
+      this.pendingApproval = this.service.readPendingToolApproval(
+        this.currentIdentity,
+        this.currentConversationId,
+      );
+    } catch (error) {
+      if (!(error instanceof ConversationAccessDeniedError)) {
+        throw error;
+      }
+      this.pendingApproval = null;
+    }
   }
 
   public async sendMessage(content: string): Promise<readonly string[]> {
@@ -110,7 +130,8 @@ export class ReferenceConversationApp {
     } catch (error) {
       if (
         error instanceof ApprovalRejectedError ||
-        error instanceof ConversationApprovalStateError
+        error instanceof ConversationApprovalStateError ||
+        error instanceof ConversationPolicyDeniedError
       ) {
         this.pendingApproval = null;
       }
@@ -160,13 +181,13 @@ export class ReferenceConversationApp {
         identity,
         conversationId: null,
         messages: Object.freeze([]),
-        pendingApproval: null,
-        auditEvents: Object.freeze([]),
-      });
-    }
-    let snapshot: ConversationSnapshot;
-    try {
-      snapshot = this.service.readConversation(identity, conversationId);
+          pendingApproval: null,
+          auditEvents: Object.freeze([]),
+        });
+      }
+      let snapshot: ConversationSnapshot;
+      try {
+        snapshot = this.service.readConversation(identity, conversationId);
     } catch (error) {
       if (!(error instanceof ConversationAccessDeniedError)) {
         throw error;
@@ -187,6 +208,23 @@ export class ReferenceConversationApp {
       pendingApproval: snapshot.deleted ? null : this.pendingApproval,
       auditEvents: this.service.readAuditEvents(identity, conversationId),
     });
+  }
+
+  public snapshotSessionState(): ReferenceBrowserSessionState {
+    return Object.freeze({
+      identity: this.currentIdentity,
+      conversationId: this.currentConversationId,
+    });
+  }
+
+  public restoreSessionState(state: ReferenceBrowserSessionState): void {
+    this.signOut();
+    if (state.identity !== null) {
+      this.signIn(state.identity);
+    }
+    if (state.conversationId !== null) {
+      this.openConversation(state.conversationId);
+    }
   }
 
   private requireSignedInIdentity(): ReferenceIdentity {
@@ -217,12 +255,26 @@ export function renderReferenceAppShell(view: ReferenceBrowserView): string {
     : `${view.pendingApproval.approvalId}:${view.pendingApproval.stepId}`;
   const messageLines = view.messages.map((message) => `${message.role}:${message.content}`);
   const auditLines = view.auditEvents.map((event) => event.eventType);
+  const policyEvent = [...view.auditEvents].reverse().find((event) => {
+    const payload = event.payload as { readonly policyDecision?: string; readonly policyReason?: string };
+    return typeof payload.policyDecision === "string" && typeof payload.policyReason === "string";
+  });
+  const policyLine = policyEvent === undefined
+    ? "none"
+    : (() => {
+      const payload = policyEvent.payload as {
+        readonly policyDecision: string;
+        readonly policyReason: string;
+      };
+      return `${payload.policyDecision}:${payload.policyReason}`;
+    })();
   return [
     "<main data-app='reference-governed-conversation'>",
     `<section data-context='identity'>${escapeHtml(identityLine)}</section>`,
     `<section data-context='conversation'>${escapeHtml(view.conversationId ?? "none")}</section>`,
     `<section data-context='messages'>${escapeHtml(messageLines.join("|"))}</section>`,
     `<section data-context='pending-approval'>${escapeHtml(approvalLine)}</section>`,
+    `<section data-context='policy'>${escapeHtml(policyLine)}</section>`,
     `<section data-context='audit'>${escapeHtml(auditLines.join("|"))}</section>`,
     "</main>",
   ].join("");

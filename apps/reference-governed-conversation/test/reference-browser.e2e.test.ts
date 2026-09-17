@@ -7,7 +7,9 @@ import {
   ConversationApprovalStateError,
   GovernedConversationService,
 } from "@atlantis/event-store/governed-conversation";
-import { InMemoryEventStore, type EventStore, type StoredEvent } from "@atlantis/event-store";
+import { DurableSnapshotEventStore,
+InMemoryAtomicSnapshotStorage,
+InMemoryEventStore, type EventStore, type StoredEvent } from "@atlantis/event-store";
 
 import { ReferenceConversationApp, renderReferenceAppShell } from "../src/reference-app.js";
 
@@ -121,6 +123,9 @@ describe("reference browser governed conversation path", () => {
     expect(html).toContain(`conversation'>${conversationId}<`);
     expect(html).toContain("user:hello atlantis|assistant:mock:hello atlantis");
     expect(html).toContain("conversation.tool.approved");
+    expect(html).toContain(
+      "allowed:reference conversation policy permits harmless demonstration tools",
+    );
 
     app.deleteConversation();
     expect(() => app.readConversation()).toThrow("conversation not created");
@@ -208,6 +213,36 @@ describe("reference browser governed conversation path", () => {
       messages: [],
     });
     expect(renderReferenceAppShell(app.view())).toContain("conversation'>none<");
+  });
+
+  it("restores conversation state across a fresh app instance when the event store is durable", async () => {
+    const storage = new InMemoryAtomicSnapshotStorage();
+    const service = new GovernedConversationService(
+      new DurableSnapshotEventStore(storage),
+      undefined,
+      deterministicClock(),
+    );
+    const app = new ReferenceConversationApp(service);
+    app.signIn({ tenantId: "tenant-a", userId: "user-a" });
+    const conversationId = app.createConversation();
+
+    await expect(app.sendMessage("reload me")).resolves.toEqual(["mock:reload ", "me "]);
+    const request = app.requestHarmlessTool("echo-status");
+    const restored = new ReferenceConversationApp(
+      new GovernedConversationService(
+        new DurableSnapshotEventStore(storage),
+        undefined,
+        deterministicClock(),
+      ),
+    );
+
+    restored.restoreSessionState(app.snapshotSessionState());
+    expect(restored.view().conversationId).toBe(conversationId);
+    expect(restored.view().messages[1]?.content).toBe("mock:reload me");
+    expect(restored.view().pendingApproval).toMatchObject({
+      approvalId: request.approvalId,
+      requestVersion: request.requestVersion,
+    });
   });
 
   it("clears pending approval when a concurrent resolver already finalized the request", () => {

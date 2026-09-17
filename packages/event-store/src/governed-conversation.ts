@@ -9,6 +9,7 @@ import {
 } from "../../contracts/src/approval-control.js";
 import {
   ConcurrencyConflictError,
+  type RedactableEventStore,
   InMemoryEventStore,
   type EventStore,
   type StoredEvent,
@@ -65,6 +66,13 @@ export class ConversationApprovalStateError extends Error {
   }
 }
 
+export class ConversationPolicyDeniedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "ConversationPolicyDeniedError";
+  }
+}
+
 export class ConversationNotFoundError extends Error {
   public constructor() {
     super("conversation not found");
@@ -89,6 +97,8 @@ interface ConversationEventPayload {
   readonly resolvedAt?: string;
   readonly decision?: "approved" | "rejected";
   readonly comment?: string;
+  readonly policyDecision?: "allowed" | "denied";
+  readonly policyReason?: string;
 }
 
 interface ConversationRecord {
@@ -96,6 +106,16 @@ interface ConversationRecord {
   readonly events: readonly StoredEvent<ConversationEventPayload>[];
   readonly streamVersion: number;
 }
+
+export interface ConversationToolPolicyDecision {
+  readonly allowed: boolean;
+  readonly reason: string;
+}
+
+export type ConversationToolPolicyEvaluator = (
+  identity: ConversationIdentity,
+  request: ApprovalRequest,
+) => ConversationToolPolicyDecision;
 
 const INVALID_CONVERSATION_STREAM_MESSAGE =
   "conversation stream must start with conversation.created";
@@ -167,14 +187,125 @@ function redactAuditEvent(
   });
 }
 
+function supportsContentRedaction(store: EventStore): store is RedactableEventStore {
+  return typeof (store as Partial<RedactableEventStore>).redactStream === "function";
+}
+
+function redactPersistedConversationPayload(
+  event: StoredEvent,
+): ConversationEventPayload {
+  const payload = event.payload as ConversationEventPayload;
+  if (event.eventType !== "conversation.message" || payload.message === undefined) {
+    return payload;
+  }
+  return Object.freeze({
+    ...payload,
+    message: Object.freeze({
+      ...payload.message,
+      content: "[deleted]",
+    }),
+  });
+}
+
+function normalizePolicyDecision(
+  decision: ConversationToolPolicyDecision,
+): Readonly<{ allowed: boolean; reason: string }> {
+  return Object.freeze({
+    allowed: decision.allowed,
+    reason: requireNonEmpty("policyReason", decision.reason),
+  });
+}
+
+function pendingApprovalFromRecord(
+  record: ConversationRecord,
+): ApprovalRequest | null {
+  const resolvedApprovals = new Set(
+    record.events
+      .filter((event) =>
+        event.eventType === "conversation.tool.approved" ||
+        event.eventType === "conversation.tool.rejected" ||
+        event.eventType === "conversation.tool.denied",
+      )
+      .map((event) => `${event.payload.approvalId}:${event.payload.requestVersion}`),
+  );
+  const pendingEvent = [...record.events].reverse().find((event) =>
+    event.eventType === "conversation.tool.requested" &&
+    !resolvedApprovals.has(`${event.payload.approvalId}:${event.payload.requestVersion}`),
+  );
+  if (pendingEvent === undefined) {
+    return null;
+  }
+  return normalizeApprovalRequest(Object.freeze({
+    approvalId: pendingEvent.payload.approvalId ?? "",
+    executionId: pendingEvent.payload.executionId ?? "",
+    requestVersion: pendingEvent.payload.requestVersion ?? 0,
+    stepId: pendingEvent.payload.stepId ?? "",
+    action: pendingEvent.payload.action ?? "",
+    reason: pendingEvent.payload.reason ?? "",
+    requestedBy: pendingEvent.payload.requestedBy ?? "",
+    requestedAt: pendingEvent.payload.requestedAt ?? "",
+    metadata: Object.freeze({
+      tenantId: pendingEvent.payload.tenantId,
+      userId: pendingEvent.payload.userId,
+      toolName: pendingEvent.payload.toolName ?? "unknown",
+    }),
+  }));
+}
+
 export class GovernedConversationService {
   private counter = 0;
+  private counterInitialized = false;
   public constructor(
     private readonly store: EventStore = new InMemoryEventStore(),
     private readonly provider: DeterministicConversationProvider = new EchoMockConversationProvider(),
     private readonly now: () => string = () => new Date().toISOString(),
+    private readonly evaluatePolicy: ConversationToolPolicyEvaluator = () =>
+      Object.freeze({
+        allowed: true,
+        reason: "reference conversation policy permits harmless demonstration tools",
+      }),
   ) {}
-  private nextId(prefix: string): string { this.counter += 1; return `${prefix}-${this.counter}`; }
+  private nextId(prefix: string): string {
+    this.initializeCounterFromStore();
+    this.counter += 1;
+    return `${prefix}-${this.counter}`;
+  }
+  private initializeCounterFromStore(): void {
+    if (this.counterInitialized) {
+      return;
+    }
+    this.counterInitialized = true;
+    for (const event of this.store.readAll()) {
+      this.counter = Math.max(
+        this.counter,
+        this.readNumericSuffix(event.streamId),
+        this.readNumericSuffix(event.eventId),
+        this.readNumericSuffix(event.traceId),
+        this.readNumericSuffix(event.correlationId),
+        this.readNumericSuffix(event.causationId),
+        this.readNumericSuffix((event.payload as { readonly executionId?: string }).executionId),
+        this.readNumericSuffix((event.payload as { readonly approvalId?: string }).approvalId),
+        this.readNumericSuffix(
+          (event.payload as { readonly message?: { readonly id?: string } }).message?.id,
+        ),
+      );
+    }
+  }
+  private readNumericSuffix(value: string | undefined): number {
+    if (typeof value !== "string") {
+      return 0;
+    }
+    const match = /-(\d+)$/.exec(value);
+    if (match === null) {
+      return 0;
+    }
+    const suffix = match[1];
+    if (suffix === undefined) {
+      return 0;
+    }
+    const parsed = Number.parseInt(suffix, 10);
+    return Number.isSafeInteger(parsed) ? parsed : 0;
+  }
   private append(
    id: string,
    eventType: string,
@@ -245,7 +376,12 @@ export class GovernedConversationService {
    const toolName = pendingRequest.payload.toolName ?? "unknown";
    try {
      const approval = requireApproved(boundRequest, resolution);
-     this.appendTerminalToolApproval(record, approval, "conversation.tool.approved");
+     const policyDecision = normalizePolicyDecision(this.evaluatePolicy(actor, boundRequest));
+     if (!policyDecision.allowed) {
+       this.appendTerminalToolApproval(record, approval, "conversation.tool.denied", policyDecision);
+       throw new ConversationPolicyDeniedError(policyDecision.reason);
+     }
+     this.appendTerminalToolApproval(record, approval, "conversation.tool.approved", policyDecision);
      return `tool:${toolName}:ok`;
    } catch (error) {
      if (error instanceof ApprovalRejectedError) {
@@ -262,6 +398,9 @@ export class GovernedConversationService {
        userId: record.snapshot.userId,
      }, record.streamVersion);
    }
+   if (supportsContentRedaction(this.store)) {
+     this.store.redactStream(id, redactPersistedConversationPayload);
+   }
   }
   public readConversation(identity: ConversationIdentity, id: string): ConversationSnapshot {
    return this.requireOwnedConversation(identity, id).snapshot;
@@ -269,6 +408,13 @@ export class GovernedConversationService {
   public readAuditEvents(identity: ConversationIdentity, id: string): readonly StoredEvent[] {
    const record = this.requireOwnedConversation(identity, id);
    return record.snapshot.deleted ? Object.freeze(record.events.map(redactAuditEvent)) : record.events;
+  }
+  public readPendingToolApproval(identity: ConversationIdentity, id: string): ApprovalRequest | null {
+   const record = this.requireOwnedConversation(identity, id);
+   if (record.snapshot.deleted) {
+     return null;
+   }
+   return pendingApprovalFromRecord(record);
   }
   private requireOwnedConversation(identity: ConversationIdentity, id: string): ConversationRecord {
    const actor = normalizeIdentity(identity);
@@ -336,7 +482,8 @@ export class GovernedConversationService {
        event.payload.approvalId === request.approvalId &&
        event.payload.requestVersion === request.requestVersion &&
        (event.eventType === "conversation.tool.approved" ||
-         event.eventType === "conversation.tool.rejected"),
+         event.eventType === "conversation.tool.rejected" ||
+         event.eventType === "conversation.tool.denied"),
      )
    ) {
      throw new ConversationApprovalStateError("approval request is already resolved");
@@ -346,7 +493,11 @@ export class GovernedConversationService {
   private appendTerminalToolApproval(
    record: ConversationRecord,
    approval: ResolvedApproval,
-   eventType: "conversation.tool.approved" | "conversation.tool.rejected",
+   eventType:
+     | "conversation.tool.approved"
+     | "conversation.tool.rejected"
+     | "conversation.tool.denied",
+   policyDecision?: Readonly<{ allowed: boolean; reason: string }>,
   ): void {
    const toolName = requireApprovalMetadataField("toolName", approval.request.metadata);
    const payload = Object.freeze({
@@ -367,6 +518,12 @@ export class GovernedConversationService {
      ...(approval.resolution.comment === undefined
        ? {}
        : { comment: approval.resolution.comment }),
+     ...(policyDecision === undefined
+       ? {}
+       : {
+         policyDecision: policyDecision.allowed ? "allowed" : "denied",
+         policyReason: policyDecision.reason,
+       }),
    });
    let currentRecord = record;
    for (let attempt = 0; attempt < 3; attempt += 1) {

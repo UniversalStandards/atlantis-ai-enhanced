@@ -175,12 +175,24 @@ test("runs sign-in, conversation, approval gate, audit evidence, and deletion in
   await expect(page.locator("[data-context='pending-approval']")).toContainText("approval-");
   await expect(page.getByTestId("audit-types")).toContainText("conversation.tool.requested");
 
+  await page.reload();
+  await expect(page.locator("[data-context='identity']")).toHaveText("tenant=tenant-a;user=user-a");
+  await expect(page.locator("[data-context='conversation']")).toHaveText("conversation-1");
+  await expect(page.locator("[data-context='messages']")).toHaveText(
+    "user:hello atlantis|assistant:mock:hello atlantis",
+  );
+  await expect(page.locator("[data-context='pending-approval']")).toContainText("approval-");
+  await expect(page.getByTestId("audit-types")).toContainText("conversation.tool.requested");
+
   await page.getByTestId("execute-tool").click();
   await expect(page.getByTestId("error")).toContainText("Approval approval-");
 
   await page.getByTestId("approve-tool").click();
   await expect(page.getByTestId("result")).toHaveText("tool:echo-status:ok");
   await expect(page.getByTestId("audit-types")).toContainText("conversation.tool.approved");
+  await expect(page.locator("[data-context='policy']")).toHaveText(
+    "allowed:reference conversation policy permits harmless demonstration tools",
+  );
 
   await page.getByTestId("delete-conversation").click();
   await expect(page.locator("[data-context='conversation']")).toHaveText("none");

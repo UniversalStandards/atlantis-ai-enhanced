@@ -55,6 +55,13 @@ export interface EventStore {
   getStreamVersion(streamId: string): number;
 }
 
+export interface RedactableEventStore extends EventStore {
+  redactStream(
+    streamId: string,
+    redact: (event: StoredEvent) => unknown,
+  ): void;
+}
+
 export interface AtomicSnapshot {
   readonly revision: number;
   readonly value: string | null;
@@ -130,7 +137,7 @@ function parsePersistedEvents(value: string | null): readonly StoredEvent[] {
   if (!Array.isArray(parsed)) throw new InvalidEventError("persisted event store state must be an event array.");
   const events = detachedCopy(parsed, "persisted events must be structured-cloneable.") as readonly StoredEvent[]; buildIndexes(events); return Object.freeze(events);
 }
-abstract class IndexedEventStore implements EventStore {
+abstract class IndexedEventStore implements RedactableEventStore {
   protected events: readonly StoredEvent[] = Object.freeze([]); protected eventIds = new Set<string>(); protected streamVersions = new Map<string, number>();
   protected replaceEvents(events: readonly StoredEvent[]): void { const indexes = buildIndexes(events); this.events = Object.freeze([...events]); this.eventIds = indexes.eventIds; this.streamVersions = indexes.streamVersions; }
   protected createStoredEvent<TPayload>(event: AppendEventInput<TPayload>, expectedVersion: number): StoredEvent<TPayload> {
@@ -142,6 +149,12 @@ abstract class IndexedEventStore implements EventStore {
   public readStream(streamId: string, afterVersion = 0): readonly StoredEvent[] { assertNonEmpty(streamId, "streamId"); assertCursor(afterVersion, "afterVersion"); return Object.freeze(this.events.filter((event) => event.streamId === streamId && event.streamVersion > afterVersion)); }
   public readAll(afterSequence = 0): readonly StoredEvent[] { assertCursor(afterSequence, "afterSequence"); return Object.freeze(this.events.filter((event) => event.sequence > afterSequence)); }
   public getStreamVersion(streamId: string): number { assertNonEmpty(streamId, "streamId"); return this.streamVersions.get(streamId) ?? 0; }
+  public redactStream(streamId: string, redact: (event: StoredEvent) => unknown): void {
+    assertNonEmpty(streamId, "streamId");
+    this.replaceEvents(this.events.map((event) => event.streamId === streamId
+      ? immutableCopy({ ...event, payload: redact(event) })
+      : event));
+  }
 }
 export class InMemoryEventStore extends IndexedEventStore {
   public append<TPayload>(event: AppendEventInput<TPayload>, expectedVersion: number): StoredEvent<TPayload> { const stored = this.createStoredEvent(event, expectedVersion); this.replaceEvents([...this.events, stored]); return stored; }
@@ -156,6 +169,22 @@ export class DurableSnapshotEventStore extends IndexedEventStore {
       const snapshot = this.reload(); const stored = this.createStoredEvent(event, expectedVersion); const nextEvents = [...this.events, stored]; const candidate = JSON.stringify(nextEvents);
       const committed = requireExactBooleanSettlement(this.storage.compareAndSwap(snapshot.revision, candidate));
       if (committed) { const acknowledgedEvents = this.requireCommittedCandidateAcknowledgement(snapshot.revision, candidate); this.replaceEvents(acknowledgedEvents); const acknowledgedStored = acknowledgedEvents.find((candidateEvent) => candidateEvent.eventId === stored.eventId); if (acknowledgedStored === undefined || acknowledgedStored.sequence !== stored.sequence || acknowledgedStored.streamVersion !== stored.streamVersion) throw new InvalidEventError("acknowledged event-store state must contain the committed event at the expected sequence and stream version."); return acknowledgedStored as StoredEvent<TPayload>; }
+    }
+    throw new PersistenceConflictError(this.maxPersistenceAttempts);
+  }
+  public override redactStream(streamId: string, redact: (event: StoredEvent) => unknown): void {
+    assertNonEmpty(streamId, "streamId");
+    for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
+      const snapshot = this.reload();
+      const nextEvents = this.events.map((event) => event.streamId === streamId
+        ? immutableCopy({ ...event, payload: redact(event) })
+        : event);
+      const candidate = JSON.stringify(nextEvents);
+      const committed = requireExactBooleanSettlement(this.storage.compareAndSwap(snapshot.revision, candidate));
+      if (committed) {
+        this.replaceEvents(this.requireCommittedCandidateAcknowledgement(snapshot.revision, candidate));
+        return;
+      }
     }
     throw new PersistenceConflictError(this.maxPersistenceAttempts);
   }

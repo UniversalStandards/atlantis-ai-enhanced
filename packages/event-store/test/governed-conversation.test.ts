@@ -7,10 +7,17 @@ import {
 import {
   ConversationAccessDeniedError,
   ConversationApprovalStateError,
+  ConversationPolicyDeniedError,
   GovernedConversationService,
   InvalidConversationIdentityError,
 } from "../src/governed-conversation.js";
-import { InMemoryEventStore, type EventStore, type StoredEvent } from "../src/index.js";
+import {
+  DurableSnapshotEventStore,
+  InMemoryAtomicSnapshotStorage,
+  InMemoryEventStore,
+  type EventStore,
+  type StoredEvent,
+} from "../src/index.js";
 
 const timestamps = ["2026-09-05T00:00:00.000Z","2026-09-05T00:00:01.000Z","2026-09-05T00:00:02.000Z","2026-09-05T00:00:03.000Z","2026-09-05T00:00:04.000Z","2026-09-05T00:00:05.000Z"];
 function deterministicClock(): () => string { let index = 0; return () => timestamps[index++] ?? "2026-09-05T00:00:59.000Z"; }
@@ -111,6 +118,8 @@ describe("governed conversation vertical slice", () => {
       resolvedBy: reviewerApproval.resolvedBy,
       resolvedAt: reviewerApproval.resolvedAt,
       decision: "approved",
+      policyDecision: "allowed",
+      policyReason: "reference conversation policy permits harmless demonstration tools",
     });
     service.deleteConversation(actor, id);
     expect(service.readConversation(actor, id)).toMatchObject({ deleted: true, messages: [] });
@@ -119,6 +128,38 @@ describe("governed conversation vertical slice", () => {
       .filter((event) => event.eventType === "conversation.message")
       .map((event) => (event.payload as { readonly message?: { readonly content: string } }).message?.content);
     expect(redactedMessages).toEqual(["[deleted]", "[deleted]"]);
+  });
+
+  it("records policy denial and blocks approved tool execution when policy rejects the request", () => {
+    const service = new GovernedConversationService(
+      undefined,
+      undefined,
+      deterministicClock(),
+      () => ({ allowed: false, reason: "tool policy denied this demonstration request" }),
+    );
+    const id = service.createConversation(actor.tenantId, actor.userId);
+    const request = service.buildToolApproval(actor, id, "echo-status");
+
+    expect(() =>
+      service.executeHarmlessTool(actor, request, {
+        ...reviewerApproval,
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+        requestVersion: request.requestVersion,
+      }),
+    ).toThrow(new ConversationPolicyDeniedError("tool policy denied this demonstration request"));
+    expect(service.readPendingToolApproval(actor, id)).toBeNull();
+    expect(
+      service.readAuditEvents(actor, id).find((event) => event.eventType === "conversation.tool.denied")
+        ?.payload,
+    ).toMatchObject({
+      approvalId: request.approvalId,
+      requestVersion: request.requestVersion,
+      resolvedAt: reviewerApproval.resolvedAt,
+      decision: "approved",
+      policyDecision: "denied",
+      policyReason: "tool policy denied this demonstration request",
+    });
   });
 
   it("fails closed for blank or wrong tenant and user identities", async () => {
@@ -352,6 +393,26 @@ describe("governed conversation vertical slice", () => {
         request,
       ),
     ).toThrow(InvalidConversationIdentityError);
+  });
+
+  it("redacts persisted message content for durable event stores after deletion", async () => {
+   const storage = new InMemoryAtomicSnapshotStorage();
+   const service = new GovernedConversationService(
+     new DurableSnapshotEventStore(storage),
+     undefined,
+     deterministicClock(),
+   );
+   const id = service.createConversation(actor.tenantId, actor.userId);
+
+   await service.sendMessage(actor, id, "delete me");
+   service.deleteConversation(actor, id);
+
+   const reloadedStore = new DurableSnapshotEventStore(storage);
+   const persistedMessages = reloadedStore
+     .readAll()
+     .filter((event) => event.streamId === id && event.eventType === "conversation.message")
+     .map((event) => (event.payload as { readonly message?: { readonly content: string } }).message?.content);
+   expect(persistedMessages).toEqual(["[deleted]", "[deleted]"]);
   });
 
   it("requires governed streams to start with conversation.created", () => {
