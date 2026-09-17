@@ -83,6 +83,7 @@ function operationalAdmission(
     candidateId: authorization.candidateId,
     repository: authorization.repository,
     baseRevision: authorization.baseRevision,
+    isolatedWorkspaceNamespace: authorization.isolatedWorkspaceNamespace,
     configurationDigest: authorization.configurationDigest,
     credentialClass: authorization.credentialClass,
     networkBoundary: authorization.networkBoundary,
@@ -291,6 +292,20 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it("rejects authorization replay against a different isolated workspace namespace", async () => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const authorization = { ...operationalAuthorization(), isolatedWorkspaceNamespace: "sprint/" };
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission({ authorization }),
+      ),
+    ).rejects.toThrow("isolatedWorkspaceNamespace does not match expected admission value");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it("rejects generated work outside the authorized isolated workspace namespace", async () => {
     const generate = vi.fn(async () => Object.freeze(patchEvidence({ isolatedBranch: "sprint/unapproved-workspace" })));
 
@@ -323,11 +338,15 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
   it("rejects non-canonical isolated workspace namespaces in authorization", async () => {
     const generate = vi.fn(async () => Object.freeze(patchEvidence()));
     const authorization = { ...operationalAuthorization(), isolatedWorkspaceNamespace: "proposal//" };
+    const expectedAdmission = {
+      ...(operationalAdmission().expectedAdmission as Record<string, unknown>),
+      isolatedWorkspaceNamespace: "proposal//",
+    };
     await expect(
       proposeSelfImprovementFromAuthorizedOperationalCandidate(
         failedRequest,
         { generate },
-        operationalAdmission({ authorization }),
+        operationalAdmission({ authorization, expectedAdmission }),
       ),
     ).rejects.toThrow("must be canonical");
     expect(generate).not.toHaveBeenCalled();
