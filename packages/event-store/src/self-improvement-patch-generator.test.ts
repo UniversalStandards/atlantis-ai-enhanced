@@ -108,6 +108,7 @@ describe("EvidenceBackedSelfImprovementPatchGenerator", () => {
   it.each([
     "proposal/",
     "proposal//run",
+    "proposal/run/extra",
     "proposal/run with space",
     "sprint/",
   ])("rejects non-canonical isolated branch '%s' before test execution", async (isolatedBranch) => {
