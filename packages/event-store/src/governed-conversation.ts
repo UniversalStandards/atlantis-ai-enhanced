@@ -9,6 +9,7 @@ import {
 } from "../../contracts/src/approval-control.js";
 import {
   ConcurrencyConflictError,
+  DuplicateEventError,
   type RedactableEventStore,
   InMemoryEventStore,
   type EventStore,
@@ -265,11 +266,10 @@ export class GovernedConversationService {
       }),
   ) {}
   private nextId(prefix: string): string {
-    this.syncCounterWithStore();
     this.counter += 1;
     return `${prefix}-${this.counter}`;
   }
-  private syncCounterWithStore(): void {
+  private refreshCounterFromStore(): void {
     for (const event of this.store.readAll()) {
       this.counter = Math.max(
         this.counter,
@@ -307,13 +307,37 @@ export class GovernedConversationService {
    payload: ConversationEventPayload,
    expectedVersion: number,
   ): StoredEvent<ConversationEventPayload> {
-   return this.store.append({ streamId: id, eventId: this.nextId("event"), eventType, payload, occurredAt: this.now(), traceId: id, correlationId: id }, expectedVersion);
+   for (let attempt = 0; attempt < 3; attempt += 1) {
+     try {
+       return this.store.append({ streamId: id, eventId: this.nextId("event"), eventType, payload, occurredAt: this.now(), traceId: id, correlationId: id }, expectedVersion);
+     } catch (error) {
+       if (!(error instanceof DuplicateEventError)) {
+         throw error;
+       }
+       this.refreshCounterFromStore();
+     }
+   }
+   throw new ConversationApprovalStateError("event identity could not be allocated");
   }
   public createConversation(tenantId: string, userId: string): string {
    const identity = normalizeIdentity({ tenantId, userId });
-   const id = this.nextId("conversation"); this.append(id, "conversation.created", identity, 0); return id;
+   this.refreshCounterFromStore();
+   for (let attempt = 0; attempt < 3; attempt += 1) {
+     const id = this.nextId("conversation");
+     try {
+       this.append(id, "conversation.created", identity, 0);
+       return id;
+     } catch (error) {
+       if (!(error instanceof ConcurrencyConflictError)) {
+         throw error;
+       }
+       this.refreshCounterFromStore();
+     }
+   }
+   throw new ConversationApprovalStateError("conversation identity could not be allocated");
   }
   public async sendMessage(identity: ConversationIdentity, id: string, content: string): Promise<readonly string[]> {
+   this.refreshCounterFromStore();
    const record = this.requireActiveConversation(identity, id);
    const normalizedContent = requireNonEmpty("content", content);
    const userMessage = this.append(id, "conversation.message", { tenantId: record.snapshot.tenantId, userId: record.snapshot.userId, message: Object.freeze({ id: this.nextId("message"), role: "user", content: normalizedContent }) }, record.streamVersion);
@@ -322,6 +346,7 @@ export class GovernedConversationService {
    return Object.freeze(chunks);
   }
   public buildToolApproval(identity: ConversationIdentity, id: string, toolName: string): ApprovalRequest {
+   this.refreshCounterFromStore();
    const normalizedToolName = requireNonEmpty("toolName", toolName);
    const record = this.requireActiveConversation(identity, id);
    const request = Object.freeze({
@@ -389,19 +414,30 @@ export class GovernedConversationService {
    const record = this.requireOwnedConversation(identity, id);
    if (supportsContentRedaction(this.store)) {
      if (!record.snapshot.deleted) {
-       this.store.appendRedacted({
-         streamId: id,
-         eventId: this.nextId("event"),
-         eventType: "conversation.deleted",
-         payload: {
-           tenantId: record.snapshot.tenantId,
-           userId: record.snapshot.userId,
-         },
-         occurredAt: this.now(),
-         traceId: id,
-         correlationId: id,
-       }, record.streamVersion, redactPersistedConversationPayload);
-       return;
+       this.refreshCounterFromStore();
+       for (let attempt = 0; attempt < 3; attempt += 1) {
+         try {
+           this.store.appendRedacted({
+             streamId: id,
+             eventId: this.nextId("event"),
+             eventType: "conversation.deleted",
+             payload: {
+               tenantId: record.snapshot.tenantId,
+               userId: record.snapshot.userId,
+             },
+             occurredAt: this.now(),
+             traceId: id,
+             correlationId: id,
+           }, record.streamVersion, redactPersistedConversationPayload);
+           return;
+         } catch (error) {
+           if (!(error instanceof DuplicateEventError)) {
+             throw error;
+           }
+           this.refreshCounterFromStore();
+         }
+       }
+       throw new ConversationApprovalStateError("event identity could not be allocated");
      }
      this.store.redactStream(id, redactPersistedConversationPayload);
      return;
@@ -510,6 +546,7 @@ export class GovernedConversationService {
      | "conversation.tool.denied",
    policyDecision?: Readonly<{ allowed: boolean; reason: string }>,
   ): void {
+   this.refreshCounterFromStore();
    const toolName = requireApprovalMetadataField("toolName", approval.request.metadata);
    const payload = Object.freeze({
      tenantId: record.snapshot.tenantId,
@@ -542,6 +579,10 @@ export class GovernedConversationService {
        this.append(approval.request.executionId, eventType, payload, currentRecord.streamVersion);
        return;
      } catch (error) {
+       if (error instanceof DuplicateEventError) {
+         this.refreshCounterFromStore();
+         continue;
+       }
        if (!(error instanceof ConcurrencyConflictError)) {
          throw error;
        }
