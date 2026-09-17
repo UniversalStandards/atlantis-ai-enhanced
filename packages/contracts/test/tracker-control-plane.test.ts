@@ -6,8 +6,10 @@ import {
   type TrackerIdempotencyStore,
   type TrackerIncidentPolicy,
   type TrackerProjectionAdapter,
+  type TrackerProjectedSource,
   type TrackerProjectionRecord,
   type TrackerReconciliationResult,
+  type TrackerMutationPlan,
 } from "../src/index.js";
 
 const AUTHORITY = {
@@ -76,25 +78,23 @@ class InMemoryAdapter
     this.readbackOverride = args?.readbackOverride;
   }
 
-  read(source: { readonly entityId: string }): readonly FakeRecord[] {
+  read(source: TrackerProjectedSource): readonly FakeRecord[] {
     return this.records.filter((record) => record.entityId === source.entityId);
   }
 
-  validateSchema(): { readonly compatible: boolean; readonly reason?: string } {
+  validateSchema(
+    _record: FakeRecord | undefined,
+    _projectionVersion: string,
+  ): { readonly compatible: boolean; readonly reason?: string } {
     return this.compatible
       ? { compatible: true }
       : { compatible: false, reason: "Projection version notion-v1 is unsupported" };
   }
 
-  create(source: {
-    readonly sourceSystem: string;
-    readonly repository: string;
-    readonly entityType: string;
-    readonly entityId: string;
-    readonly projectionVersion: string;
-    readonly sourceRevision: string;
-    readonly projectedFields: FakeRecord["projectedFields"];
-  }): { readonly id: string } {
+  create(
+    source: TrackerProjectedSource,
+    _plan: TrackerMutationPlan<FakeRecord["planningContext"]>,
+  ): { readonly id: string } {
     this.createCalls.push({
       title: String(source.projectedFields.title ?? ""),
     });
@@ -118,11 +118,8 @@ class InMemoryAdapter
 
   update(
     record: FakeRecord,
-    source: {
-      readonly projectionVersion: string;
-      readonly sourceRevision: string;
-      readonly projectedFields: FakeRecord["projectedFields"];
-    },
+    source: TrackerProjectedSource,
+    _plan: TrackerMutationPlan<FakeRecord["planningContext"]>,
   ): { readonly id: string } {
     this.updateCalls.push({
       title: String(source.projectedFields.title ?? ""),
@@ -140,7 +137,10 @@ class InMemoryAdapter
     return { id: record.recordId };
   }
 
-  readback(receipt: { readonly id: string }): FakeRecord | undefined {
+  readback(
+    receipt: { readonly id: string },
+    _source: TrackerProjectedSource,
+  ): FakeRecord | undefined {
     return (
       this.readbackOverride ??
       this.records.find(

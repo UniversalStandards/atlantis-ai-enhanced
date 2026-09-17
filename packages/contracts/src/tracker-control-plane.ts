@@ -283,7 +283,7 @@ export function createTrackerProjectedSource(
   input: TrackerProjectionSourceInput,
 ): TrackerProjectedSource {
   const projectedFields = normalizeTrackerProjectionFields(input.projectedFields);
-  const labels = [...(input.labels ?? [])];
+  const labels = extractTrackerLabels(projectedFields);
   const canonicalProjection = canonicalizeTrackerValue(projectedFields);
   const policyDecision = classifyTrackerLabels(labels);
 
@@ -445,13 +445,19 @@ export async function reconcileTrackerProjection<
   });
 
   const shouldClaimIdempotency = request.dryRun !== true;
+  let idempotencyClaimed = false;
 
   const finalize = async (
     result: TrackerReconciliationResult<TPlanningContext>,
     shouldRecord = true,
   ) => {
-    if (shouldClaimIdempotency && shouldRecord && request.idempotencyStore) {
-      await request.idempotencyStore.record(idempotencyKey, result);
+    if (shouldClaimIdempotency && request.idempotencyStore && idempotencyClaimed) {
+      if (shouldRecord && shouldPersistIdempotencyResult(result.status)) {
+        await request.idempotencyStore.record(idempotencyKey, result);
+      } else {
+        await request.idempotencyStore.abandon(idempotencyKey);
+        idempotencyClaimed = false;
+      }
     }
     return result;
   };
@@ -501,6 +507,7 @@ export async function reconcileTrackerProjection<
         mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
       };
     }
+    idempotencyClaimed = true;
   }
 
   try {
@@ -703,6 +710,20 @@ function diffTrackerProjectionFields(
     );
 }
 
+function extractTrackerLabels(
+  projectedFields: TrackerProjectionFields,
+): readonly string[] {
+  const labels = projectedFields.labels;
+  if (!Array.isArray(labels)) {
+    return [];
+  }
+
+  return labels
+    .filter((label): label is string => typeof label === "string")
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+}
+
 function normalizeTrackerCanonicalValue(
   value: unknown,
   path: string,
@@ -808,6 +829,12 @@ function fnv1a64(value: string): string {
     hash = (hash * FNV_PRIME_64) & FNV_MASK_64;
   }
   return hash.toString(16).padStart(16, "0");
+}
+
+function shouldPersistIdempotencyResult(
+  status: TrackerReconciliationResult["status"],
+): boolean {
+  return status === "applied" || status === "noop";
 }
 
 function isPlainObject(value: object): boolean {
