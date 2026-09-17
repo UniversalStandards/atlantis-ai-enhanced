@@ -75,8 +75,9 @@ function requireCanonicalIsolatedBranch(branch: string): string {
       "isolatedBranch must be canonical and must not contain spaces, duplicate separators, or trailing '/'.",
     );
   }
-  const [, suffix = ""] = isolatedBranch.split("/", 2);
-  if (suffix.trim().length === 0) {
+  const separatorIndex = isolatedBranch.indexOf("/");
+  const suffix = isolatedBranch.slice(separatorIndex + 1);
+  if (suffix.trim().length === 0 || suffix.includes("/")) {
     throw new InvalidConcreteSelfImprovementPatchError(
       "isolatedBranch must include a non-empty run identifier within the isolated namespace.",
     );
