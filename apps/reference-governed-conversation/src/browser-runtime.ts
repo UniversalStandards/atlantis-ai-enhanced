@@ -50,7 +50,7 @@ class LocalStorageAtomicSnapshotStorage implements AtomicSnapshotStorage {
       (parsed.revision as number) < 0 ||
       (parsed.value !== null && typeof parsed.value !== "string")
     ) {
-      throw new Error("reference browser persistence is corrupted");
+      throw new Error("reference browser session persistence is corrupted");
     }
     return Object.freeze({
       revision: parsed.revision as number,
@@ -76,7 +76,7 @@ function defaultApp(document: Document): ReferenceConversationApp {
   if (view === null) {
     throw new Error("reference browser runtime requires a window");
   }
-  const storage = new LocalStorageAtomicSnapshotStorage(view.localStorage, STORE_STORAGE_KEY);
+  const storage = new LocalStorageAtomicSnapshotStorage(view.sessionStorage, STORE_STORAGE_KEY);
   return new ReferenceConversationApp(
     new GovernedConversationService(new DurableSnapshotEventStore(storage)),
   );
@@ -123,7 +123,7 @@ function parseSessionState(raw: string | null): ReferenceBrowserSessionState | n
 }
 
 function persistSessionState(document: Document, app: ReferenceConversationApp): void {
-  const storage = document.defaultView?.localStorage;
+  const storage = document.defaultView?.sessionStorage;
   if (storage === undefined) {
     return;
   }
@@ -136,7 +136,7 @@ function persistSessionState(document: Document, app: ReferenceConversationApp):
 }
 
 function restoreSessionState(document: Document, app: ReferenceConversationApp): void {
-  const storage = document.defaultView?.localStorage;
+  const storage = document.defaultView?.sessionStorage;
   if (storage === undefined) {
     return;
   }

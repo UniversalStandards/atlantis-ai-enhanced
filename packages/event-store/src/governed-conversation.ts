@@ -392,14 +392,30 @@ export class GovernedConversationService {
   }
   public deleteConversation(identity: ConversationIdentity, id: string): void {
    const record = this.requireOwnedConversation(identity, id);
+   if (supportsContentRedaction(this.store)) {
+     if (!record.snapshot.deleted) {
+       this.store.appendRedacted({
+         streamId: id,
+         eventId: this.nextId("event"),
+         eventType: "conversation.deleted",
+         payload: {
+           tenantId: record.snapshot.tenantId,
+           userId: record.snapshot.userId,
+         },
+         occurredAt: this.now(),
+         traceId: id,
+         correlationId: id,
+       }, record.streamVersion, redactPersistedConversationPayload);
+       return;
+     }
+     this.store.redactStream(id, redactPersistedConversationPayload);
+     return;
+   }
    if (!record.snapshot.deleted) {
      this.append(id, "conversation.deleted", {
        tenantId: record.snapshot.tenantId,
        userId: record.snapshot.userId,
      }, record.streamVersion);
-   }
-   if (supportsContentRedaction(this.store)) {
-     this.store.redactStream(id, redactPersistedConversationPayload);
    }
   }
   public readConversation(identity: ConversationIdentity, id: string): ConversationSnapshot {

@@ -56,6 +56,11 @@ export interface EventStore {
 }
 
 export interface RedactableEventStore extends EventStore {
+  appendRedacted<TPayload>(
+    event: AppendEventInput<TPayload>,
+    expectedVersion: number,
+    redact: (event: StoredEvent) => unknown,
+  ): StoredEvent<TPayload>;
   redactStream(
     streamId: string,
     redact: (event: StoredEvent) => unknown,
@@ -145,15 +150,27 @@ abstract class IndexedEventStore implements RedactableEventStore {
     const actualVersion = this.getStreamVersion(event.streamId); if (actualVersion !== expectedVersion) throw new ConcurrencyConflictError(event.streamId, expectedVersion, actualVersion);
     return immutableCopy({ ...event, sequence: this.events.length + 1, streamVersion: actualVersion + 1 });
   }
+  protected redactEvents(
+    events: readonly StoredEvent[],
+    streamId: string,
+    redact: (event: StoredEvent) => unknown,
+  ): readonly StoredEvent[] {
+    return events.map((event) => event.streamId === streamId
+      ? immutableCopy({ ...event, payload: redact(event) })
+      : event);
+  }
   public abstract append<TPayload>(event: AppendEventInput<TPayload>, expectedVersion: number): StoredEvent<TPayload>;
   public readStream(streamId: string, afterVersion = 0): readonly StoredEvent[] { assertNonEmpty(streamId, "streamId"); assertCursor(afterVersion, "afterVersion"); return Object.freeze(this.events.filter((event) => event.streamId === streamId && event.streamVersion > afterVersion)); }
   public readAll(afterSequence = 0): readonly StoredEvent[] { assertCursor(afterSequence, "afterSequence"); return Object.freeze(this.events.filter((event) => event.sequence > afterSequence)); }
   public getStreamVersion(streamId: string): number { assertNonEmpty(streamId, "streamId"); return this.streamVersions.get(streamId) ?? 0; }
+  public appendRedacted<TPayload>(event: AppendEventInput<TPayload>, expectedVersion: number, redact: (event: StoredEvent) => unknown): StoredEvent<TPayload> {
+    const stored = this.createStoredEvent(event, expectedVersion);
+    this.replaceEvents([...this.redactEvents(this.events, event.streamId, redact), stored]);
+    return stored;
+  }
   public redactStream(streamId: string, redact: (event: StoredEvent) => unknown): void {
     assertNonEmpty(streamId, "streamId");
-    this.replaceEvents(this.events.map((event) => event.streamId === streamId
-      ? immutableCopy({ ...event, payload: redact(event) })
-      : event));
+    this.replaceEvents(this.redactEvents(this.events, streamId, redact));
   }
 }
 export class InMemoryEventStore extends IndexedEventStore {
@@ -172,13 +189,29 @@ export class DurableSnapshotEventStore extends IndexedEventStore {
     }
     throw new PersistenceConflictError(this.maxPersistenceAttempts);
   }
+  public override appendRedacted<TPayload>(event: AppendEventInput<TPayload>, expectedVersion: number, redact: (event: StoredEvent) => unknown): StoredEvent<TPayload> {
+    assertJsonValue(event.payload);
+    for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
+      const snapshot = this.reload();
+      const stored = this.createStoredEvent(event, expectedVersion);
+      const nextEvents = [...this.redactEvents(this.events, event.streamId, redact), stored];
+      const candidate = JSON.stringify(nextEvents);
+      const committed = requireExactBooleanSettlement(this.storage.compareAndSwap(snapshot.revision, candidate));
+      if (committed) {
+        const acknowledgedEvents = this.requireCommittedCandidateAcknowledgement(snapshot.revision, candidate);
+        this.replaceEvents(acknowledgedEvents);
+        const acknowledgedStored = acknowledgedEvents.find((candidateEvent) => candidateEvent.eventId === stored.eventId);
+        if (acknowledgedStored === undefined || acknowledgedStored.sequence !== stored.sequence || acknowledgedStored.streamVersion !== stored.streamVersion) throw new InvalidEventError("acknowledged event-store state must contain the committed event at the expected sequence and stream version.");
+        return acknowledgedStored as StoredEvent<TPayload>;
+      }
+    }
+    throw new PersistenceConflictError(this.maxPersistenceAttempts);
+  }
   public override redactStream(streamId: string, redact: (event: StoredEvent) => unknown): void {
     assertNonEmpty(streamId, "streamId");
     for (let attempt = 1; attempt <= this.maxPersistenceAttempts; attempt += 1) {
       const snapshot = this.reload();
-      const nextEvents = this.events.map((event) => event.streamId === streamId
-        ? immutableCopy({ ...event, payload: redact(event) })
-        : event);
+      const nextEvents = this.redactEvents(this.events, streamId, redact);
       const candidate = JSON.stringify(nextEvents);
       const committed = requireExactBooleanSettlement(this.storage.compareAndSwap(snapshot.revision, candidate));
       if (committed) {
