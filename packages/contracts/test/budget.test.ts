@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   assertWithinBudget,
   BudgetExceededError,
+  InvalidBudgetValueError,
+  type ExecutionBudget,
   type WorkflowContext,
 } from "../src/index.js";
 
-function context(overrides: Partial<WorkflowContext["usage"]> = {}): WorkflowContext {
+function context(
+  usageOverrides: Partial<WorkflowContext["usage"]> = {},
+  budgetOverrides: Partial<ExecutionBudget> = {},
+): WorkflowContext {
   return {
     executionId: "exec-1",
     workflowId: "test-workflow",
@@ -19,6 +24,7 @@ function context(overrides: Partial<WorkflowContext["usage"]> = {}): WorkflowCon
       maxTokens: 10_000,
       maxDurationMs: 60_000,
       maxCostUsd: 1,
+      ...budgetOverrides,
     },
     usage: {
       toolCalls: 0,
@@ -28,7 +34,7 @@ function context(overrides: Partial<WorkflowContext["usage"]> = {}): WorkflowCon
       outputTokens: 0,
       durationMs: 0,
       costUsd: 0,
-      ...overrides,
+      ...usageOverrides,
     },
     metadata: {},
   };
@@ -61,5 +67,32 @@ describe("assertWithinBudget", () => {
     expect(() =>
       assertWithinBudget(context({ inputTokens: 8_000, outputTokens: 2_001 })),
     ).toThrow(/maxTokens/);
+  });
+
+  it.each([
+    ["toolCalls", -1],
+    ["retries", Number.NaN],
+    ["iterations", Number.POSITIVE_INFINITY],
+    ["inputTokens", -1],
+    ["outputTokens", Number.NEGATIVE_INFINITY],
+    ["durationMs", Number.NaN],
+    ["costUsd", -0.01],
+  ] as const)("rejects invalid usage value for %s", (field, value) => {
+    expect(() => assertWithinBudget(context({ [field]: value }))).toThrow(
+      InvalidBudgetValueError,
+    );
+  });
+
+  it.each([
+    ["maxToolCalls", -1],
+    ["maxRetries", Number.NaN],
+    ["maxIterations", Number.POSITIVE_INFINITY],
+    ["maxTokens", -1],
+    ["maxDurationMs", Number.NEGATIVE_INFINITY],
+    ["maxCostUsd", Number.NaN],
+  ] as const)("rejects invalid budget value for %s", (field, value) => {
+    expect(() => assertWithinBudget(context({}, { [field]: value }))).toThrow(
+      InvalidBudgetValueError,
+    );
   });
 });
