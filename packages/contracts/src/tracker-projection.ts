@@ -877,6 +877,7 @@ function ownArrayEntries(field: string, value: unknown): readonly unknown[] {
     throw new InvalidTrackerProjectionError(`${field} must be an array`);
   }
 
+  const entries = new Array<unknown>(value.length);
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key === "symbol") {
       throw new InvalidTrackerProjectionError(`${field} must not contain symbol entries`);
@@ -896,17 +897,15 @@ function ownArrayEntries(field: string, value: unknown): readonly unknown[] {
         `${field}[${index}] must be an enumerable data property`,
       );
     }
+    entries[index] = descriptor.value;
   }
 
-  const entries: unknown[] = [];
   for (let index = 0; index < value.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-    if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor)) {
+    if (!Object.prototype.hasOwnProperty.call(entries, index)) {
       throw new InvalidTrackerProjectionError(
         `${field}[${index}] must be an enumerable data property`,
       );
     }
-    entries.push(descriptor.value);
   }
   return Object.freeze(entries);
 }
