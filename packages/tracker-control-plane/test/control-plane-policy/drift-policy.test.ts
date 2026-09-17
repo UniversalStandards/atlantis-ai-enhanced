@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InvalidTrackerControlPlanePolicyError,
+  type ControlPlaneAuthorityDescriptor,
   createAuthorityDescriptor,
   createControlPlaneIncident,
   createDriftEvaluationRequest,
@@ -11,7 +12,7 @@ import {
 
 const sourceIdentity = createAuthorityDescriptor("tracker-sync", {
   authorityId: "tracker-sync-source",
-  tokenValue: "tracker-sync-source-token",
+  tokenIdentity: "tracker-sync-source-token-id",
   issuedAt: "2026-09-15T21:32:16.968Z",
   issuedBy: "policy-engine",
   justification: "source identity for drift decisions",
@@ -20,14 +21,21 @@ const sourceIdentity = createAuthorityDescriptor("tracker-sync", {
 
 const targetIdentity = createAuthorityDescriptor("release", {
   authorityId: "release-target",
-  tokenValue: "release-target-token",
+  tokenIdentity: "release-target-token-id",
   issuedAt: "2026-09-15T21:32:16.968Z",
   issuedBy: "policy-engine",
   justification: "target identity for drift decisions",
   evidence: ["evidence:target"],
 });
 
-function incident() {
+function incident(
+  overrides: Readonly<
+    Partial<{
+      sourceIdentity: ControlPlaneAuthorityDescriptor;
+      targetIdentity: ControlPlaneAuthorityDescriptor;
+    }>
+  > = {},
+) {
   return createControlPlaneIncident({
     incidentId: "incident-1",
     summary: "duplicate mirror rows detected",
@@ -44,6 +52,24 @@ function incident() {
       authoritativeRecordLocator: "github:issues/50",
       evidence: ["evidence:drift", "evidence:mirror"],
     },
+    ...overrides,
+  });
+}
+
+function createIdentityVariant(
+  authorityClass: "tracker-sync" | "coding-agent" | "release",
+  input: Readonly<{
+    authorityId: string;
+    tokenIdentity: string;
+  }>,
+) {
+  return createAuthorityDescriptor(authorityClass, {
+    authorityId: input.authorityId,
+    tokenIdentity: input.tokenIdentity,
+    issuedAt: "2026-09-15T21:32:16.968Z",
+    issuedBy: "policy-engine",
+    justification: `${authorityClass} variant for negative drift coverage`,
+    evidence: [`evidence:${authorityClass}:variant`],
   });
 }
 
@@ -190,5 +216,62 @@ describe("drift policy", () => {
         }),
       )
     ).toThrow(InvalidTrackerControlPlanePolicyError);
+
+    expect(() =>
+      evaluateDrift(
+        createDriftEvaluationRequest({
+          driftClassification: "safe-stale-mirror",
+          projectionClassification: "not-supported" as "program-work",
+          sourceIdentity,
+          targetIdentity,
+        }),
+      )
+    ).toThrow(InvalidTrackerControlPlanePolicyError);
+  });
+
+  it("fails closed when incident identities do not match class, authority id, or token identity", () => {
+    const cases = [
+      {
+        incident: incident({
+          sourceIdentity: createIdentityVariant("coding-agent", {
+            authorityId: sourceIdentity.authorityId,
+            tokenIdentity: sourceIdentity.token.tokenIdentity,
+          }),
+        }),
+        error: /incident\.sourceIdentity must match drift sourceIdentity/i,
+      },
+      {
+        incident: incident({
+          sourceIdentity: createIdentityVariant("tracker-sync", {
+            authorityId: "tracker-sync-source-other",
+            tokenIdentity: sourceIdentity.token.tokenIdentity,
+          }),
+        }),
+        error: /incident\.sourceIdentity must match drift sourceIdentity/i,
+      },
+      {
+        incident: incident({
+          targetIdentity: createIdentityVariant("release", {
+            authorityId: targetIdentity.authorityId,
+            tokenIdentity: "release-target-other-token-id",
+          }),
+        }),
+        error: /incident\.targetIdentity must match drift targetIdentity/i,
+      },
+    ] as const;
+
+    for (const { incident, error } of cases) {
+      expect(() =>
+        evaluateDrift(
+          createDriftEvaluationRequest({
+            driftClassification: "duplicate-rows",
+            projectionClassification: "automation-control",
+            sourceIdentity,
+            targetIdentity,
+            incident,
+          }),
+        )
+      ).toThrow(error);
+    }
   });
 });

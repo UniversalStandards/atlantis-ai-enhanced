@@ -7,6 +7,7 @@ import {
   validateControlPlaneIncident,
   type ControlPlaneIncident,
 } from "./incident-policy.js";
+import { projectionClassifications } from "./projection-policy.js";
 import {
   InvalidTrackerControlPlanePolicyError,
   requireEnumValue,
@@ -102,12 +103,24 @@ function requireIncident(
     );
   }
   const validated = validateControlPlaneIncident(incident);
-  if (validated.sourceIdentity.authorityId !== request.sourceIdentity.authorityId) {
+  if (
+    validated.sourceIdentity.authorityClass !== request.sourceIdentity.authorityClass
+    || validated.sourceIdentity.authorityId !== request.sourceIdentity.authorityId
+    || validated.sourceIdentity.token.kind !== request.sourceIdentity.token.kind
+    || validated.sourceIdentity.token.tokenIdentity
+      !== request.sourceIdentity.token.tokenIdentity
+  ) {
     throw new InvalidTrackerControlPlanePolicyError(
       "incident.sourceIdentity must match drift sourceIdentity",
     );
   }
-  if (validated.targetIdentity.authorityId !== request.targetIdentity.authorityId) {
+  if (
+    validated.targetIdentity.authorityClass !== request.targetIdentity.authorityClass
+    || validated.targetIdentity.authorityId !== request.targetIdentity.authorityId
+    || validated.targetIdentity.token.kind !== request.targetIdentity.token.kind
+    || validated.targetIdentity.token.tokenIdentity
+      !== request.targetIdentity.token.tokenIdentity
+  ) {
     throw new InvalidTrackerControlPlanePolicyError(
       "incident.targetIdentity must match drift targetIdentity",
     );
@@ -126,6 +139,11 @@ export function evaluateDrift(
   );
   const sourceIdentity = normalizeAuthorityDescriptor(request.sourceIdentity);
   const targetIdentity = normalizeAuthorityDescriptor(request.targetIdentity);
+  const projectionClassification = requireEnumValue(
+    "projectionClassification",
+    request.projectionClassification,
+    projectionClassifications,
+  );
 
   switch (driftClassification) {
     case "safe-stale-mirror":
@@ -133,7 +151,7 @@ export function evaluateDrift(
         policyVersion,
         outcome: "automatic-remediation",
         driftClassification,
-        projectionClassification: request.projectionClassification,
+        projectionClassification,
         sourceIdentity,
         targetIdentity,
         remediation: "reconcile-stale-mirror",
@@ -143,7 +161,7 @@ export function evaluateDrift(
         policyVersion,
         outcome: "automatic-remediation",
         driftClassification,
-        projectionClassification: request.projectionClassification,
+        projectionClassification,
         sourceIdentity,
         targetIdentity,
         remediation: "create-unambiguous-row",
@@ -154,7 +172,7 @@ export function evaluateDrift(
         policyVersion,
         outcome: "human-review",
         driftClassification,
-        projectionClassification: request.projectionClassification,
+        projectionClassification,
         sourceIdentity,
         targetIdentity,
         incident: requireIncident(request.incident, {
@@ -171,7 +189,7 @@ export function evaluateDrift(
         policyVersion,
         outcome: "blocked",
         driftClassification,
-        projectionClassification: request.projectionClassification,
+        projectionClassification,
         sourceIdentity,
         targetIdentity,
         incident: requireIncident(request.incident, {

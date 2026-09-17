@@ -33,7 +33,7 @@ export type ControlPlaneAuthorityTokenKind<TClass extends ControlPlaneAuthorityC
 
 export interface ControlPlaneAuthorityToken<TClass extends ControlPlaneAuthorityClass> {
   readonly kind: ControlPlaneAuthorityTokenKind<TClass>;
-  readonly value: string;
+  readonly tokenIdentity: string;
 }
 
 export interface ControlPlaneAuthorityProvenance {
@@ -80,9 +80,14 @@ function validateAuthorityToken<TClass extends ControlPlaneAuthorityClass>(
       `token.kind ${kind} does not match authorityClass ${authorityClass}`,
     );
   }
+  if (token.value !== undefined) {
+    throw new InvalidTrackerControlPlanePolicyError(
+      "token.value is not permitted in control-plane policy records",
+    );
+  }
   return Object.freeze({
     kind: expectedKind,
-    value: requireNonBlank("token.value", token.value),
+    tokenIdentity: requireNonBlank("token.tokenIdentity", token.tokenIdentity),
   });
 }
 
@@ -165,7 +170,7 @@ export function createAuthorityDescriptor<TClass extends ControlPlaneAuthorityCl
   authorityClass: TClass,
   input: Readonly<{
     authorityId: string;
-    tokenValue: string;
+    tokenIdentity: string;
     issuedAt: string;
     issuedBy: string;
     justification: string;
@@ -179,7 +184,7 @@ export function createAuthorityDescriptor<TClass extends ControlPlaneAuthorityCl
     issuedAt: input.issuedAt,
     token: {
       kind: authorityTokenKinds[authorityClass] as ControlPlaneAuthorityTokenKind<TClass>,
-      value: input.tokenValue,
+      tokenIdentity: input.tokenIdentity,
     },
     provenance: {
       issuedBy: input.issuedBy,

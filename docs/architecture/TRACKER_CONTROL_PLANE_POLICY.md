@@ -24,6 +24,7 @@ It does not implement credential issuance, external notifications, row mutation,
 
 - Each authority class has its own token kind and descriptor shape.
 - A descriptor is invalid unless its token kind exactly matches its declared authority class.
+- Policy records retain a non-secret token identity only; bearer token values are rejected.
 - Callers must select exactly one descriptor for a required authority class; missing or duplicate matches fail closed.
 - A descriptor validated for one role cannot satisfy another role's authority requirement.
 
@@ -58,7 +59,7 @@ It does not implement credential issuance, external notifications, row mutation,
 | `schema-incompatibility` | `blocked` | Fail closed pending policy/schema alignment |
 | `unverifiable-write` | `blocked` | Fail closed when the write cannot be trusted |
 
-Human-review and blocked outcomes require a validated control-plane incident whose source and target identities match the drift request. Automatic remediation does not synthesize operational side effects; it only returns machine-readable policy decisions for a caller-controlled port.
+Human-review and blocked outcomes require a validated control-plane incident whose source and target identities match the drift request by authority class, authority id, and non-secret token identity. Automatic remediation does not synthesize operational side effects; it only returns machine-readable policy decisions for a caller-controlled port.
 
 ## Rollback boundary
 
@@ -67,3 +68,9 @@ Reverting this packet removes the standalone control-plane policy contract, test
 ## Deferred operational enforcement
 
 Parent issue #46 owns shared wiring. Any future integration that consumes this policy must keep the same role separation, control-plane exclusion, incident metadata retention, and fail-closed drift semantics.
+
+## Parent-owned workspace wiring handoff
+
+This packet's exclusive write set does not include `packages/tracker-control-plane/package.json` or a package `tsconfig.json`, so root `pnpm --recursive typecheck` and `pnpm --recursive test` cannot yet discover these sources as a workspace package on their own. Parent issue #46 must wire the package root into the shared workspace validation path, or perform the equivalent parent-owned integration, before recursive package automation can count this policy as natively covered.
+
+Until that integration lands, verification for this packet is limited to direct targeted `pnpm exec tsc` and `pnpm exec vitest run` commands against `packages/tracker-control-plane/src/control-plane-policy/*` and `packages/tracker-control-plane/test/control-plane-policy/*`, plus the existing root frozen-lockfile, standards, and security checks.

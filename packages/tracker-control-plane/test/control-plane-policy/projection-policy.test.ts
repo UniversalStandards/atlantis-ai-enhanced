@@ -10,7 +10,7 @@ import {
 
 const trackerSync = createAuthorityDescriptor("tracker-sync", {
   authorityId: "tracker-sync-1",
-  tokenValue: "tracker-sync-token-value",
+  tokenIdentity: "tracker-sync-token-id",
   issuedAt: "2026-09-15T21:32:16.968Z",
   issuedBy: "policy-engine",
   justification: "tracker sync projection classification",
@@ -31,6 +31,21 @@ function combinations<T>(values: readonly T[]): readonly (readonly T[])[] {
   return result;
 }
 
+function permutations<T>(values: readonly T[]): readonly (readonly T[])[] {
+  if (values.length <= 1) {
+    return [values];
+  }
+
+  const result: T[][] = [];
+  values.forEach((value, index) => {
+    const remaining = values.filter((_, remainingIndex) => remainingIndex !== index);
+    for (const permutation of permutations(remaining)) {
+      result.push([value, ...permutation]);
+    }
+  });
+  return result;
+}
+
 describe("projection classification policy", () => {
   it("allows unlabeled ordinary work to remain program-work", () => {
     const decision = classifyProjectionCandidate(
@@ -48,7 +63,7 @@ describe("projection classification policy", () => {
 
   it("excludes every system-control label combination from normal program-work projection", () => {
     for (const labels of combinations(systemControlLabels)) {
-      for (const candidate of [labels, [...labels].reverse()]) {
+      for (const candidate of permutations(labels)) {
         const decision = classifyProjectionCandidate(
           createProjectionClassificationRequest({
             requestedClassification: "program-work",

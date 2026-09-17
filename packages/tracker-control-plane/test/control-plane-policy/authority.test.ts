@@ -14,7 +14,7 @@ import {
 function authority(authorityClass: ControlPlaneAuthorityClass): ControlPlaneAuthorityDescriptor {
   return createAuthorityDescriptor(authorityClass, {
     authorityId: `${authorityClass}-id`,
-    tokenValue: `${authorityClass}-opaque-token`,
+    tokenIdentity: `${authorityClass}-token-id`,
     issuedAt: "2026-09-15T21:32:16.968Z",
     issuedBy: "policy-engine",
     justification: `${authorityClass} authority issued for deterministic test`,
@@ -61,10 +61,23 @@ describe("control-plane authority policy", () => {
         ...authority("release"),
         token: {
           kind: "deployment-token",
-          value: "opaque",
+          tokenIdentity: "opaque-token-id",
         },
       })
     ).toThrow(/does not match authorityClass release/i);
+  });
+
+  it("rejects bearer token values in policy records", () => {
+    expect(() =>
+      validateAuthorityDescriptor({
+        ...authority("deployment"),
+        token: {
+          kind: "deployment-token",
+          tokenIdentity: "deployment-token-id",
+          value: "secret-bearer-token",
+        },
+      } as unknown as ControlPlaneAuthorityDescriptor)
+    ).toThrow(/token\.value is not permitted/i);
   });
 
   it("rejects unsupported policy versions", () => {
