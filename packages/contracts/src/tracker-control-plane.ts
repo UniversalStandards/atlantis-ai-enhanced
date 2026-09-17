@@ -180,7 +180,7 @@ export interface TrackerIncidentPolicy {
 }
 
 export interface TrackerIdempotencyClaimResult<TResult> {
-  readonly claimed: boolean;
+  readonly state: "claimed" | "in-progress" | "completed";
   readonly existingResult?: TResult;
 }
 
@@ -297,12 +297,7 @@ export function createTrackerProjectedSource(
     labels,
     policyDecision,
     canonicalProjection,
-    sourceRevision: `fnv1a64:${fnv1a64(
-      canonicalizeTrackerValue({
-        projectedFields,
-        projectionVersion: input.projectionVersion,
-      }),
-    )}`,
+    sourceRevision: `fnv1a64:${fnv1a64(canonicalProjection)}`,
   };
 }
 
@@ -493,16 +488,18 @@ export async function reconcileTrackerProjection<
 
   if (shouldClaimIdempotency && request.idempotencyStore) {
     const claim = await request.idempotencyStore.claim(idempotencyKey);
-    if (!claim.claimed) {
-      return (
-        claim.existingResult ?? {
-          status: "duplicate",
-          trigger: request.trigger,
-          idempotencyKey,
-          source,
-          mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
-        }
-      );
+    if (claim.state !== "claimed") {
+      if (claim.state === "completed" && claim.existingResult) {
+        return claim.existingResult;
+      }
+
+      return {
+        status: "duplicate",
+        trigger: request.trigger,
+        idempotencyKey,
+        source,
+        mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
+      };
     }
   }
 

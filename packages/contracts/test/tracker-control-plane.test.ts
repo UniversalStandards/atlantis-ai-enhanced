@@ -38,8 +38,8 @@ class InMemoryIdempotencyStore
   > {
     const existingResult = this.claims.get(idempotencyKey);
     return existingResult
-      ? { claimed: false, existingResult }
-      : { claimed: true };
+      ? { state: "completed", existingResult }
+      : { state: "claimed" };
   }
 
   record(
