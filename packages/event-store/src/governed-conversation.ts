@@ -188,7 +188,17 @@ function redactAuditEvent(
   });
 }
 
-function supportsContentRedaction(store: EventStore): store is RedactableEventStore {
+function supportsAtomicContentRedaction(store: EventStore): store is RedactableEventStore {
+  const candidate = store as Partial<RedactableEventStore>;
+  return (
+    typeof candidate.appendRedacted === "function" &&
+    typeof candidate.redactStream === "function"
+  );
+}
+
+function supportsStreamRedaction(
+  store: EventStore,
+): store is EventStore & Pick<RedactableEventStore, "redactStream"> {
   return typeof (store as Partial<RedactableEventStore>).redactStream === "function";
 }
 
@@ -411,33 +421,77 @@ export class GovernedConversationService {
    }
   }
   public deleteConversation(identity: ConversationIdentity, id: string): void {
-   const record = this.requireOwnedConversation(identity, id);
-   if (supportsContentRedaction(this.store)) {
-     if (!record.snapshot.deleted) {
-       this.refreshCounterFromStore();
-       for (let attempt = 0; attempt < 3; attempt += 1) {
-         try {
-           this.store.appendRedacted({
-             streamId: id,
-             eventId: this.nextId("event"),
-             eventType: "conversation.deleted",
-             payload: {
-               tenantId: record.snapshot.tenantId,
-               userId: record.snapshot.userId,
-             },
-             occurredAt: this.now(),
-             traceId: id,
-             correlationId: id,
-           }, record.streamVersion, redactPersistedConversationPayload);
-           return;
-         } catch (error) {
-           if (!(error instanceof DuplicateEventError)) {
-             throw error;
-           }
+   let record = this.requireOwnedConversation(identity, id);
+   if (supportsAtomicContentRedaction(this.store)) {
+     if (record.snapshot.deleted) {
+       this.store.redactStream(id, redactPersistedConversationPayload);
+       return;
+     }
+     this.refreshCounterFromStore();
+     for (let attempt = 0; attempt < 3; attempt += 1) {
+       try {
+         this.store.appendRedacted({
+           streamId: id,
+           eventId: this.nextId("event"),
+           eventType: "conversation.deleted",
+           payload: {
+             tenantId: record.snapshot.tenantId,
+             userId: record.snapshot.userId,
+           },
+           occurredAt: this.now(),
+           traceId: id,
+           correlationId: id,
+         }, record.streamVersion, redactPersistedConversationPayload);
+         return;
+       } catch (error) {
+         if (error instanceof DuplicateEventError) {
            this.refreshCounterFromStore();
+           continue;
+         }
+         if (!(error instanceof ConcurrencyConflictError)) {
+           throw error;
+         }
+         this.refreshCounterFromStore();
+         record = this.requireOwnedConversation(identity, id);
+         if (record.snapshot.deleted) {
+           this.store.redactStream(id, redactPersistedConversationPayload);
+           return;
          }
        }
-       throw new ConversationApprovalStateError("event identity could not be allocated");
+     }
+     throw new ConversationApprovalStateError(
+       "conversation deletion could not be recorded before concurrent state changes",
+     );
+   }
+   if (supportsStreamRedaction(this.store)) {
+     if (record.snapshot.deleted) {
+       this.store.redactStream(id, redactPersistedConversationPayload);
+       return;
+     }
+     let deleted = false;
+     for (let attempt = 0; attempt < 3; attempt += 1) {
+       try {
+         this.append(id, "conversation.deleted", {
+           tenantId: record.snapshot.tenantId,
+           userId: record.snapshot.userId,
+         }, record.streamVersion);
+         deleted = true;
+         break;
+       } catch (error) {
+         if (!(error instanceof ConcurrencyConflictError)) {
+           throw error;
+         }
+         record = this.requireOwnedConversation(identity, id);
+         if (record.snapshot.deleted) {
+           this.store.redactStream(id, redactPersistedConversationPayload);
+           return;
+         }
+       }
+     }
+     if (!deleted) {
+       throw new ConversationApprovalStateError(
+         "conversation deletion could not be recorded before concurrent state changes",
+       );
      }
      this.store.redactStream(id, redactPersistedConversationPayload);
      return;

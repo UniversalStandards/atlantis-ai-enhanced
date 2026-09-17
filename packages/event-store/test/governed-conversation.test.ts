@@ -12,10 +12,12 @@ import {
   InvalidConversationIdentityError,
 } from "../src/governed-conversation.js";
 import {
+  ConcurrencyConflictError,
   DurableSnapshotEventStore,
   InMemoryAtomicSnapshotStorage,
   InMemoryEventStore,
   type EventStore,
+  type RedactableEventStore,
   type StoredEvent,
 } from "../src/index.js";
 
@@ -88,6 +90,147 @@ class ConcurrentApprovalStore implements EventStore {
 
   public getStreamVersion(streamId: string): number {
     return this.store.getStreamVersion(streamId);
+  }
+}
+
+class RedactOnlyConversationStore implements EventStore {
+  private readonly store = new InMemoryEventStore();
+
+  public append<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    return this.store.append(event, expectedVersion);
+  }
+
+  public readStream(streamId: string, afterVersion?: number): readonly StoredEvent[] {
+    return this.store.readStream(streamId, afterVersion);
+  }
+
+  public readAll(afterSequence?: number): readonly StoredEvent[] {
+    return this.store.readAll(afterSequence);
+  }
+
+  public getStreamVersion(streamId: string): number {
+    return this.store.getStreamVersion(streamId);
+  }
+
+  public redactStream(
+    streamId: string,
+    redact: (event: StoredEvent) => unknown,
+  ): void {
+    this.store.redactStream(streamId, redact);
+  }
+}
+
+class ConcurrentDeleteStore implements RedactableEventStore {
+  private readonly store = new InMemoryEventStore();
+  private injected = false;
+
+  public append<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    return this.store.append(event, expectedVersion);
+  }
+
+  public appendRedacted<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+    redact: (event: StoredEvent) => unknown,
+  ): StoredEvent<TPayload> {
+    if (!this.injected && event.eventType === "conversation.deleted") {
+      this.injected = true;
+      this.store.append(
+        {
+          streamId: event.streamId,
+          eventId: "event-delete-race",
+          eventType: "conversation.message",
+          payload: Object.freeze({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            message: Object.freeze({
+              id: "message-delete-race",
+              role: "assistant" as const,
+              content: "race",
+            }),
+          }),
+          occurredAt: "2026-09-05T00:00:04.500Z",
+          traceId: event.traceId,
+          ...(event.correlationId === undefined ? {} : { correlationId: event.correlationId }),
+          ...(event.causationId === undefined ? {} : { causationId: event.causationId }),
+        },
+        expectedVersion,
+      );
+    }
+    return this.store.appendRedacted(event, expectedVersion, redact);
+  }
+
+  public redactStream(
+    streamId: string,
+    redact: (event: StoredEvent) => unknown,
+  ): void {
+    this.store.redactStream(streamId, redact);
+  }
+
+  public readStream(streamId: string, afterVersion?: number): readonly StoredEvent[] {
+    return this.store.readStream(streamId, afterVersion);
+  }
+
+  public readAll(afterSequence?: number): readonly StoredEvent[] {
+    return this.store.readAll(afterSequence);
+  }
+
+  public getStreamVersion(streamId: string): number {
+    return this.store.getStreamVersion(streamId);
+  }
+}
+
+class ConflictingRedactOnlyConversationStore extends RedactOnlyConversationStore {
+  public override append<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
+    if (event.eventType === "conversation.deleted") {
+      throw new ConcurrencyConflictError(event.streamId, expectedVersion, expectedVersion + 1);
+    }
+    return super.append(event, expectedVersion);
   }
 }
 
@@ -413,6 +556,44 @@ describe("governed conversation vertical slice", () => {
      .filter((event) => event.streamId === id && event.eventType === "conversation.message")
      .map((event) => (event.payload as { readonly message?: { readonly content: string } }).message?.content);
    expect(persistedMessages).toEqual(["[deleted]", "[deleted]"]);
+  });
+
+  it("falls back to append-plus-redact when the store only supports redactStream", async () => {
+   const store = new RedactOnlyConversationStore();
+   const service = new GovernedConversationService(store, undefined, deterministicClock());
+   const id = service.createConversation(actor.tenantId, actor.userId);
+
+   await service.sendMessage(actor, id, "delete me too");
+   expect(() => service.deleteConversation(actor, id)).not.toThrow();
+   expect(service.readConversation(actor, id)).toMatchObject({ deleted: true, messages: [] });
+   const redactedMessages = store
+     .readAll()
+     .filter((event) => event.streamId === id && event.eventType === "conversation.message")
+     .map((event) => (event.payload as { readonly message?: { readonly content: string } }).message?.content);
+   expect(redactedMessages).toEqual(["[deleted]", "[deleted]"]);
+  });
+
+  it("retries atomic deletion when a concurrent same-stream append changes the version", async () => {
+   const store = new ConcurrentDeleteStore();
+   const service = new GovernedConversationService(store, undefined, deterministicClock());
+   const id = service.createConversation(actor.tenantId, actor.userId);
+
+   await service.sendMessage(actor, id, "delete after race");
+   expect(() => service.deleteConversation(actor, id)).not.toThrow();
+   expect(service.readConversation(actor, id)).toMatchObject({ deleted: true, messages: [] });
+   const eventTypes = service.readAuditEvents(actor, id).map((event) => event.eventType);
+   expect(eventTypes).toContain("conversation.deleted");
+  });
+
+  it("does not redact a redact-only store when deletion cannot be recorded", async () => {
+   const store = new ConflictingRedactOnlyConversationStore();
+   const service = new GovernedConversationService(store, undefined, deterministicClock());
+   const id = service.createConversation(actor.tenantId, actor.userId);
+
+   await service.sendMessage(actor, id, "preserve on conflict");
+   expect(() => service.deleteConversation(actor, id)).toThrow(ConversationApprovalStateError);
+   const messages = service.readConversation(actor, id).messages.map((message) => message.content);
+   expect(messages).toEqual(["preserve on conflict", "mock:preserve on conflict"]);
   });
 
   it("keeps generated ids unique when multiple service instances share durable storage", async () => {
