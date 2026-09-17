@@ -11,6 +11,8 @@ export interface IsolatedSelfImprovementPatchResult {
   readonly executionId: string;
   readonly observedProblem: string;
   readonly objective: string;
+  readonly repository?: string;
+  readonly baseRevision?: string;
   readonly isolatedBranch: string;
   readonly patchArtifactId: string;
   readonly expectedBenefit: string;
@@ -63,6 +65,13 @@ function requireBound(actual: string, expected: string, field: string): string {
   return normalized;
 }
 
+function requireOptionalBound(actual: string | undefined, expected: string | undefined, field: string): string | undefined {
+  if (expected === undefined) {
+    return actual === undefined ? undefined : requireNonBlank(actual, field);
+  }
+  return requireBound(actual ?? "", expected, field);
+}
+
 function requireCanonicalIsolatedBranch(branch: string): string {
   const isolatedBranch = requireNonBlank(branch, "isolatedBranch");
   if (!isolatedBranch.startsWith("proposal/") && !isolatedBranch.startsWith("sprint/")) {
@@ -107,12 +116,16 @@ export class EvidenceBackedSelfImprovementPatchGenerator implements SelfImprovem
     const executionId = requireNonBlank(request.executionId, "executionId");
     const observedProblem = requireNonBlank(request.observedProblem, "observedProblem");
     const objective = requireNonBlank(request.objective, "objective");
+    const repository = request.repository === undefined ? undefined : requireNonBlank(request.repository, "repository");
+    const baseRevision = request.baseRevision === undefined ? undefined : requireNonBlank(request.baseRevision, "baseRevision");
 
     const patch = await this.workspace.prepare(request);
     requireNonBlank(patch.proposalId, "proposalId");
     requireBound(patch.executionId, executionId, "executionId");
     requireBound(patch.observedProblem, observedProblem, "observedProblem");
     requireBound(patch.objective, objective, "objective");
+    requireOptionalBound(patch.repository, repository, "repository");
+    requireOptionalBound(patch.baseRevision, baseRevision, "baseRevision");
     const isolatedBranch = requireCanonicalIsolatedBranch(patch.isolatedBranch);
     const patchArtifactId = requireNonBlank(patch.patchArtifactId, "patchArtifactId");
 
@@ -144,6 +157,8 @@ export class EvidenceBackedSelfImprovementPatchGenerator implements SelfImprovem
       executionId,
       observedProblem,
       objective,
+      ...(repository === undefined ? {} : { repository }),
+      ...(baseRevision === undefined ? {} : { baseRevision }),
       isolatedBranch,
       evidenceArtifactIds: Object.freeze(evidenceArtifactIds),
       expectedBenefit: requireNonBlank(patch.expectedBenefit, "expectedBenefit"),

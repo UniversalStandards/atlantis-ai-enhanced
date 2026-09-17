@@ -15,6 +15,8 @@ export interface SelfImprovementPatchRequest {
   readonly observedProblem: string;
   readonly objective: string;
   readonly evaluation: Readonly<EvaluationResult>;
+  readonly repository?: string;
+  readonly baseRevision?: string;
 }
 
 export interface SelfImprovementPatchEvidence {
@@ -22,6 +24,8 @@ export interface SelfImprovementPatchEvidence {
   readonly executionId: string;
   readonly observedProblem: string;
   readonly objective: string;
+  readonly repository?: string;
+  readonly baseRevision?: string;
   readonly isolatedBranch: string;
   readonly evidenceArtifactIds: readonly string[];
   readonly expectedBenefit: string;
@@ -85,6 +89,16 @@ function requireOperationalBinding(actual: string, expected: string, field: stri
   if (normalizedActual !== normalizedExpected) {
     throw new InvalidSelfImprovementPatchEvidenceError(
       `operational candidate ${field} must match the admitted execution context.`,
+    );
+  }
+}
+
+function requireGeneratedOperationalBinding(actual: string | undefined, expected: string, field: string): void {
+  const normalizedExpected = requireNonBlank(expected, `admission.${field}`);
+  const normalizedActual = requireNonBlank(actual ?? "", `generated.${field}`);
+  if (normalizedActual !== normalizedExpected) {
+    throw new InvalidSelfImprovementPatchEvidenceError(
+      `generated ${field} must match the admitted execution context.`,
     );
   }
 }
@@ -223,7 +237,15 @@ export async function proposeSelfImprovementFromAuthorizedOperationalCandidate(
 
   const scopedGenerator: SelfImprovementPatchGenerator = Object.freeze({
     async generate(scopedRequest: Readonly<SelfImprovementPatchRequest>): Promise<Readonly<SelfImprovementPatchEvidence>> {
-      const generated = await generator.generate(scopedRequest);
+      const generated = await generator.generate(
+        Object.freeze({
+          ...scopedRequest,
+          repository: admission.repository,
+          baseRevision: admission.baseRevision,
+        }),
+      );
+      requireGeneratedOperationalBinding(generated.repository, admission.repository, "repository");
+      requireGeneratedOperationalBinding(generated.baseRevision, admission.baseRevision, "baseRevision");
       requireIsolatedBranchWithinNamespace(generated.isolatedBranch, isolatedWorkspaceNamespace);
       return generated;
     },

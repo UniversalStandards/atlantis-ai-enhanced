@@ -10,10 +10,15 @@ import {
   type SelfImprovementPatchRequest,
 } from "./self-improvement-development-workflow.js";
 
+const repository = "UniversalStandards/atlantis-ai-enhanced";
+const baseRevision = "test-base-revision";
+
 const request: SelfImprovementPatchRequest = Object.freeze({
   executionId: "exec-concrete-improve-1",
   observedProblem: "release evaluation missed its deterministic quality threshold",
   objective: "restore deterministic quality without production mutation",
+  repository,
+  baseRevision,
   evaluation: Object.freeze({
     score: 0.61,
     passed: false,
@@ -28,6 +33,8 @@ function patch(overrides: Partial<IsolatedSelfImprovementPatchResult> = {}): Iso
     executionId: request.executionId,
     observedProblem: request.observedProblem,
     objective: request.objective,
+    repository,
+    baseRevision,
     isolatedBranch: "proposal/concrete-improve-1",
     patchArtifactId: "artifact-patch-1",
     expectedBenefit: "restore deterministic release quality",
@@ -97,6 +104,17 @@ describe("EvidenceBackedSelfImprovementPatchGenerator", () => {
   ] as const)("rejects isolated patch %s substitution", async (field, value) => {
     const { generator } = fixture({ patch: { [field]: value } });
     await expect(generator.generate(request)).rejects.toBeInstanceOf(InvalidConcreteSelfImprovementPatchError);
+  });
+
+  it.each([
+    ["repository", "UniversalStandards/other-repository"],
+    ["baseRevision", "other-base-revision"],
+  ] as const)("rejects isolated patch %s substitution before test execution", async (field, value) => {
+    const { generator, run, evaluate, review } = fixture({ patch: { [field]: value } });
+    await expect(generator.generate(request)).rejects.toBeInstanceOf(InvalidConcreteSelfImprovementPatchError);
+    expect(run).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(review).not.toHaveBeenCalled();
   });
 
   it("rejects a non-isolated branch before test execution", async () => {

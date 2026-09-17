@@ -29,6 +29,8 @@ function patchEvidence(overrides: Partial<SelfImprovementPatchEvidence> = {}): S
     executionId: failedRequest.executionId,
     observedProblem: failedRequest.observedProblem,
     objective: failedRequest.objective,
+    repository: "UniversalStandards/atlantis-ai-enhanced",
+    baseRevision: "test-base-revision",
     isolatedBranch: "proposal/evaluation-quality-7",
     evidenceArtifactIds: ["artifact-failing-evaluation", "artifact-patch", "artifact-tests"],
     expectedBenefit: "restore evaluation quality above the release threshold",
@@ -215,14 +217,20 @@ describe("proposeSelfImprovementFromFailedEvaluation", () => {
 describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
   it("reuses canonical operational authorization and still stops at human review", async () => {
     const generate = vi.fn(async () => Object.freeze(patchEvidence()));
+    const admission = operationalAdmission();
 
     const proposal = await proposeSelfImprovementFromAuthorizedOperationalCandidate(
       failedRequest,
       { generate },
-      operationalAdmission(),
+      admission,
     );
 
     expect(generate).toHaveBeenCalledOnce();
+    expect(generate).toHaveBeenCalledWith({
+      ...failedRequest,
+      repository: admission.repository,
+      baseRevision: admission.baseRevision,
+    });
     expect(proposal.status).toBe("awaiting-human-review");
   });
 
@@ -293,6 +301,22 @@ describe("proposeSelfImprovementFromAuthorizedOperationalCandidate", () => {
         operationalAdmission(),
       ),
     ).rejects.toThrow("generated isolatedBranch must remain inside the authorized isolated workspace namespace");
+    expect(generate).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["repository", "UniversalStandards/other-repository"],
+    ["baseRevision", "other-base-revision"],
+  ] as const)("rejects generated %s substitution outside the admitted execution context", async (field, value) => {
+    const generate = vi.fn(async () => Object.freeze(patchEvidence({ [field]: value })));
+
+    await expect(
+      proposeSelfImprovementFromAuthorizedOperationalCandidate(
+        failedRequest,
+        { generate },
+        operationalAdmission(),
+      ),
+    ).rejects.toThrow(`generated ${field} must match the admitted execution context`);
     expect(generate).toHaveBeenCalledOnce();
   });
 
