@@ -188,7 +188,9 @@ export class HarnessRuntime {
     inspect.evidence?.forEach((entry) => {
       evidenceReads.push(normalizeEvidenceInput(1, "inspect", startedAt, entry));
     });
-    inspect.unresolvedItems?.forEach((item) => unresolvedItems.add(normalizeString("inspect.unresolvedItem", item)));
+    inspect.unresolvedItems?.forEach((item) =>
+      unresolvedItems.add(normalizeString("inspect.unresolvedItems", item)),
+    );
 
     let lastProgressToken: string | undefined;
     let repeatedProgressCount = 0;
@@ -363,7 +365,9 @@ export class HarnessRuntime {
       });
       const normalizedEvaluation = normalizeEvaluation(evaluation, this.#clock.nowIso(), iteration);
       evaluations.push(normalizedEvaluation);
-      evaluation.unresolvedItems?.forEach((item) => unresolvedItems.add(normalizeString("evaluation.unresolvedItem", item)));
+      evaluation.unresolvedItems?.forEach((item) =>
+        unresolvedItems.add(normalizeString("evaluation.unresolvedItems", item)),
+      );
 
       const refinement = await request.refine({
         input,
@@ -420,7 +424,7 @@ export class HarnessRuntime {
         });
       }
       refinement.unresolvedItems?.forEach((item) =>
-        unresolvedItems.add(normalizeString("refinement.unresolvedItem", item)),
+        unresolvedItems.add(normalizeString("refinement.unresolvedItems", item)),
       );
 
       const progressToken =
@@ -591,12 +595,15 @@ function normalizeEvaluation(
 ): HarnessEvaluationRecord {
   const metrics: Record<string, number> = {};
   for (const [key, value] of Object.entries(evaluation.metrics)) {
-    metrics[normalizeString("evaluation.metricKey", key)] = value;
+    metrics[normalizeString("evaluation.metricKey", key)] = normalizeNonNegativeNumber(
+      `evaluation.metrics.${key}`,
+      value,
+    );
   }
   return Object.freeze({
     iteration,
     recordedAt,
-    score: evaluation.score,
+    score: normalizeNonNegativeNumber("evaluation.score", evaluation.score),
     passed: evaluation.passed,
     reasons: Object.freeze(
       evaluation.reasons.map((reason) => normalizeString("evaluation.reason", reason)),
@@ -606,4 +613,11 @@ function normalizeEvaluation(
       ? {}
       : { summary: normalizeJsonValue("evaluation.summary", evaluation.summary) }),
   });
+}
+
+function normalizeNonNegativeNumber(field: string, value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`${field} must be a finite non-negative number`);
+  }
+  return value;
 }

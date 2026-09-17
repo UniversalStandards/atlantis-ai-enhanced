@@ -342,19 +342,114 @@ export class ToolRouter {
 
       const attemptStartedAt = context.clock.nowIso();
       const result = await tool.execute(input, metadata);
-      context.usage.toolCalls += 1;
-      if (attempt > 1) {
-        context.usage.retries += 1;
-      }
       try {
-        applyUsageDelta(context.usage, result.usage);
+        const normalizedUsage = normalizeUsageContribution(result.usage);
+        const normalizedEvidence = Object.freeze(
+          (result.evidence ?? []).map((entry) =>
+            normalizeEvidenceInput(context.iteration, "action", context.clock.nowIso(), entry),
+          ),
+        );
+        const normalizedOutput =
+          result.status === "succeeded"
+            ? normalizeJsonValue("tool.output", result.output)
+            : undefined;
+        const normalizedFailure =
+          result.status === "failed"
+            ? normalizeToolFailure("tool.failure", result.failure)
+            : undefined;
+        context.usage.toolCalls += 1;
+        if (attempt > 1) {
+          context.usage.retries += 1;
+        }
+        applyUsageDelta(context.usage, normalizedUsage);
+        evidenceReads.push(...normalizedEvidence);
+        const attemptCompletedAt = context.clock.nowIso();
+        if (result.status === "succeeded") {
+          output = normalizedOutput as JsonValue;
+          attempts.push(
+            Object.freeze({
+              attempt,
+              startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
+              completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
+              status: "succeeded",
+            }),
+          );
+          return Object.freeze({
+            status: "succeeded",
+            actionRecord: Object.freeze({
+              iteration: context.iteration,
+              actionId: context.action.actionId,
+              toolName: context.action.toolName,
+              capability: tool.capability,
+              startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
+              completedAt: attemptCompletedAt,
+              correlationId: context.correlationId,
+              idempotency,
+              input,
+              outcome: "succeeded",
+              attempts: Object.freeze(attempts),
+              output: output as JsonValue,
+            }),
+            policyDecision,
+            ...(approvalDecision === undefined ? {} : { approvalDecision }),
+            evidenceReads: Object.freeze(evidenceReads),
+          });
+        }
+
+        finalFailure = normalizedFailure as ToolFailure;
+        const backoffMsAfter =
+          finalFailure.kind === "transient" && attempt < retryPolicy.maxAttempts
+            ? retryPolicy.backoffMs?.[attempt - 1] ?? 0
+            : undefined;
+        attempts.push(
+          Object.freeze({
+            attempt,
+            startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
+            completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
+            status: "failed",
+            failure: finalFailure as ToolFailure,
+            ...(backoffMsAfter === undefined ? {} : { backoffMsAfter }),
+          }),
+        );
+
+        if (finalFailure.kind !== "transient" || attempt >= retryPolicy.maxAttempts) {
+          return Object.freeze({
+            status: "tool_failed",
+            actionRecord: Object.freeze({
+              iteration: context.iteration,
+              actionId: context.action.actionId,
+              toolName: context.action.toolName,
+              capability: tool.capability,
+              startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
+              completedAt: attemptCompletedAt,
+              correlationId: context.correlationId,
+              idempotency,
+              input,
+              outcome: "tool_failed",
+              attempts: Object.freeze(attempts),
+              failure: finalFailure as ToolFailure,
+            }),
+            policyDecision,
+            ...(approvalDecision === undefined ? {} : { approvalDecision }),
+            evidenceReads: Object.freeze(evidenceReads),
+          });
+        }
+
+        await context.clock.sleep(backoffMsAfter ?? 0);
       } catch (error) {
         const attemptCompletedAt = context.clock.nowIso();
-        const invalidUsageFailure = normalizeToolFailure("tool.failure", {
+        const invalidResultFailure = normalizeToolFailure("tool.failure", {
           kind: "deterministic",
-          code: "invalid_usage",
+          code: "invalid_tool_result",
           message: error instanceof Error ? error.message : String(error),
-          details: { returnedUsage: stableStringify(result.usage ?? {}) },
+          details: {
+            returnedUsage:
+              result.usage === undefined ? null : describeInvalidToolResult(result.usage),
+            returnedPayload:
+              result.status === "succeeded"
+                ? describeInvalidToolResult(result.output)
+                : describeInvalidToolResult(result.failure),
+          },
         });
         attempts.push(
           Object.freeze({
@@ -362,7 +457,7 @@ export class ToolRouter {
             startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
             completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
             status: "failed",
-            failure: invalidUsageFailure,
+            failure: invalidResultFailure,
           }),
         );
         return Object.freeze({
@@ -379,92 +474,13 @@ export class ToolRouter {
             input,
             outcome: "tool_failed",
             attempts: Object.freeze(attempts),
-            failure: invalidUsageFailure,
+            failure: invalidResultFailure,
           }),
           policyDecision,
           ...(approvalDecision === undefined ? {} : { approvalDecision }),
           evidenceReads: Object.freeze(evidenceReads),
         });
       }
-      const attemptCompletedAt = context.clock.nowIso();
-      result.evidence?.forEach((entry) => {
-        evidenceReads.push(
-          normalizeEvidenceInput(context.iteration, "action", attemptCompletedAt, entry),
-        );
-      });
-
-      if (result.status === "succeeded") {
-        output = normalizeJsonValue("tool.output", result.output);
-        attempts.push(
-          Object.freeze({
-            attempt,
-            startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
-            completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
-            status: "succeeded",
-          }),
-        );
-        return Object.freeze({
-          status: "succeeded",
-          actionRecord: Object.freeze({
-            iteration: context.iteration,
-            actionId: context.action.actionId,
-            toolName: context.action.toolName,
-            capability: tool.capability,
-            startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
-            completedAt: attemptCompletedAt,
-            correlationId: context.correlationId,
-            idempotency,
-            input,
-            outcome: "succeeded",
-            attempts: Object.freeze(attempts),
-            output,
-          }),
-          policyDecision,
-          ...(approvalDecision === undefined ? {} : { approvalDecision }),
-          evidenceReads: Object.freeze(evidenceReads),
-        });
-      }
-
-      finalFailure = normalizeToolFailure("tool.failure", result.failure);
-      const backoffMsAfter =
-        finalFailure.kind === "transient" && attempt < retryPolicy.maxAttempts
-          ? retryPolicy.backoffMs?.[attempt - 1] ?? 0
-          : undefined;
-      attempts.push(
-        Object.freeze({
-          attempt,
-          startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
-          completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
-          status: "failed",
-          failure: finalFailure,
-          ...(backoffMsAfter === undefined ? {} : { backoffMsAfter }),
-        }),
-      );
-
-      if (finalFailure.kind !== "transient" || attempt >= retryPolicy.maxAttempts) {
-        return Object.freeze({
-          status: "tool_failed",
-          actionRecord: Object.freeze({
-            iteration: context.iteration,
-            actionId: context.action.actionId,
-            toolName: context.action.toolName,
-            capability: tool.capability,
-            startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
-            completedAt: attemptCompletedAt,
-            correlationId: context.correlationId,
-            idempotency,
-            input,
-            outcome: "tool_failed",
-            attempts: Object.freeze(attempts),
-            failure: finalFailure,
-          }),
-          policyDecision,
-          ...(approvalDecision === undefined ? {} : { approvalDecision }),
-          evidenceReads: Object.freeze(evidenceReads),
-        });
-      }
-
-      await context.clock.sleep(backoffMsAfter ?? 0);
     }
 
     return Object.freeze({
@@ -714,4 +730,43 @@ function normalizeUsageDelta(field: string, value: number): number {
     throw new Error(`Tool usage delta ${field} must be a finite non-negative number`);
   }
   return value;
+}
+
+function normalizeUsageContribution(
+  delta: Partial<ExecutionUsage> | undefined,
+): Partial<ExecutionUsage> {
+  if (delta === undefined) {
+    return {};
+  }
+  return Object.freeze({
+    ...(delta.toolCalls === undefined
+      ? {}
+      : { toolCalls: normalizeUsageDelta("toolCalls", delta.toolCalls) }),
+    ...(delta.retries === undefined
+      ? {}
+      : { retries: normalizeUsageDelta("retries", delta.retries) }),
+    ...(delta.iterations === undefined
+      ? {}
+      : { iterations: normalizeUsageDelta("iterations", delta.iterations) }),
+    ...(delta.inputTokens === undefined
+      ? {}
+      : { inputTokens: normalizeUsageDelta("inputTokens", delta.inputTokens) }),
+    ...(delta.outputTokens === undefined
+      ? {}
+      : { outputTokens: normalizeUsageDelta("outputTokens", delta.outputTokens) }),
+    ...(delta.durationMs === undefined
+      ? {}
+      : { durationMs: normalizeUsageDelta("durationMs", delta.durationMs) }),
+    ...(delta.costUsd === undefined
+      ? {}
+      : { costUsd: normalizeUsageDelta("costUsd", delta.costUsd) }),
+  });
+}
+
+function describeInvalidToolResult(value: unknown): string {
+  try {
+    return stableStringify(value);
+  } catch {
+    return JSON.stringify({ fallback: String(value) });
+  }
 }
