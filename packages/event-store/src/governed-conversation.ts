@@ -117,6 +117,26 @@ function normalizeIdentity(identity: ConversationIdentity): ConversationIdentity
   });
 }
 
+function readConversationCreatedIdentityPayload(
+  payload: unknown,
+): Readonly<{ tenantId: string; userId: string }> {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new ConversationApprovalStateError(INVALID_CONVERSATION_PAYLOAD_MESSAGE);
+  }
+  const identityPayload = payload as Readonly<Record<string, unknown>>;
+  const tenantId = identityPayload.tenantId;
+  const userId = identityPayload.userId;
+  if (
+    typeof tenantId !== "string" ||
+    tenantId.trim().length === 0 ||
+    typeof userId !== "string" ||
+    userId.trim().length === 0
+  ) {
+    throw new ConversationApprovalStateError(INVALID_CONVERSATION_PAYLOAD_MESSAGE);
+  }
+  return Object.freeze({ tenantId, userId });
+}
+
 function requireApprovalMetadataField(
   key: string,
   metadata: Readonly<Record<string, string>>,
@@ -381,11 +401,7 @@ export class GovernedConversationService {
      if (first.eventType !== "conversation.created") {
        throw new ConversationApprovalStateError(INVALID_CONVERSATION_STREAM_MESSAGE);
      }
-     const tenantId = first.payload.tenantId;
-     const userId = first.payload.userId;
-     if (typeof tenantId !== "string" || tenantId.trim().length === 0 || typeof userId !== "string" || userId.trim().length === 0) {
-       throw new ConversationApprovalStateError(INVALID_CONVERSATION_PAYLOAD_MESSAGE);
-     }
+     const { tenantId, userId } = readConversationCreatedIdentityPayload(first.payload);
      const messages: ConversationMessage[] = [];
      let deleted = false;
      for (const event of events) {

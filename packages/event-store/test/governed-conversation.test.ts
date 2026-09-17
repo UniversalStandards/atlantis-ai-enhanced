@@ -397,6 +397,31 @@ describe("governed conversation vertical slice", () => {
     );
   });
 
+  it("fails closed when conversation.created payload has the wrong JSON shape", () => {
+    for (const payload of [null, "conversation", 7, true, ["tenant-a", "user-a"]]) {
+      const store = new InMemoryEventStore();
+      store.append(
+        {
+          streamId: "conversation-1",
+          eventId: "event-1",
+          eventType: "conversation.created",
+          payload,
+          occurredAt: "2026-09-05T00:00:00.000Z",
+          traceId: "conversation-1",
+        },
+        0,
+      );
+      const service = new GovernedConversationService(store, undefined, deterministicClock());
+
+      expect(() => service.readConversation(actor, "conversation-1")).toThrow(
+        ConversationAccessDeniedError,
+      );
+      expect(() => service.readAuditEvents(actor, "conversation-1")).toThrow(
+        ConversationAccessDeniedError,
+      );
+    }
+  });
+
   it("translates concurrent approval races into the governed terminal-state error", () => {
     const service = new GovernedConversationService(
       new ConcurrentApprovalStore(),
