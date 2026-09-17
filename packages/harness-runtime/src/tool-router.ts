@@ -27,6 +27,7 @@ import {
   normalizeStringRecord,
   normalizeTimestamp,
   normalizeToolFailure,
+  stableStringify,
   type ActionAttemptRecord,
   type HarnessApprovalDecisionRecord,
   type HarnessEvidenceInput,
@@ -345,31 +346,47 @@ export class ToolRouter {
       if (attempt > 1) {
         context.usage.retries += 1;
       }
-      applyUsageDelta(context.usage, result.usage);
-      const attemptCompletedAt = context.clock.nowIso();
-      if (!this.#isWithinBudget(context.budget, context.usage)) {
-        return this.#budgetExceeded(
-          context,
-          actionStartedAt,
-          input,
-          tool.capability,
-          idempotency,
-          Object.freeze([
-            ...attempts,
-            Object.freeze({
-              attempt,
-              startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
-              completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
-              status: result.status === "succeeded" ? "succeeded" : "failed",
-              ...(result.status === "failed"
-                ? { failure: normalizeToolFailure("tool.failure", result.failure) }
-                : {}),
-            }),
-          ]),
-          policyDecision,
-          approvalDecision,
+      try {
+        applyUsageDelta(context.usage, result.usage);
+      } catch (error) {
+        const attemptCompletedAt = context.clock.nowIso();
+        const invalidUsageFailure = normalizeToolFailure("tool.failure", {
+          kind: "deterministic",
+          code: "invalid_usage",
+          message: error instanceof Error ? error.message : String(error),
+          details: { returnedUsage: stableStringify(result.usage ?? {}) },
+        });
+        attempts.push(
+          Object.freeze({
+            attempt,
+            startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
+            completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
+            status: "failed",
+            failure: invalidUsageFailure,
+          }),
         );
+        return Object.freeze({
+          status: "tool_failed",
+          actionRecord: Object.freeze({
+            iteration: context.iteration,
+            actionId: context.action.actionId,
+            toolName: context.action.toolName,
+            capability: tool.capability,
+            startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
+            completedAt: attemptCompletedAt,
+            correlationId: context.correlationId,
+            idempotency,
+            input,
+            outcome: "tool_failed",
+            attempts: Object.freeze(attempts),
+            failure: invalidUsageFailure,
+          }),
+          policyDecision,
+          ...(approvalDecision === undefined ? {} : { approvalDecision }),
+          evidenceReads: Object.freeze(evidenceReads),
+        });
       }
+      const attemptCompletedAt = context.clock.nowIso();
       result.evidence?.forEach((entry) => {
         evidenceReads.push(
           normalizeEvidenceInput(context.iteration, "action", attemptCompletedAt, entry),
@@ -484,15 +501,6 @@ export class ToolRouter {
       metadata: {},
     };
     assertWithinBudget(budgetContext);
-  }
-
-  #isWithinBudget(budget: ExecutionBudget, usage: ExecutionUsage): boolean {
-    try {
-      this.#assertBudget(budget, usage);
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   #checkBudget(

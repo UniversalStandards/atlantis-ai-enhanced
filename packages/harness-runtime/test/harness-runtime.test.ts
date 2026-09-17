@@ -413,10 +413,12 @@ describe("HarnessRuntime", () => {
       }),
       observe: async ({ toolOutput }) => ({ summary: { observed: toolOutput } }),
       evaluate: async () => ({ score: 0.5, passed: false, reasons: ["still pending"], metrics: { progress: 0 } }),
-      refine: async () => ({
+      refine: async ({ iteration }) => ({
         status: "continue",
-        nextState: { phase: "inspected" },
-        progressToken: "stalled",
+        nextState:
+          iteration % 2 === 0
+            ? { status: "pending", phase: "inspected" }
+            : { phase: "inspected", status: "pending" },
         unresolvedItems: ["needs-change"],
       }),
     });
@@ -425,6 +427,50 @@ describe("HarnessRuntime", () => {
     expect(execute).toHaveBeenCalledTimes(2);
     expect(result.workDelta.usage.iterations).toBe(2);
     expect(result.workDelta.unresolvedItems).toContain("needs-change");
+  });
+
+  it("preserves a successful tool action before terminating on post-action budget exhaustion", async () => {
+    const observe = vi.fn(async () => ({ summary: { unreachable: true } }));
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "returns the provided message",
+          schema: echoSchema,
+          execute: async () =>
+            ({
+              status: "succeeded",
+              output: { echoed: "hello" },
+              usage: { outputTokens: 2 },
+            }) as const,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget({ maxTokens: 1 }),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Tool call itself succeeds but exhausts budget",
+        desiredOutcome: "Record success and stop before observe",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe,
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("budget_exhausted");
+    expect(observe).not.toHaveBeenCalled();
+    expect(result.workDelta.attemptedActions[0]).toMatchObject({
+      outcome: "succeeded",
+      output: { echoed: "hello" },
+    });
   });
 
   it("terminates on budget exhaustion before unauthorized work", async () => {

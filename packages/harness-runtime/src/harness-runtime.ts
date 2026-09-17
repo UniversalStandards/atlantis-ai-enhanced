@@ -17,6 +17,7 @@ import {
   normalizeJsonValue,
   normalizeString,
   normalizeStringRecord,
+  stableStringify,
   validateWorkDelta,
   type HarnessApprovalDecisionRecord,
   type HarnessEvidenceInput,
@@ -298,6 +299,27 @@ export class HarnessRuntime {
           unresolvedItems,
         });
       }
+      this.#synchronizeDuration(usage, startedAtMs);
+      if (!this.#isWithinBudget(request.budget, usage)) {
+        return this.#finish({
+          input,
+          startState,
+          startedAt,
+          executionId,
+          correlationId,
+          usage,
+          terminalState: "budget_exhausted",
+          finalState: currentState,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
 
       const toolOutput = actionResult.actionRecord.output ?? normalizeJsonValue("toolOutput", null);
       const observation = await request.observe({
@@ -403,8 +425,15 @@ export class HarnessRuntime {
 
       const progressToken =
         refinement.progressToken ??
-        JSON.stringify({
-          plan: plan.action,
+        stableStringify({
+          plan: {
+            summary: plan.summary,
+            rationale: plan.rationale,
+            desiredOutcome: plan.desiredOutcome,
+            toolName: plan.action.toolName,
+            input: plan.action.input,
+            metadata: plan.metadata,
+          },
           state: currentState,
           evaluation: {
             passed: normalizedEvaluation.passed,
