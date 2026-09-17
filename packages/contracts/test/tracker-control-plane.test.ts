@@ -5,6 +5,7 @@ import {
   type TrackerIdempotencyClaimResult,
   type TrackerIdempotencyStore,
   type TrackerIncidentPolicy,
+  validateTrackerProjectionVersion,
   type TrackerProjectionAdapter,
   type TrackerProjectedSource,
   type TrackerProjectionRecord,
@@ -203,6 +204,12 @@ describe("tracker control plane", () => {
 
     expect(decomposed.canonicalProjection).toBe(composed.canonicalProjection);
     expect(decomposed.sourceRevision).toBe(composed.sourceRevision);
+  });
+
+  it("accepts semantically equivalent projection versions after trimming", () => {
+    expect(
+      validateTrackerProjectionVersion([" tracker-v1 "], "tracker-v1"),
+    ).toEqual({ compatible: true });
   });
 
   it("shares one idempotency identity between webhook and anti-entropy replays", async () => {
