@@ -178,8 +178,8 @@ function issueRecord(
 }
 
 describe("tracker control plane", () => {
-  it("produces the same canonical source revision across normalized arrays and unicode", () => {
-    const composed = createTrackerProjectedSource({
+  it("produces the same canonical source revision across normalized arrays and unicode", async () => {
+    const composed = await createTrackerProjectedSource({
       sourceSystem: "github",
       repository: "UniversalStandards/atlantis-ai-enhanced",
       entityType: "issue",
@@ -190,7 +190,7 @@ describe("tracker control plane", () => {
         title: "café",
       },
     });
-    const decomposed = createTrackerProjectedSource({
+    const decomposed = await createTrackerProjectedSource({
       sourceSystem: "github",
       repository: "UniversalStandards/atlantis-ai-enhanced",
       entityType: "issue",
@@ -344,6 +344,7 @@ describe("tracker control plane", () => {
         issueRecord({ recordId: "record-2", sourceRevision: "fnv1a64:other" }),
       ],
     });
+    const idempotencyStore = new InMemoryIdempotencyStore();
 
     const result = await reconcileTrackerProjection({
       trigger: "anti-entropy",
@@ -362,9 +363,30 @@ describe("tracker control plane", () => {
       },
       adapter,
       incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
+    });
+    const replay = await reconcileTrackerProjection({
+      trigger: "webhook",
+      authority: AUTHORITY,
+      source: {
+        sourceSystem: "github",
+        repository: "UniversalStandards/atlantis-ai-enhanced",
+        entityType: "issue",
+        entityId: "46",
+        projectionVersion: "tracker-v1",
+        projectedFields: {
+          labels: ["enhancement"],
+          state: "open",
+          title: "Tracker issue",
+        },
+      },
+      adapter,
+      incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
     });
 
     expect(result.status).toBe("failed");
+    expect(replay).toEqual(result);
     expect(result.incident).toMatchObject({
       code: "duplicate-target-records",
       owner: "tracker-ops",
@@ -380,6 +402,7 @@ describe("tracker control plane", () => {
       records: [issueRecord()],
       compatible: false,
     });
+    const idempotencyStore = new InMemoryIdempotencyStore();
 
     const result = await reconcileTrackerProjection({
       trigger: "webhook",
@@ -398,9 +421,30 @@ describe("tracker control plane", () => {
       },
       adapter,
       incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
+    });
+    const replay = await reconcileTrackerProjection({
+      trigger: "anti-entropy",
+      authority: AUTHORITY,
+      source: {
+        sourceSystem: "github",
+        repository: "UniversalStandards/atlantis-ai-enhanced",
+        entityType: "issue",
+        entityId: "46",
+        projectionVersion: "tracker-v2",
+        projectedFields: {
+          labels: ["enhancement"],
+          state: "open",
+          title: "Tracker issue",
+        },
+      },
+      adapter,
+      incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
     });
 
     expect(result.status).toBe("failed");
+    expect(replay).toEqual(result);
     expect(result.incident).toMatchObject({
       code: "schema-incompatible",
       owner: "tracker-ops",
@@ -420,6 +464,7 @@ describe("tracker control plane", () => {
         },
       }),
     });
+    const idempotencyStore = new InMemoryIdempotencyStore();
 
     const result = await reconcileTrackerProjection({
       trigger: "webhook",
@@ -438,9 +483,30 @@ describe("tracker control plane", () => {
       },
       adapter,
       incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
+    });
+    const replay = await reconcileTrackerProjection({
+      trigger: "anti-entropy",
+      authority: AUTHORITY,
+      source: {
+        sourceSystem: "github",
+        repository: "UniversalStandards/atlantis-ai-enhanced",
+        entityType: "issue",
+        entityId: "46",
+        projectionVersion: "tracker-v1",
+        projectedFields: {
+          labels: ["enhancement"],
+          state: "closed",
+          title: "Expected title",
+        },
+      },
+      adapter,
+      incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
     });
 
     expect(result.status).toBe("failed");
+    expect(replay).toEqual(result);
     expect(result.incident).toMatchObject({
       code: "unverifiable-write",
       owner: "tracker-ops",
