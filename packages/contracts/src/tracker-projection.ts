@@ -389,6 +389,8 @@ export function assessTrackerProjectionCompatibility(
       });
     }
 
+    normalizeSupportedTrackerProjectionRecord(record, version);
+
     return Object.freeze({
       status: "supported" as const,
       version,
@@ -418,125 +420,10 @@ export function assertSupportedTrackerProjection(
     throw new InvalidTrackerProjectionError(compatibility.reason);
   }
 
-  const record = plainRecord("tracker projection", projection);
-  const entityType = trackerEntityType("entityType", ownDataValue(record, "entityType"));
-  const repository = nonBlankText("repository", ownDataValue(record, "repository"));
-  const entityId = positiveSafeInteger("entityId", ownDataValue(record, "entityId"));
-  const sourceRevision = sha256Digest(
-    "sourceRevision",
-    ownDataValue(record, "sourceRevision"),
+  return normalizeSupportedTrackerProjectionRecord(
+    plainRecord("tracker projection", projection),
+    compatibility.version,
   );
-  const semanticRecord = plainRecord(
-    "tracker projection.semanticFields",
-    ownDataValue(record, "semanticFields"),
-  );
-
-  if (entityType === "issue") {
-    requirePresentFields(
-      "tracker projection.semanticFields",
-      semanticRecord,
-      issueSemanticFields,
-    );
-    const normalized: TrackerIssueProjection = Object.freeze({
-      projectionVersion: compatibility.version,
-      entityType,
-      repository,
-      entityId,
-      sourceRevision,
-      semanticFields: Object.freeze({
-        title: nonBlankText("semanticFields.title", ownDataValue(semanticRecord, "title")),
-        body: optionalText("semanticFields.body", ownDataValue(semanticRecord, "body")),
-        state: issueState("semanticFields.state", ownDataValue(semanticRecord, "state")),
-        labels: stringSet("semanticFields.labels", ownDataValue(semanticRecord, "labels")),
-        assignees: stringSet(
-          "semanticFields.assignees",
-          ownDataValue(semanticRecord, "assignees"),
-        ),
-        linkedPullRequests: objectSet(
-          "semanticFields.linkedPullRequests",
-          ownDataValue(semanticRecord, "linkedPullRequests"),
-          issueLinkedPullRequest,
-          (value) => value.pullRequestNumber,
-        ),
-      }),
-    });
-
-    const expectedSourceRevision = hashCanonicalProjection({
-      projectionVersion: normalized.projectionVersion,
-      entityType: normalized.entityType,
-      repository: normalized.repository,
-      entityId: normalized.entityId,
-      semanticFields: normalized.semanticFields,
-    });
-    if (normalized.sourceRevision !== expectedSourceRevision) {
-      throw new InvalidTrackerProjectionError(
-        "tracker projection sourceRevision does not match canonical semantic fields",
-      );
-    }
-    return normalized;
-  }
-
-  requirePresentFields(
-    "tracker projection.semanticFields",
-    semanticRecord,
-    pullRequestSemanticFields,
-  );
-  const normalized: TrackerPullRequestProjection = Object.freeze({
-    projectionVersion: compatibility.version,
-    entityType,
-    repository,
-    entityId,
-    sourceRevision,
-    semanticFields: Object.freeze({
-      title: nonBlankText("semanticFields.title", ownDataValue(semanticRecord, "title")),
-      body: optionalText("semanticFields.body", ownDataValue(semanticRecord, "body")),
-      state: pullRequestState("semanticFields.state", ownDataValue(semanticRecord, "state")),
-      draft: booleanField("semanticFields.draft", ownDataValue(semanticRecord, "draft")),
-      labels: stringSet("semanticFields.labels", ownDataValue(semanticRecord, "labels")),
-      assignees: stringSet(
-        "semanticFields.assignees",
-        ownDataValue(semanticRecord, "assignees"),
-      ),
-      linkedIssues: objectSet(
-        "semanticFields.linkedIssues",
-        ownDataValue(semanticRecord, "linkedIssues"),
-        pullRequestLinkedIssue,
-        (value) => value.issueNumber,
-      ),
-      checks: objectSet(
-        "semanticFields.checks",
-        ownDataValue(semanticRecord, "checks"),
-        pullRequestCheck,
-        (value) => value.context,
-      ),
-      changedFiles: objectSet(
-        "semanticFields.changedFiles",
-        ownDataValue(semanticRecord, "changedFiles"),
-        pullRequestChangedFile,
-        (value) => value.path,
-      ),
-      commits: objectSet(
-        "semanticFields.commits",
-        ownDataValue(semanticRecord, "commits"),
-        pullRequestCommit,
-        (value) => value.sha,
-      ),
-    }),
-  });
-
-  const expectedSourceRevision = hashCanonicalProjection({
-    projectionVersion: normalized.projectionVersion,
-    entityType: normalized.entityType,
-    repository: normalized.repository,
-    entityId: normalized.entityId,
-    semanticFields: normalized.semanticFields,
-  });
-  if (normalized.sourceRevision !== expectedSourceRevision) {
-    throw new InvalidTrackerProjectionError(
-      "tracker projection sourceRevision does not match canonical semantic fields",
-    );
-  }
-  return normalized;
 }
 
 export function canonicalizeTrackerProjectionValue(value: unknown): string {
@@ -665,7 +552,7 @@ function nonBlankText(field: string, value: unknown): string {
   if (typeof value !== "string") {
     throw new InvalidTrackerProjectionError(`${field} must be a non-blank string`);
   }
-  const normalized = value.replace(/\r\n?/gu, "\n").trim();
+  const normalized = normalizeProjectionText(value);
   if (normalized.length === 0) {
     throw new InvalidTrackerProjectionError(`${field} must be a non-blank string`);
   }
@@ -679,7 +566,7 @@ function optionalText(field: string, value: unknown): string | null {
   if (typeof value !== "string") {
     throw new InvalidTrackerProjectionError(`${field} must be a string or null`);
   }
-  const normalized = value.replace(/\r\n?/gu, "\n").trim();
+  const normalized = normalizeProjectionText(value);
   return normalized.length === 0 ? null : normalized;
 }
 
@@ -777,16 +664,13 @@ function fileChangeType(field: string, value: unknown): TrackerFileChangeType {
 }
 
 function stringSet(field: string, value: unknown): readonly string[] {
-  if (!Array.isArray(value)) {
-    throw new InvalidTrackerProjectionError(`${field} must be an array`);
-  }
-  const normalized = value.map((entry, index) =>
+  const normalized = ownArrayEntries(field, value).map((entry, index) =>
     nonBlankText(`${field}[${index}]`, entry),
   );
   return freezeSortedUnique(
     field,
     normalized,
-    (left, right) => left.localeCompare(right),
+    compareCanonicalStrings,
     (entry) => entry,
   );
 }
@@ -797,14 +681,15 @@ function objectSet<T>(
   normalize: (entry: unknown) => Readonly<T>,
   identity: (entry: Readonly<T>) => string | number,
 ): readonly Readonly<T>[] {
-  if (!Array.isArray(value)) {
-    throw new InvalidTrackerProjectionError(`${field} must be an array`);
-  }
-  const normalized = value.map((entry) => normalize(entry));
+  const normalized = ownArrayEntries(field, value).map((entry) => normalize(entry));
   return freezeSortedUnique(
     field,
     normalized,
-    (left, right) => canonicalizeTrackerProjectionValue(left).localeCompare(canonicalizeTrackerProjectionValue(right)),
+    (left, right) =>
+      compareCanonicalStrings(
+        canonicalizeTrackerProjectionValue(left),
+        canonicalizeTrackerProjectionValue(right),
+      ),
     identity,
   );
 }
@@ -815,22 +700,17 @@ function freezeSortedUnique<T>(
   compare: (left: T, right: T) => number,
   identity: (entry: T) => string | number,
 ): readonly T[] {
-  const sorted = [...values].sort(compare);
-  for (let index = 1; index < sorted.length; index += 1) {
-    const previous = sorted[index - 1];
-    const current = sorted[index];
-    if (previous === undefined || current === undefined) {
+  const seenIdentities = new Set<string>();
+  for (const entry of values) {
+    const duplicateKey = identityKey(identity(entry));
+    if (seenIdentities.has(duplicateKey)) {
       throw new InvalidTrackerProjectionError(
-        `${field} normalization encountered an unexpected sparse array`,
+        `${field} must not contain duplicate semantic entries for ${String(identity(entry))}`,
       );
     }
-    if (identity(previous) === identity(current)) {
-      throw new InvalidTrackerProjectionError(
-        `${field} must not contain duplicate semantic entries for ${String(identity(current))}`,
-      );
-    }
+    seenIdentities.add(duplicateKey);
   }
-  return Object.freeze(sorted);
+  return Object.freeze([...values].sort(compare));
 }
 
 function normalizeProjectionVersion(
@@ -866,6 +746,183 @@ function hashCanonicalProjection(value: unknown): string {
   return sha256Hex(canonicalizeTrackerProjectionValue(value));
 }
 
+function normalizeSupportedTrackerProjectionRecord(
+  record: Readonly<Record<string, unknown>>,
+  version: TrackerProjectionVersion,
+): TrackerProjection {
+  const entityType = trackerEntityType("entityType", ownDataValue(record, "entityType"));
+  const repository = nonBlankText("repository", ownDataValue(record, "repository"));
+  const entityId = positiveSafeInteger("entityId", ownDataValue(record, "entityId"));
+  const sourceRevision = sha256Digest(
+    "sourceRevision",
+    ownDataValue(record, "sourceRevision"),
+  );
+  const semanticRecord = plainRecord(
+    "tracker projection.semanticFields",
+    ownDataValue(record, "semanticFields"),
+  );
+
+  if (entityType === "issue") {
+    requirePresentFields(
+      "tracker projection.semanticFields",
+      semanticRecord,
+      issueSemanticFields,
+    );
+    const normalized: TrackerIssueProjection = Object.freeze({
+      projectionVersion: version,
+      entityType,
+      repository,
+      entityId,
+      sourceRevision,
+      semanticFields: Object.freeze({
+        title: nonBlankText("semanticFields.title", ownDataValue(semanticRecord, "title")),
+        body: optionalText("semanticFields.body", ownDataValue(semanticRecord, "body")),
+        state: issueState("semanticFields.state", ownDataValue(semanticRecord, "state")),
+        labels: stringSet("semanticFields.labels", ownDataValue(semanticRecord, "labels")),
+        assignees: stringSet(
+          "semanticFields.assignees",
+          ownDataValue(semanticRecord, "assignees"),
+        ),
+        linkedPullRequests: objectSet(
+          "semanticFields.linkedPullRequests",
+          ownDataValue(semanticRecord, "linkedPullRequests"),
+          issueLinkedPullRequest,
+          (value) => value.pullRequestNumber,
+        ),
+      }),
+    });
+    assertProjectionSourceRevision(normalized);
+    return normalized;
+  }
+
+  requirePresentFields(
+    "tracker projection.semanticFields",
+    semanticRecord,
+    pullRequestSemanticFields,
+  );
+  const normalized: TrackerPullRequestProjection = Object.freeze({
+    projectionVersion: version,
+    entityType,
+    repository,
+    entityId,
+    sourceRevision,
+    semanticFields: Object.freeze({
+      title: nonBlankText("semanticFields.title", ownDataValue(semanticRecord, "title")),
+      body: optionalText("semanticFields.body", ownDataValue(semanticRecord, "body")),
+      state: pullRequestState("semanticFields.state", ownDataValue(semanticRecord, "state")),
+      draft: booleanField("semanticFields.draft", ownDataValue(semanticRecord, "draft")),
+      labels: stringSet("semanticFields.labels", ownDataValue(semanticRecord, "labels")),
+      assignees: stringSet(
+        "semanticFields.assignees",
+        ownDataValue(semanticRecord, "assignees"),
+      ),
+      linkedIssues: objectSet(
+        "semanticFields.linkedIssues",
+        ownDataValue(semanticRecord, "linkedIssues"),
+        pullRequestLinkedIssue,
+        (value) => value.issueNumber,
+      ),
+      checks: objectSet(
+        "semanticFields.checks",
+        ownDataValue(semanticRecord, "checks"),
+        pullRequestCheck,
+        (value) => value.context,
+      ),
+      changedFiles: objectSet(
+        "semanticFields.changedFiles",
+        ownDataValue(semanticRecord, "changedFiles"),
+        pullRequestChangedFile,
+        (value) => value.path,
+      ),
+      commits: objectSet(
+        "semanticFields.commits",
+        ownDataValue(semanticRecord, "commits"),
+        pullRequestCommit,
+        (value) => value.sha,
+      ),
+    }),
+  });
+  assertProjectionSourceRevision(normalized);
+  return normalized;
+}
+
+function assertProjectionSourceRevision(projection: TrackerProjection): void {
+  const expectedSourceRevision = hashCanonicalProjection({
+    projectionVersion: projection.projectionVersion,
+    entityType: projection.entityType,
+    repository: projection.repository,
+    entityId: projection.entityId,
+    semanticFields: projection.semanticFields,
+  });
+  if (projection.sourceRevision !== expectedSourceRevision) {
+    throw new InvalidTrackerProjectionError(
+      "tracker projection sourceRevision does not match canonical semantic fields",
+    );
+  }
+}
+
+function normalizeProjectionText(value: string): string {
+  return value.normalize("NFC").replace(/\r\n?/gu, "\n").trim();
+}
+
+function compareCanonicalStrings(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+}
+
+function ownArrayEntries(field: string, value: unknown): readonly unknown[] {
+  if (!Array.isArray(value)) {
+    throw new InvalidTrackerProjectionError(`${field} must be an array`);
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === "symbol") {
+      throw new InvalidTrackerProjectionError(`${field} must not contain symbol entries`);
+    }
+    if (key === "length") {
+      continue;
+    }
+    const index = arrayIndexKey(key);
+    if (index === null) {
+      throw new InvalidTrackerProjectionError(
+        `${field} must not contain non-index properties`,
+      );
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor)) {
+      throw new InvalidTrackerProjectionError(
+        `${field}[${index}] must be an enumerable data property`,
+      );
+    }
+  }
+
+  const entries: unknown[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor)) {
+      throw new InvalidTrackerProjectionError(
+        `${field}[${index}] must be an enumerable data property`,
+      );
+    }
+    entries.push(descriptor.value);
+  }
+  return Object.freeze(entries);
+}
+
+function arrayIndexKey(key: string): number | null {
+  if (!/^(0|[1-9]\d*)$/u.test(key)) {
+    return null;
+  }
+  const index = Number(key);
+  return Number.isSafeInteger(index) ? index : null;
+}
+
+function identityKey(value: string | number): string {
+  return `${typeof value}:${String(value)}`;
+}
+
 function renderCanonicalJson(value: unknown, ancestors: Set<object>): string {
   if (value === null) {
     return "null";
@@ -897,7 +954,9 @@ function renderCanonicalJson(value: unknown, ancestors: Set<object>): string {
     }
     ancestors.add(value);
     try {
-      return `[${value.map((entry) => renderCanonicalJson(entry, ancestors)).join(",")}]`;
+      return `[${ownArrayEntries("canonical tracker projection value", value)
+        .map((entry) => renderCanonicalJson(entry, ancestors))
+        .join(",")}]`;
     } finally {
       ancestors.delete(value);
     }
@@ -911,7 +970,7 @@ function renderCanonicalJson(value: unknown, ancestors: Set<object>): string {
   }
   ancestors.add(record as object);
   try {
-    const keys = Object.keys(record).sort((left, right) => left.localeCompare(right));
+    const keys = Object.keys(record).sort(compareCanonicalStrings);
     const entries = keys.map((key) => {
       const entryValue = ownDataValue(record, key);
       if (entryValue === undefined) {

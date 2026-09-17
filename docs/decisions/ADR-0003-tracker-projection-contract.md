@@ -70,23 +70,25 @@ The pull-request projection includes only:
 ## Normalization rules
 
 1. Plain-object records only. Arrays, class instances, symbols, accessors, and inherited fields are rejected.
-2. Text fields normalize line endings to `\n`, trim surrounding whitespace, and reject blank required values. Optional blank text becomes `null`.
+2. Text fields normalize Unicode to NFC, normalize line endings to `\n`, trim surrounding whitespace, and reject blank required values. Optional blank text becomes `null`.
 3. Numeric identifiers and counts must be safe integers. Entity identifiers are positive; file diff counts are non-negative.
 4. Enumerated states must already be canonical supported literals.
-5. Unordered semantic collections are normalized by sorting their canonical representations and rejecting duplicate semantic identities:
+5. Unordered semantic collections are normalized by locale-independent code-unit ordering over the normalized canonical values and by rejecting duplicate semantic identities independently of sort order:
    - labels by label text
    - assignees by assignee identity
    - linked issue / pull-request references by linked entity number
    - checks by check context
    - changed files by path
    - commits by canonical lowercase 40-character SHA
-6. Canonical JSON sorts object keys recursively and preserves only the declared normalized array order.
-7. Unsupported scalar types (`undefined`, `bigint`, `symbol`, functions, non-finite numbers, `-0`) and cyclic values fail closed.
+6. Arrays must contain only enumerable own data properties at every index. Sparse arrays, indexed accessors, symbols, and non-index collection properties fail closed rather than being skipped or invoked.
+7. Canonical JSON sorts object keys recursively with the same locale-independent ordering and preserves only the declared normalized array order.
+8. Unsupported scalar types (`undefined`, `bigint`, `symbol`, functions, non-finite numbers, `-0`) and cyclic values fail closed.
 
 ## Compatibility policy
 
 - Major version compatibility is strict. A different major version returns `unsupported-major` and must stop mutation.
 - Minor version compatibility is explicit and bounded by the exported supported range. Versions outside the supported minor range are malformed for this packet and must stop mutation.
+- Supported-version compatibility is not field-name-only. `entityType`, semantic fields, and `sourceRevision` must all validate against the supported v1 contract before the compatibility result can be `supported`.
 - Malformed projections fail closed before any downstream mutation.
 
 ## Excluded volatile fields and non-goals
