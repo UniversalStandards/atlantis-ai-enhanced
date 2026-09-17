@@ -184,7 +184,6 @@ describe("tracker control plane", () => {
       entityType: "issue",
       entityId: "46",
       projectionVersion: "tracker-v1",
-      labels: ["enhancement", "bug"],
       projectedFields: {
         labels: ["bug", "enhancement"],
         title: "café",
@@ -196,7 +195,6 @@ describe("tracker control plane", () => {
       entityType: "issue",
       entityId: "46",
       projectionVersion: "tracker-v1",
-      labels: ["bug", "enhancement"],
       projectedFields: {
         labels: ["enhancement", "bug"],
         title: "cafe\u0301",
@@ -456,7 +454,6 @@ describe("tracker control plane", () => {
         entityType: "issue",
         entityId: "99",
         projectionVersion: "tracker-v1",
-        labels: ["tracker-drift"],
         projectedFields: {
           labels: ["tracker-drift"],
           state: "open",

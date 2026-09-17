@@ -42,7 +42,6 @@ export interface TrackerProjectionSourceInput {
   readonly entityId: string;
   readonly projectionVersion: string;
   readonly projectedFields: Readonly<Record<string, unknown>>;
-  readonly labels?: readonly string[];
 }
 
 export interface TrackerProjectedSource {
