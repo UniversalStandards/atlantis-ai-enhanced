@@ -29,6 +29,7 @@ class InMemoryIdempotencyStore
   implements TrackerIdempotencyStore<TrackerReconciliationResult<FakeRecord["planningContext"]>>
 {
   readonly claims = new Map<string, TrackerReconciliationResult<FakeRecord["planningContext"]>>();
+  readonly abandoned: string[] = [];
 
   claim(
     idempotencyKey: string,
@@ -46,6 +47,11 @@ class InMemoryIdempotencyStore
     result: TrackerReconciliationResult<FakeRecord["planningContext"]>,
   ): void {
     this.claims.set(idempotencyKey, result);
+  }
+
+  abandon(idempotencyKey: string): void {
+    this.abandoned.push(idempotencyKey);
+    this.claims.delete(idempotencyKey);
   }
 }
 
@@ -244,6 +250,7 @@ describe("tracker control plane", () => {
     const adapter = new InMemoryAdapter({
       records: [issueRecord()],
     });
+    const idempotencyStore = new InMemoryIdempotencyStore();
 
     const result = await reconcileTrackerProjection({
       trigger: "webhook",
@@ -262,6 +269,7 @@ describe("tracker control plane", () => {
       },
       adapter,
       incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
       dryRun: true,
     });
 
@@ -289,6 +297,7 @@ describe("tracker control plane", () => {
       status: "in-progress",
     });
     expect(adapter.updateCalls).toHaveLength(0);
+    expect(idempotencyStore.claims.size).toBe(0);
   });
 
   it("preserves Notion-owned planning context on verified updates", async () => {
@@ -392,6 +401,46 @@ describe("tracker control plane", () => {
       owner: "tracker-ops",
       slaClass: "p1",
       severity: "high",
+    });
+  });
+
+  it("fails closed when post-write readback cannot verify the target state", async () => {
+    const adapter = new InMemoryAdapter({
+      records: [issueRecord()],
+      readbackOverride: issueRecord({
+        projectedFields: {
+          labels: ["enhancement"],
+          state: "closed",
+          title: "Unexpected title",
+        },
+      }),
+    });
+
+    const result = await reconcileTrackerProjection({
+      trigger: "webhook",
+      authority: AUTHORITY,
+      source: {
+        sourceSystem: "github",
+        repository: "UniversalStandards/atlantis-ai-enhanced",
+        entityType: "issue",
+        entityId: "46",
+        projectionVersion: "tracker-v1",
+        projectedFields: {
+          labels: ["enhancement"],
+          state: "closed",
+          title: "Expected title",
+        },
+      },
+      adapter,
+      incidentPolicy: INCIDENT_POLICY,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.incident).toMatchObject({
+      code: "unverifiable-write",
+      owner: "tracker-ops",
+      slaClass: "p1",
+      severity: "critical",
     });
   });
 

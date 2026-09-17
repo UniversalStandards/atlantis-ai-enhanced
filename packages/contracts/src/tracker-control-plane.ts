@@ -146,6 +146,7 @@ export interface TrackerReadbackVerificationResult {
 
 export type TrackerReconciliationIncidentCode =
   | "authority-denied"
+  | "adapter-failure"
   | "duplicate-target-records"
   | "schema-incompatible"
   | "unverifiable-write";
@@ -187,6 +188,7 @@ export interface TrackerIdempotencyStore<TResult> {
   claim(
     idempotencyKey: string,
   ): Promise<TrackerIdempotencyClaimResult<TResult>> | TrackerIdempotencyClaimResult<TResult>;
+  abandon(idempotencyKey: string): Promise<void> | void;
   record(
     idempotencyKey: string,
     result: TResult,
@@ -295,7 +297,12 @@ export function createTrackerProjectedSource(
     labels,
     policyDecision,
     canonicalProjection,
-    sourceRevision: `fnv1a64:${fnv1a64(canonicalProjection)}`,
+    sourceRevision: `fnv1a64:${fnv1a64(
+      canonicalizeTrackerValue({
+        projectedFields,
+        projectionVersion: input.projectionVersion,
+      }),
+    )}`,
   };
 }
 
@@ -442,11 +449,13 @@ export async function reconcileTrackerProjection<
     projectionVersion: source.projectionVersion,
   });
 
+  const shouldClaimIdempotency = request.dryRun !== true;
+
   const finalize = async (
     result: TrackerReconciliationResult<TPlanningContext>,
     shouldRecord = true,
   ) => {
-    if (shouldRecord && request.idempotencyStore) {
+    if (shouldClaimIdempotency && shouldRecord && request.idempotencyStore) {
       await request.idempotencyStore.record(idempotencyKey, result);
     }
     return result;
@@ -482,7 +491,7 @@ export async function reconcileTrackerProjection<
     });
   }
 
-  if (request.idempotencyStore) {
+  if (shouldClaimIdempotency && request.idempotencyStore) {
     const claim = await request.idempotencyStore.claim(idempotencyKey);
     if (!claim.claimed) {
       return (
@@ -497,9 +506,117 @@ export async function reconcileTrackerProjection<
     }
   }
 
-  const matchingRecords = [...(await request.adapter.read(source))];
-  if (matchingRecords.length > 1) {
+  try {
+    const matchingRecords = [...(await request.adapter.read(source))];
+    if (matchingRecords.length > 1) {
+      return finalize({
+        status: "failed",
+        trigger: request.trigger,
+        idempotencyKey,
+        source,
+        mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
+        incident: createTrackerIncident(
+          request.incidentPolicy,
+          "duplicate-target-records",
+          "Multiple target records matched the same source entity; auto-delete is forbidden",
+          idempotencyKey,
+          source.sourceRevision,
+        ),
+      });
+    }
+
+    const existingRecord = matchingRecords[0];
+    const schemaCompatibility = await request.adapter.validateSchema(
+      existingRecord,
+      source.projectionVersion,
+    );
+    if (!schemaCompatibility.compatible) {
+      return finalize({
+        status: "failed",
+        trigger: request.trigger,
+        idempotencyKey,
+        source,
+        mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(
+          existingRecord?.planningContext ?? null,
+          false,
+        ),
+        incident: createTrackerIncident(
+          request.incidentPolicy,
+          "schema-incompatible",
+          schemaCompatibility.reason ??
+            "The target projection schema was not compatible with the source",
+          idempotencyKey,
+          source.sourceRevision,
+        ),
+      });
+    }
+
+    const mutationPlan = planTrackerMutation(source, existingRecord);
+    if (request.dryRun) {
+      return finalize({
+        status: "dry-run",
+        trigger: request.trigger,
+        idempotencyKey,
+        source,
+        mutationPlan,
+        ...(existingRecord ? { verifiedRecord: existingRecord } : {}),
+      });
+    }
+
+    if (mutationPlan.mutation === "none") {
+      return finalize({
+        status: "noop",
+        trigger: request.trigger,
+        idempotencyKey,
+        source,
+        mutationPlan,
+        ...(existingRecord ? { verifiedRecord: existingRecord } : {}),
+      });
+    }
+
+    const writeReceipt =
+      mutationPlan.mutation === "create"
+        ? await request.adapter.create(source, mutationPlan)
+        : await request.adapter.update(existingRecord!, source, mutationPlan);
+    const readbackRecord = await request.adapter.readback(writeReceipt, source);
+    const verification = verifyTrackerReadback({
+      source,
+      targetSystem: request.adapter.targetSystem,
+      previousRecord: existingRecord,
+      readbackRecord,
+    });
+
+    if (!verification.verified) {
+      return finalize({
+        status: "failed",
+        trigger: request.trigger,
+        idempotencyKey,
+        source,
+        mutationPlan,
+        incident: createTrackerIncident(
+          request.incidentPolicy,
+          "unverifiable-write",
+          verification.reasons.join("; "),
+          idempotencyKey,
+          source.sourceRevision,
+        ),
+      });
+    }
+
     return finalize({
+      status: "applied",
+      trigger: request.trigger,
+      idempotencyKey,
+      source,
+      mutationPlan,
+      ...(readbackRecord ? { verifiedRecord: readbackRecord } : {}),
+    });
+  } catch (error) {
+    if (shouldClaimIdempotency && request.idempotencyStore) {
+      await request.idempotencyStore.abandon(idempotencyKey);
+    }
+
+    return {
       status: "failed",
       trigger: request.trigger,
       idempotencyKey,
@@ -507,100 +624,13 @@ export async function reconcileTrackerProjection<
       mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
       incident: createTrackerIncident(
         request.incidentPolicy,
-        "duplicate-target-records",
-        "Multiple target records matched the same source entity; auto-delete is forbidden",
+        "adapter-failure",
+        error instanceof Error ? error.message : "Unknown adapter failure",
         idempotencyKey,
         source.sourceRevision,
       ),
-    });
+    };
   }
-
-  const existingRecord = matchingRecords[0];
-  const schemaCompatibility = await request.adapter.validateSchema(
-    existingRecord,
-    source.projectionVersion,
-  );
-  if (!schemaCompatibility.compatible) {
-    return finalize({
-      status: "failed",
-      trigger: request.trigger,
-      idempotencyKey,
-      source,
-      mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(
-        existingRecord?.planningContext ?? null,
-        false,
-      ),
-      incident: createTrackerIncident(
-        request.incidentPolicy,
-        "schema-incompatible",
-        schemaCompatibility.reason ??
-          "The target projection schema was not compatible with the source",
-        idempotencyKey,
-        source.sourceRevision,
-      ),
-    });
-  }
-
-  const mutationPlan = planTrackerMutation(source, existingRecord);
-  if (request.dryRun) {
-    return finalize({
-      status: "dry-run",
-      trigger: request.trigger,
-      idempotencyKey,
-      source,
-      mutationPlan,
-      ...(existingRecord ? { verifiedRecord: existingRecord } : {}),
-    });
-  }
-
-  if (mutationPlan.mutation === "none") {
-    return finalize({
-      status: "noop",
-      trigger: request.trigger,
-      idempotencyKey,
-      source,
-      mutationPlan,
-      ...(existingRecord ? { verifiedRecord: existingRecord } : {}),
-    });
-  }
-
-  const writeReceipt =
-    mutationPlan.mutation === "create"
-      ? await request.adapter.create(source, mutationPlan)
-      : await request.adapter.update(existingRecord!, source, mutationPlan);
-  const readbackRecord = await request.adapter.readback(writeReceipt, source);
-  const verification = verifyTrackerReadback({
-    source,
-    targetSystem: request.adapter.targetSystem,
-    previousRecord: existingRecord,
-    readbackRecord,
-  });
-
-  if (!verification.verified) {
-    return finalize({
-      status: "failed",
-      trigger: request.trigger,
-      idempotencyKey,
-      source,
-      mutationPlan,
-      incident: createTrackerIncident(
-        request.incidentPolicy,
-        "unverifiable-write",
-        verification.reasons.join("; "),
-        idempotencyKey,
-        source.sourceRevision,
-      ),
-    });
-  }
-
-  return finalize({
-    status: "applied",
-    trigger: request.trigger,
-    idempotencyKey,
-    source,
-    mutationPlan,
-    ...(readbackRecord ? { verifiedRecord: readbackRecord } : {}),
-  });
 }
 
 function emptyTrackerMutationPlan<
@@ -642,6 +672,7 @@ function defaultIncidentSeverity(
   code: TrackerReconciliationIncidentCode,
 ): TrackerIncidentSeverity {
   switch (code) {
+    case "adapter-failure":
     case "authority-denied":
     case "schema-incompatible":
       return "high";
