@@ -130,6 +130,7 @@ export interface HarnessStateChangeRecord {
 
 export type HarnessTerminalState =
   | "succeeded"
+  | "evaluation_failed"
   | "policy_denied"
   | "approval_denied"
   | "tool_failed"
@@ -727,6 +728,7 @@ function normalizeNonNegativeNumber(field: string, value: unknown): number {
 function normalizeTerminalState(value: unknown): HarnessTerminalState {
   if (
     value !== "succeeded" &&
+    value !== "evaluation_failed" &&
     value !== "policy_denied" &&
     value !== "approval_denied" &&
     value !== "tool_failed" &&

@@ -70,6 +70,7 @@ export interface ToolPolicyEvaluationRequest<TInput extends JsonValue = JsonValu
   readonly executionId: string;
   readonly correlationId: string;
   readonly actionId: string;
+  readonly executionMetadata: Readonly<Record<string, string>>;
   readonly metadata: ExternalEffectIdentity;
 }
 
@@ -182,6 +183,7 @@ export interface ToolInvocationContext {
   readonly action: HarnessPlanAction;
   readonly executionId: string;
   readonly correlationId: string;
+  readonly executionMetadata: Readonly<Record<string, string>>;
   readonly budget: ExecutionBudget;
   readonly usage: ExecutionUsage;
   readonly clock: HarnessClock;
@@ -362,6 +364,7 @@ export class ToolRouter {
           context.usage.retries += 1;
         }
         applyUsageDelta(context.usage, normalizedUsage);
+        const withinBudget = this.#isWithinBudget(context.budget, context.usage);
         evidenceReads.push(...normalizedEvidence);
         const attemptCompletedAt = context.clock.nowIso();
         if (result.status === "succeeded") {
@@ -411,6 +414,19 @@ export class ToolRouter {
             ...(backoffMsAfter === undefined ? {} : { backoffMsAfter }),
           }),
         );
+
+        if (!withinBudget) {
+          return this.#budgetExceeded(
+            context,
+            actionStartedAt,
+            input,
+            tool.capability,
+            idempotency,
+            Object.freeze(attempts),
+            policyDecision,
+            approvalDecision,
+          );
+        }
 
         if (finalFailure.kind !== "transient" || attempt >= retryPolicy.maxAttempts) {
           return Object.freeze({
@@ -519,6 +535,15 @@ export class ToolRouter {
     assertWithinBudget(budgetContext);
   }
 
+  #isWithinBudget(budget: ExecutionBudget, usage: ExecutionUsage): boolean {
+    try {
+      this.#assertBudget(budget, usage);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   #checkBudget(
     budget: ExecutionBudget,
     usage: ExecutionUsage,
@@ -548,6 +573,7 @@ export class ToolRouter {
         executionId: context.executionId,
         correlationId: context.correlationId,
         actionId: context.action.actionId,
+        executionMetadata: context.executionMetadata,
         metadata: idempotency,
       })) ?? { allowed: true, reason: "default-allow", metadata: {} };
     return Object.freeze({

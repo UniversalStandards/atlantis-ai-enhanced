@@ -158,6 +158,7 @@ export class HarnessRuntime {
 
   public async run(request: HarnessRunRequest): Promise<HarnessRunResult> {
     const input = normalizeJsonValue("request.input", request.input);
+    const requestMetadata = normalizeStringRecord("request.metadata", request.metadata ?? {});
     const startedAt = this.#clock.nowIso();
     const startedAtMs = this.#clock.nowMs();
     const usage = createUsage();
@@ -170,7 +171,7 @@ export class HarnessRuntime {
         startedAt,
         budget: request.budget,
         usage: snapshotUsage(usage),
-        metadata: normalizeStringRecord("request.metadata", request.metadata ?? {}),
+        metadata: requestMetadata,
       });
 
     const selectedPlans: HarnessPlanRecord[] = [];
@@ -267,6 +268,7 @@ export class HarnessRuntime {
         action: plan.action,
         executionId,
         correlationId,
+        executionMetadata: requestMetadata,
         budget: request.budget,
         usage,
         clock: this.#clock,
@@ -460,9 +462,11 @@ export class HarnessRuntime {
           executionId,
           correlationId,
           usage,
-          terminalState: "succeeded",
+          terminalState: normalizedEvaluation.passed ? "succeeded" : "evaluation_failed",
           finalState: currentState,
-          output: normalizeJsonValue("refinement.output", refinement.output),
+          ...(normalizedEvaluation.passed
+            ? { output: normalizeJsonValue("refinement.output", refinement.output) }
+            : {}),
           selectedPlans,
           evidenceReads,
           attemptedActions,

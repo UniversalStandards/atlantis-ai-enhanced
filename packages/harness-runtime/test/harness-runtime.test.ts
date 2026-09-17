@@ -207,6 +207,7 @@ describe("HarnessRuntime", () => {
     const result = await runtime.run({
       input: { request: "hello" },
       budget: budget(),
+      metadata: { lane: "review" },
       inspect: async () => ({ startState: { phase: "inspected" } }),
       plan: async () => ({
         summary: "Attempt echo",
@@ -223,6 +224,11 @@ describe("HarnessRuntime", () => {
 
     expect(result.terminalState).toBe("policy_denied");
     expect(policy.evaluate).toHaveBeenCalledOnce();
+    expect(policy.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionMetadata: { lane: "review" },
+      }),
+    );
     expect(execute).not.toHaveBeenCalled();
     expect(result.workDelta.policyDecisions[0]).toMatchObject({ allowed: false, reason: "policy denied" });
   });
@@ -471,6 +477,49 @@ describe("HarnessRuntime", () => {
       outcome: "succeeded",
       output: { echoed: "hello" },
     });
+  });
+
+  it("does not mark a failed evaluation as succeeded even when refine completes", async () => {
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "returns the provided message",
+          schema: echoSchema,
+          execute: async () => ({ status: "succeeded", output: { echoed: "hello" } }) as const,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Evaluation should fail",
+        desiredOutcome: "Terminal state must reflect evaluation outcome",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async ({ toolOutput }) => ({ summary: { observed: toolOutput } }),
+      evaluate: async () => ({
+        score: 0,
+        passed: false,
+        reasons: ["result did not satisfy acceptance"],
+        metrics: { quality: 0 },
+      }),
+      refine: async ({ toolOutput }) => ({
+        status: "complete",
+        finalState: { completed: false },
+        output: toolOutput,
+      }),
+    });
+
+    expect(result.terminalState).toBe("evaluation_failed");
+    expect(result.output).toBeUndefined();
   });
 
   it("terminates on budget exhaustion before unauthorized work", async () => {
