@@ -7,6 +7,7 @@ export {
   type HarnessRefinement,
   type HarnessRunRequest,
   type HarnessRunResult,
+  type HarnessUsageReport,
   type ProposedHarnessPlan,
 } from "./harness-runtime.js";
 

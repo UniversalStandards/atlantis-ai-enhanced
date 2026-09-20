@@ -29,6 +29,7 @@ import {
   type HarnessTerminalState,
   type JsonValue,
   type WorkDelta,
+  type ToolFailure,
 } from "./work-delta.js";
 
 export interface HarnessInspectResult {
@@ -121,12 +122,19 @@ export interface HarnessExecutionContext {
   readonly budget: ExecutionBudget;
   readonly usage: ExecutionUsage;
   readonly metadata: Readonly<Record<string, string>>;
+  reportUsage(report: HarnessUsageReport): void;
 }
 
 export interface HarnessRunResult {
   readonly terminalState: HarnessTerminalState;
   readonly workDelta: WorkDelta;
   readonly output?: JsonValue;
+}
+
+export interface HarnessUsageReport {
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly costUsd?: number;
 }
 
 export interface HarnessRuntimeOptions {
@@ -172,6 +180,7 @@ export class HarnessRuntime {
         budget: request.budget,
         usage: snapshotUsage(usage),
         metadata: requestMetadata,
+        reportUsage: (report: HarnessUsageReport) => applyLifecycleUsage(usage, report),
       });
 
     const selectedPlans: HarnessPlanRecord[] = [];
@@ -183,7 +192,32 @@ export class HarnessRuntime {
     const stateChanges: HarnessStateChangeRecord[] = [];
     const unresolvedItems = new Set<string>();
 
-    const inspect = await request.inspect(input, executionContext());
+    let inspect: HarnessInspectResult;
+    try {
+      inspect = await request.inspect(input, executionContext());
+    } catch (error) {
+      return this.#lifecycleFailure({
+        phase: "inspect",
+        iteration: 1,
+        failure: normalizeLifecycleFailure("inspect", error),
+        input,
+        startState: null,
+        finalState: null,
+        startedAt,
+        startedAtMs,
+        executionId,
+        correlationId,
+        usage,
+        selectedPlans,
+        evidenceReads,
+        attemptedActions,
+        policyDecisions,
+        approvalDecisions,
+        evaluations,
+        stateChanges,
+        unresolvedItems,
+      });
+    }
     const startState = normalizeJsonValue("inspect.startState", inspect.startState);
     let currentState = startState;
     inspect.evidence?.forEach((entry) => {
@@ -192,6 +226,27 @@ export class HarnessRuntime {
     inspect.unresolvedItems?.forEach((item) =>
       unresolvedItems.add(normalizeString("inspect.unresolvedItems", item)),
     );
+    this.#synchronizeDuration(usage, startedAtMs);
+    if (!this.#isWithinBudget(request.budget, usage)) {
+      return this.#finish({
+        input,
+        startState,
+        startedAt,
+        executionId,
+        correlationId,
+        usage,
+        terminalState: "budget_exhausted",
+        finalState: currentState,
+        selectedPlans,
+        evidenceReads,
+        attemptedActions,
+        policyDecisions,
+        approvalDecisions,
+        evaluations,
+        stateChanges,
+        unresolvedItems,
+      });
+    }
 
     let lastProgressToken: string | undefined;
     let repeatedProgressCount = 0;
@@ -240,12 +295,37 @@ export class HarnessRuntime {
         });
       }
 
-      const proposedPlan = await request.plan({
-        input,
-        state: currentState,
-        iteration,
-        context: executionContext(),
-      });
+      let proposedPlan: ProposedHarnessPlan;
+      try {
+        proposedPlan = await request.plan({
+          input,
+          state: currentState,
+          iteration,
+          context: executionContext(),
+        });
+      } catch (error) {
+        return this.#lifecycleFailure({
+          phase: "plan",
+          iteration,
+          failure: normalizeLifecycleFailure("plan", error),
+          input,
+          startState,
+          finalState: currentState,
+          startedAt,
+          startedAtMs,
+          executionId,
+          correlationId,
+          usage,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
       const selectedAt = this.#clock.nowIso();
       const plan = normalizeHarnessPlan({
         planId: this.#ids.nextId("plan"),
@@ -262,6 +342,27 @@ export class HarnessRuntime {
       selectedPlans.push(
         Object.freeze({ iteration, selectedAt, plan }),
       );
+      this.#synchronizeDuration(usage, startedAtMs);
+      if (!this.#isWithinBudget(request.budget, usage)) {
+        return this.#finish({
+          input,
+          startState,
+          startedAt,
+          executionId,
+          correlationId,
+          usage,
+          terminalState: "budget_exhausted",
+          finalState: currentState,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
 
       const actionResult = await this.options.toolRouter.invoke({
         iteration,
@@ -325,14 +426,39 @@ export class HarnessRuntime {
       }
 
       const toolOutput = actionResult.actionRecord.output ?? normalizeJsonValue("toolOutput", null);
-      const observation = await request.observe({
-        input,
-        state: currentState,
-        plan,
-        toolOutput,
-        iteration,
-        context: executionContext(),
-      });
+      let observation: HarnessObservation;
+      try {
+        observation = await request.observe({
+          input,
+          state: currentState,
+          plan,
+          toolOutput,
+          iteration,
+          context: executionContext(),
+        });
+      } catch (error) {
+        return this.#lifecycleFailure({
+          phase: "observe",
+          iteration,
+          failure: normalizeLifecycleFailure("observe", error),
+          input,
+          startState,
+          finalState: currentState,
+          startedAt,
+          startedAtMs,
+          executionId,
+          correlationId,
+          usage,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
       const normalizedObservation: HarnessObservation = Object.freeze({
         summary: normalizeJsonValue("observation.summary", observation.summary),
         ...(observation.evidence === undefined
@@ -354,32 +480,124 @@ export class HarnessRuntime {
         );
       });
       normalizedObservation.unresolvedItems?.forEach((item) => unresolvedItems.add(item));
+      this.#synchronizeDuration(usage, startedAtMs);
+      if (!this.#isWithinBudget(request.budget, usage)) {
+        return this.#finish({
+          input,
+          startState,
+          startedAt,
+          executionId,
+          correlationId,
+          usage,
+          terminalState: "budget_exhausted",
+          finalState: currentState,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
 
-      const evaluation = await request.evaluate({
-        input,
-        state: currentState,
-        plan,
-        observation: normalizedObservation,
-        toolOutput,
-        iteration,
-        context: executionContext(),
-      });
+      let evaluation: HarnessEvaluation;
+      try {
+        evaluation = await request.evaluate({
+          input,
+          state: currentState,
+          plan,
+          observation: normalizedObservation,
+          toolOutput,
+          iteration,
+          context: executionContext(),
+        });
+      } catch (error) {
+        return this.#lifecycleFailure({
+          phase: "evaluate",
+          iteration,
+          failure: normalizeLifecycleFailure("evaluate", error),
+          input,
+          startState,
+          finalState: currentState,
+          startedAt,
+          startedAtMs,
+          executionId,
+          correlationId,
+          usage,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
       const normalizedEvaluation = normalizeEvaluation(evaluation, this.#clock.nowIso(), iteration);
       evaluations.push(normalizedEvaluation);
       evaluation.unresolvedItems?.forEach((item) =>
         unresolvedItems.add(normalizeString("evaluation.unresolvedItems", item)),
       );
+      this.#synchronizeDuration(usage, startedAtMs);
+      if (!this.#isWithinBudget(request.budget, usage)) {
+        return this.#finish({
+          input,
+          startState,
+          startedAt,
+          executionId,
+          correlationId,
+          usage,
+          terminalState: "budget_exhausted",
+          finalState: currentState,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
 
-      const refinement = await request.refine({
-        input,
-        state: currentState,
-        plan,
-        observation: normalizedObservation,
-        evaluation,
-        toolOutput,
-        iteration,
-        context: executionContext(),
-      });
+      let refinement: HarnessRefinement;
+      try {
+        refinement = await request.refine({
+          input,
+          state: currentState,
+          plan,
+          observation: normalizedObservation,
+          evaluation,
+          toolOutput,
+          iteration,
+          context: executionContext(),
+        });
+      } catch (error) {
+        return this.#lifecycleFailure({
+          phase: "refine",
+          iteration,
+          failure: normalizeLifecycleFailure("refine", error),
+          input,
+          startState,
+          finalState: currentState,
+          startedAt,
+          startedAtMs,
+          executionId,
+          correlationId,
+          usage,
+          selectedPlans,
+          evidenceReads,
+          attemptedActions,
+          policyDecisions,
+          approvalDecisions,
+          evaluations,
+          stateChanges,
+          unresolvedItems,
+        });
+      }
 
       const nextState =
         refinement.status === "complete"
@@ -510,6 +728,7 @@ export class HarnessRuntime {
     readonly terminalState: HarnessTerminalState;
     readonly finalState: JsonValue;
     readonly output?: JsonValue;
+    readonly failure?: ToolFailure;
     readonly selectedPlans: readonly HarnessPlanRecord[];
     readonly evidenceReads: readonly ReturnType<typeof normalizeEvidenceInput>[];
     readonly attemptedActions: readonly Awaited<ReturnType<ToolRouter["invoke"]>>["actionRecord"][];
@@ -538,12 +757,66 @@ export class HarnessRuntime {
       terminalState: args.terminalState,
       finalState: args.finalState,
       ...(args.output === undefined ? {} : { output: args.output }),
+      ...(args.failure === undefined ? {} : { failure: args.failure }),
       unresolvedItems: [...args.unresolvedItems],
     });
     return Object.freeze({
       terminalState: args.terminalState,
       workDelta: delta,
       ...(args.output === undefined ? {} : { output: args.output }),
+    });
+  }
+
+  #lifecycleFailure(args: {
+    readonly phase: "inspect" | "plan" | "observe" | "evaluate" | "refine";
+    readonly iteration: number;
+    readonly failure: ToolFailure;
+    readonly input: JsonValue;
+    readonly startState: JsonValue;
+    readonly finalState: JsonValue;
+    readonly startedAt: string;
+    readonly startedAtMs: number;
+    readonly executionId: string;
+    readonly correlationId: string;
+    readonly usage: ExecutionUsage;
+    readonly selectedPlans: readonly HarnessPlanRecord[];
+    readonly evidenceReads: ReturnType<typeof normalizeEvidenceInput>[];
+    readonly attemptedActions: readonly Awaited<ReturnType<ToolRouter["invoke"]>>["actionRecord"][];
+    readonly policyDecisions: readonly HarnessPolicyDecisionRecord[];
+    readonly approvalDecisions: readonly HarnessApprovalDecisionRecord[];
+    readonly evaluations: readonly HarnessEvaluationRecord[];
+    readonly stateChanges: readonly HarnessStateChangeRecord[];
+    readonly unresolvedItems: ReadonlySet<string>;
+  }): HarnessRunResult {
+    this.#synchronizeDuration(args.usage, args.startedAtMs);
+    args.evidenceReads.push(
+      normalizeEvidenceInput(args.iteration, args.phase, this.#clock.nowIso(), {
+        source: `harness-runtime:${args.phase}`,
+        detail: `${args.phase} callback failed`,
+        value: {
+          code: args.failure.code,
+          message: args.failure.message,
+        },
+      }),
+    );
+    return this.#finish({
+      input: args.input,
+      startState: args.startState,
+      startedAt: args.startedAt,
+      executionId: args.executionId,
+      correlationId: args.correlationId,
+      usage: args.usage,
+      terminalState: "lifecycle_failed",
+      finalState: args.finalState,
+      failure: args.failure,
+      selectedPlans: args.selectedPlans,
+      evidenceReads: args.evidenceReads,
+      attemptedActions: args.attemptedActions,
+      policyDecisions: args.policyDecisions,
+      approvalDecisions: args.approvalDecisions,
+      evaluations: args.evaluations,
+      stateChanges: args.stateChanges,
+      unresolvedItems: args.unresolvedItems,
     });
   }
 
@@ -623,4 +896,38 @@ function normalizeNonNegativeNumber(field: string, value: unknown): number {
     throw new TypeError(`${field} must be a finite non-negative number`);
   }
   return value;
+}
+
+function applyLifecycleUsage(usage: ExecutionUsage, report: HarnessUsageReport): void {
+  if (report.inputTokens !== undefined) {
+    usage.inputTokens += normalizeNonNegativeNumber("usage.inputTokens", report.inputTokens);
+  }
+  if (report.outputTokens !== undefined) {
+    usage.outputTokens += normalizeNonNegativeNumber("usage.outputTokens", report.outputTokens);
+  }
+  if (report.costUsd !== undefined) {
+    usage.costUsd += normalizeNonNegativeNumber("usage.costUsd", report.costUsd);
+  }
+}
+
+function normalizeLifecycleFailure(
+  phase: "inspect" | "plan" | "observe" | "evaluate" | "refine",
+  error: unknown,
+): ToolFailure {
+  return Object.freeze({
+    kind: "deterministic",
+    code: `${phase}_failed`,
+    message: error instanceof Error ? error.message : String(error),
+    details: {
+      phase,
+      error: describeLifecycleError(error),
+    },
+  });
+}
+
+function describeLifecycleError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+  return String(error);
 }

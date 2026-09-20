@@ -92,6 +92,7 @@ export interface ActionAttemptRecord {
 
 export interface HarnessPolicyDecisionRecord {
   readonly iteration: number;
+  readonly attempt: number;
   readonly actionId: string;
   readonly toolName: string;
   readonly decidedAt: string;
@@ -108,6 +109,7 @@ export interface HarnessApprovalDecisionRecord {
   readonly recordedAt: string;
   readonly request: ApprovalRequest;
   readonly resolution?: ApprovalResolution;
+  readonly failure?: ToolFailure;
 }
 
 export interface HarnessEvaluationRecord {
@@ -131,6 +133,7 @@ export interface HarnessStateChangeRecord {
 export type HarnessTerminalState =
   | "succeeded"
   | "evaluation_failed"
+  | "lifecycle_failed"
   | "policy_denied"
   | "approval_denied"
   | "tool_failed"
@@ -156,6 +159,7 @@ export interface WorkDelta {
   readonly terminalState: HarnessTerminalState;
   readonly finalState: JsonValue;
   readonly output?: JsonValue;
+  readonly failure?: ToolFailure;
   readonly unresolvedItems: readonly string[];
 }
 
@@ -185,9 +189,20 @@ export function normalizeJsonValue(subject: string, value: unknown): JsonValue {
     if (ownKeys.some((key) => !allowedKeys.has(key))) {
       throw new InvalidHarnessDataError(`${subject} arrays must not contain extra properties`);
     }
-    const normalized = value.map((entry, index) =>
-      normalizeJsonValue(`${subject}[${index}]`, entry),
-    );
+    const normalized: JsonValue[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (
+        descriptor === undefined ||
+        descriptor.enumerable !== true ||
+        !("value" in descriptor)
+      ) {
+        throw new InvalidHarnessDataError(
+          `${subject}[${index}] must be an enumerable own data property`,
+        );
+      }
+      normalized.push(normalizeJsonValue(`${subject}[${index}]`, descriptor.value));
+    }
     return Object.freeze(normalized) as JsonArray;
   }
   if (typeof value !== "object") {
@@ -366,6 +381,23 @@ export function validateWorkDelta(value: unknown): WorkDelta {
   }
   const executionId = normalizeString("workDelta.executionId", record.executionId);
   const attemptedActions = normalizeActionRecords(record.attemptedActions);
+  const policyDecisions = normalizePolicyRecords(record.policyDecisions);
+  assertPolicyCoverage(attemptedActions, policyDecisions);
+  const terminalState = normalizeTerminalState(record.terminalState);
+  const failure =
+    record.failure === undefined
+      ? undefined
+      : normalizeToolFailure("workDelta.failure", record.failure as unknown as ToolFailure);
+  if (terminalState === "lifecycle_failed" && failure === undefined) {
+    throw new InvalidHarnessDataError(
+      "workDelta.failure is required when terminalState is lifecycle_failed",
+    );
+  }
+  if (terminalState !== "lifecycle_failed" && failure !== undefined) {
+    throw new InvalidHarnessDataError(
+      "workDelta.failure is only allowed when terminalState is lifecycle_failed",
+    );
+  }
   return Object.freeze({
     schemaVersion: 1,
     executionId,
@@ -377,7 +409,7 @@ export function validateWorkDelta(value: unknown): WorkDelta {
     selectedPlans: normalizePlanRecords(record.selectedPlans),
     evidenceReads: normalizeEvidenceRecords(record.evidenceReads),
     attemptedActions,
-    policyDecisions: normalizePolicyRecords(record.policyDecisions),
+    policyDecisions,
     approvalDecisions: normalizeApprovalRecords(
       record.approvalDecisions,
       executionId,
@@ -386,11 +418,12 @@ export function validateWorkDelta(value: unknown): WorkDelta {
     evaluations: normalizeEvaluationRecords(record.evaluations),
     stateChanges: normalizeStateChangeRecords(record.stateChanges),
     usage: normalizeUsage("workDelta.usage", record.usage),
-    terminalState: normalizeTerminalState(record.terminalState),
+    terminalState,
     finalState: normalizeJsonValue("workDelta.finalState", record.finalState),
     ...(record.output === undefined
       ? {}
       : { output: normalizeJsonValue("workDelta.output", record.output) }),
+    ...(failure === undefined ? {} : { failure }),
     unresolvedItems: normalizeStringArray("workDelta.unresolvedItems", record.unresolvedItems),
   });
 }
@@ -603,6 +636,7 @@ function normalizePolicyRecords(value: unknown): readonly HarnessPolicyDecisionR
       }
       return Object.freeze({
         iteration: normalizePositiveInteger(`policyDecisions[${index}].iteration`, record.iteration),
+        attempt: normalizePositiveInteger(`policyDecisions[${index}].attempt`, record.attempt),
         actionId: normalizeString(`policyDecisions[${index}].actionId`, record.actionId),
         toolName: normalizeString(`policyDecisions[${index}].toolName`, record.toolName),
         decidedAt: normalizeTimestamp(`policyDecisions[${index}].decidedAt`, record.decidedAt),
@@ -654,6 +688,23 @@ function normalizeApprovalRecords(
         );
       }
       const actionId = normalizeString(`approvalDecisions[${index}].actionId`, record.actionId);
+      const failure =
+        record.failure === undefined
+          ? undefined
+          : normalizeToolFailure(
+              `approvalDecisions[${index}].failure`,
+              record.failure as unknown as ToolFailure,
+            );
+      if (failure !== undefined && outcome !== "required") {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].failure is only allowed for required`,
+        );
+      }
+      if (failure !== undefined && resolution !== undefined) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].failure cannot accompany a resolution`,
+        );
+      }
       if (request.executionId !== executionId) {
         throw new InvalidHarnessDataError(
           `approvalDecisions[${index}].request.executionId must match workDelta.executionId`,
@@ -668,6 +719,11 @@ function normalizeApprovalRecords(
       if (matchingAction === undefined) {
         throw new InvalidHarnessDataError(
           `approvalDecisions[${index}] must reference a matching attempted action`,
+        );
+      }
+      if (matchingAction.iteration !== record.iteration) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].iteration must match the referenced attempted action`,
         );
       }
       if (matchingAction.toolName !== record.toolName) {
@@ -689,6 +745,7 @@ function normalizeApprovalRecords(
         ),
         request,
         ...(resolution === undefined ? {} : { resolution }),
+        ...(failure === undefined ? {} : { failure }),
       });
     }),
   );
@@ -778,6 +835,7 @@ function normalizeTerminalState(value: unknown): HarnessTerminalState {
   if (
     value !== "succeeded" &&
     value !== "evaluation_failed" &&
+    value !== "lifecycle_failed" &&
     value !== "policy_denied" &&
     value !== "approval_denied" &&
     value !== "tool_failed" &&
@@ -787,6 +845,33 @@ function normalizeTerminalState(value: unknown): HarnessTerminalState {
     throw new InvalidHarnessDataError("workDelta.terminalState is invalid");
   }
   return value;
+}
+
+function assertPolicyCoverage(
+  attemptedActions: readonly ActionAttemptRecord[],
+  policyDecisions: readonly HarnessPolicyDecisionRecord[],
+): void {
+  for (const action of attemptedActions) {
+    for (const attempt of action.attempts) {
+      const matchingDecisions = policyDecisions.filter(
+        (decision) =>
+          decision.iteration === action.iteration &&
+          decision.attempt === attempt.attempt &&
+          decision.actionId === action.actionId &&
+          decision.toolName === action.toolName,
+      );
+      if (matchingDecisions.length !== 1) {
+        throw new InvalidHarnessDataError(
+          `attempted action ${action.actionId} attempt ${attempt.attempt} must have exactly one matching policy decision`,
+        );
+      }
+      if (!matchingDecisions[0]?.allowed) {
+        throw new InvalidHarnessDataError(
+          `attempted action ${action.actionId} attempt ${attempt.attempt} requires matching allowed policy evidence`,
+        );
+      }
+    }
+  }
 }
 
 function requireJsonObject(subject: string, value: unknown): JsonObject {

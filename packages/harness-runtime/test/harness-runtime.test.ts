@@ -6,6 +6,7 @@ import {
   InvalidHarnessDataError,
   ToolRouter,
   serializeWorkDelta,
+  stableStringify,
   validateWorkDelta,
   type HarnessClock,
   type HarnessIdSource,
@@ -348,6 +349,112 @@ describe("HarnessRuntime", () => {
     });
   });
 
+  it("terminates before first dispatch when policy evaluation exhausts the deadline budget", async () => {
+    const clock = new DeterministicClock();
+    const execute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
+    const policy = {
+      evaluate: vi.fn(async () => {
+        clock.tick(11);
+        return { allowed: true, reason: "late allow", metadata: {} };
+      }),
+    };
+    const { runtime } = createRuntime({
+      clock,
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "must not dispatch after policy wait exceeds the deadline",
+          schema: echoSchema,
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+      policy,
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget({ maxDurationMs: 10 }),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Policy latency must fence dispatch",
+        desiredOutcome: "No tool call after expired deadline",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("budget_exhausted");
+    expect(policy.evaluate).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.workDelta.attemptedActions[0]).toMatchObject({ outcome: "budget_exhausted" });
+    expect(result.workDelta.policyDecisions[0]).toMatchObject({ allowed: true, attempt: 1 });
+    expect(result.workDelta.usage.durationMs).toBe(11);
+  });
+
+  it("terminates before first dispatch when approval evaluation exhausts the deadline budget", async () => {
+    const clock = new DeterministicClock();
+    const execute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
+    const approvals = {
+      resolve: vi.fn(async (request: ApprovalRequest): Promise<ApprovalResolution> => {
+        clock.tick(11);
+        return {
+          approvalId: request.approvalId,
+          executionId: request.executionId,
+          requestVersion: request.requestVersion,
+          decision: "approved",
+          resolvedBy: "reviewer",
+          resolvedAt: clock.nowIso(),
+        };
+      }),
+    };
+    const { runtime } = createRuntime({
+      clock,
+      tools: [
+        {
+          name: "dangerous",
+          capability: "write",
+          description: "approval latency must fence dispatch",
+          schema: echoSchema,
+          approval: {
+            action: "tool:dangerous",
+            reason: "Needs human approval",
+          },
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+      approvals,
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget({ maxDurationMs: 10 }),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt dangerous tool",
+        rationale: "Approval latency must fence dispatch",
+        desiredOutcome: "No tool call after expired deadline",
+        toolName: "dangerous",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("budget_exhausted");
+    expect(approvals.resolve).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.workDelta.approvalDecisions[0]).toMatchObject({ outcome: "approved" });
+    expect(result.workDelta.usage.durationMs).toBe(11);
+  });
+
   it("re-evaluates policy immediately before retry dispatch and records the stale authorization denial", async () => {
     const execute = vi.fn(async () => ({
       status: "failed",
@@ -403,6 +510,88 @@ describe("HarnessRuntime", () => {
       metadata: { phase: "retry" },
     });
     expect(result.workDelta.attemptedActions[0]?.attempts).toHaveLength(1);
+  });
+
+  it("finalizes lifecycle callback failures as typed terminal results while preserving accumulated evidence", async () => {
+    const phases = ["inspect", "plan", "observe", "evaluate", "refine"] as const;
+
+    for (const phase of phases) {
+      const execute = vi.fn(async () => ({
+        status: "succeeded",
+        output: { echoed: "hello" },
+        evidence: [{ source: "tool:echo", detail: "executed" }],
+      }) as const);
+      const { runtime } = createRuntime({
+        tools: [
+          {
+            name: "echo",
+            capability: "write",
+            description: "succeeds before the targeted lifecycle failure",
+            schema: echoSchema,
+            execute,
+          } satisfies ToolDescriptor,
+        ],
+      });
+
+      const result = await runtime.run({
+        input: { request: "hello" },
+        budget: budget(),
+        inspect: async () => {
+          if (phase === "inspect") {
+            throw new Error("inspect exploded");
+          }
+          return { startState: { phase: "inspected" } };
+        },
+        plan: async () => {
+          if (phase === "plan") {
+            throw new Error("plan exploded");
+          }
+          return {
+            summary: "Attempt echo",
+            rationale: "Exercise lifecycle failure handling",
+            desiredOutcome: "Typed failure result",
+            toolName: "echo",
+            input: { message: "hello" },
+            metadata: {},
+          };
+        },
+        observe: async ({ toolOutput }) => {
+          if (phase === "observe") {
+            throw new Error("observe exploded");
+          }
+          return { summary: { observed: toolOutput } };
+        },
+        evaluate: async () => {
+          if (phase === "evaluate") {
+            throw new Error("evaluate exploded");
+          }
+          return { score: 1, passed: true, reasons: ["ok"], metrics: { quality: 1 } };
+        },
+        refine: async ({ toolOutput }) => {
+          if (phase === "refine") {
+            throw new Error("refine exploded");
+          }
+          return { status: "complete", finalState: { completed: true }, output: toolOutput };
+        },
+      });
+
+      expect(result.terminalState).toBe("lifecycle_failed");
+      expect(result.workDelta.terminalState).toBe("lifecycle_failed");
+      expect(result.workDelta.failure).toMatchObject({ code: `${phase}_failed` });
+      expect(result.workDelta.evidenceReads.at(-1)).toMatchObject({
+        source: `harness-runtime:${phase}`,
+        detail: `${phase} callback failed`,
+      });
+      if (phase === "inspect" || phase === "plan") {
+        expect(result.workDelta.attemptedActions).toHaveLength(0);
+      } else {
+        expect(execute).toHaveBeenCalledOnce();
+        expect(result.workDelta.attemptedActions[0]).toMatchObject({
+          outcome: "succeeded",
+          output: { echoed: "hello" },
+        });
+      }
+    }
   });
 
   it("fails closed on approval rejection", async () => {
@@ -712,6 +901,86 @@ describe("HarnessRuntime", () => {
     expect(result.workDelta.usage).toMatchObject({ toolCalls: 1, retries: 1 });
   });
 
+  it("charges lifecycle usage before further work and fences dispatch/refinement when token or cost budgets are exceeded", async () => {
+    const execute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
+    const { runtime: planBudgetRuntime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "must not dispatch after plan usage exhausts tokens",
+          schema: echoSchema,
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const planBudgetResult = await planBudgetRuntime.run({
+      input: { request: "hello" },
+      budget: budget({ maxTokens: 2 }),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async ({ context }) => {
+        context.reportUsage({ inputTokens: 3 });
+        return {
+          summary: "Attempt echo",
+          rationale: "Lifecycle usage must count before dispatch",
+          desiredOutcome: "No tool call",
+          toolName: "echo",
+          input: { message: "hello" },
+          metadata: {},
+        };
+      },
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(planBudgetResult.terminalState).toBe("budget_exhausted");
+    expect(execute).not.toHaveBeenCalled();
+    expect(planBudgetResult.workDelta.usage.inputTokens).toBe(3);
+
+    const refine = vi.fn(async () => ({ status: "complete", finalState: { unreachable: true }, output: { unreachable: true } }) as const);
+    const { runtime: evaluateBudgetRuntime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "succeeds before evaluate usage exhausts cost budget",
+          schema: echoSchema,
+          execute: async () => ({ status: "succeeded", output: { echoed: "hello" } }) as const,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const evaluateBudgetResult = await evaluateBudgetRuntime.run({
+      input: { request: "hello" },
+      budget: budget({ maxCostUsd: 1 }),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Lifecycle usage must count before refine",
+        desiredOutcome: "Stop after evaluate",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async ({ toolOutput }) => ({ summary: { observed: toolOutput } }),
+      evaluate: async ({ context }) => {
+        context.reportUsage({ costUsd: 2 });
+        return { score: 1, passed: true, reasons: ["ok"], metrics: { quality: 1 } };
+      },
+      refine,
+    });
+
+    expect(evaluateBudgetResult.terminalState).toBe("budget_exhausted");
+    expect(refine).not.toHaveBeenCalled();
+    expect(evaluateBudgetResult.workDelta.usage.costUsd).toBe(2);
+    expect(evaluateBudgetResult.workDelta.attemptedActions[0]).toMatchObject({
+      outcome: "succeeded",
+      output: { echoed: "hello" },
+    });
+  });
+
   it("honors shouldRetry=false for transient failures", async () => {
     const execute = vi.fn(async () => ({
       status: "failed",
@@ -846,6 +1115,159 @@ describe("HarnessRuntime", () => {
     expect(execute).toHaveBeenCalledOnce();
     expect(clock.sleeps).toEqual([25]);
     expect(result.workDelta.usage.durationMs).toBe(25);
+  });
+
+  it("records attempt-granular allowed policy evidence for every dispatched attempt and rejects missing or denied matches", async () => {
+    let attempts = 0;
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "retries once before succeeding",
+          schema: echoSchema,
+          retry: { maxAttempts: 2, backoffMs: [5] },
+          execute: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              return {
+                status: "failed",
+                failure: { kind: "transient", code: "busy", message: "retry later" },
+              } as const;
+            }
+            return { status: "succeeded", output: { echoed: "hello" } } as const;
+          },
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Each dispatched attempt needs matching policy evidence",
+        desiredOutcome: "Success after one retry",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async ({ toolOutput }) => ({ summary: { observed: toolOutput } }),
+      evaluate: async () => ({ score: 1, passed: true, reasons: ["ok"], metrics: { retries: 1 } }),
+      refine: async ({ toolOutput }) => ({ status: "complete", finalState: { completed: true }, output: toolOutput }),
+    });
+
+    expect(result.terminalState).toBe("succeeded");
+    expect(result.workDelta.policyDecisions.map((entry) => entry.attempt)).toEqual([1, 2]);
+
+    const missingSecondDecision = JSON.parse(serializeWorkDelta(result.workDelta)) as Record<string, unknown>;
+    (missingSecondDecision.policyDecisions as Array<unknown>).pop();
+    expect(() => validateWorkDelta(missingSecondDecision)).toThrow(InvalidHarnessDataError);
+
+    const deniedSecondDecision = JSON.parse(serializeWorkDelta(result.workDelta)) as Record<string, unknown>;
+    ((deniedSecondDecision.policyDecisions as Array<Record<string, unknown>>)[1] as Record<string, unknown>).allowed =
+      false;
+    expect(() => validateWorkDelta(deniedSecondDecision)).toThrow(InvalidHarnessDataError);
+  });
+
+  it("fails closed on approval resolver exceptions and malformed approval receipts", async () => {
+    const execute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
+    const { runtime: thrownApprovalRuntime } = createRuntime({
+      tools: [
+        {
+          name: "dangerous",
+          capability: "write",
+          description: "requires approval",
+          schema: echoSchema,
+          approval: {
+            action: "tool:dangerous",
+            reason: "Needs human approval",
+          },
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+      approvals: {
+        resolve: vi.fn(async () => {
+          throw new Error("approval backend offline");
+        }),
+      },
+    });
+
+    const thrownApprovalResult = await thrownApprovalRuntime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt dangerous tool",
+        rationale: "Approval failures must fail closed",
+        desiredOutcome: "No tool call",
+        toolName: "dangerous",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(thrownApprovalResult.terminalState).toBe("approval_denied");
+    expect(execute).not.toHaveBeenCalled();
+    expect(thrownApprovalResult.workDelta.approvalDecisions[0]).toMatchObject({
+      outcome: "required",
+      failure: { code: "approval_error", details: { stage: "resolver" } },
+    });
+
+    const mismatchedReceiptExecute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
+    const { runtime: mismatchedReceiptRuntime } = createRuntime({
+      tools: [
+        {
+          name: "dangerous",
+          capability: "write",
+          description: "requires approval",
+          schema: echoSchema,
+          approval: {
+            action: "tool:dangerous",
+            reason: "Needs human approval",
+          },
+          execute: mismatchedReceiptExecute,
+        } satisfies ToolDescriptor,
+      ],
+      approvals: {
+        resolve: vi.fn(async (request: ApprovalRequest): Promise<ApprovalResolution> => ({
+          approvalId: request.approvalId,
+          executionId: "different-execution",
+          requestVersion: request.requestVersion,
+          decision: "approved",
+          resolvedBy: "reviewer",
+          resolvedAt: request.requestedAt,
+        })),
+      },
+    });
+
+    const mismatchedReceiptResult = await mismatchedReceiptRuntime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt dangerous tool",
+        rationale: "Malformed approval receipts must fail closed",
+        desiredOutcome: "No tool call",
+        toolName: "dangerous",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(mismatchedReceiptResult.terminalState).toBe("approval_denied");
+    expect(mismatchedReceiptExecute).not.toHaveBeenCalled();
+    expect(mismatchedReceiptResult.workDelta.approvalDecisions[0]).toMatchObject({
+      outcome: "required",
+      failure: { code: "approval_error", details: { stage: "receipt" } },
+    });
   });
 
   it("terminates on repeated non-progress", async () => {
@@ -1176,5 +1598,40 @@ describe("HarnessRuntime", () => {
       },
     ];
     expect(() => validateWorkDelta(mismatchedAction)).toThrow(InvalidHarnessDataError);
+  });
+
+  it("rejects sparse arrays before stable serialization", () => {
+    const sparse: unknown[] = [];
+    sparse[1] = "value";
+
+    expect(() => stableStringify(sparse)).toThrow(InvalidHarnessDataError);
+    expect(() => validateWorkDelta({
+      schemaVersion: 1,
+      executionId: "execution-1",
+      correlationId: "execution-1",
+      startedAt: "2026-09-20T00:00:00.000Z",
+      completedAt: "2026-09-20T00:00:00.000Z",
+      input: sparse,
+      startState: null,
+      selectedPlans: [],
+      evidenceReads: [],
+      attemptedActions: [],
+      policyDecisions: [],
+      approvalDecisions: [],
+      evaluations: [],
+      stateChanges: [],
+      usage: {
+        toolCalls: 0,
+        retries: 0,
+        iterations: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: 0,
+        costUsd: 0,
+      },
+      terminalState: "budget_exhausted",
+      finalState: null,
+      unresolvedItems: [],
+    })).toThrow(InvalidHarnessDataError);
   });
 });
