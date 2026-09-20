@@ -276,9 +276,7 @@ export class HarnessRuntime {
         ids: this.#ids,
       });
       attemptedActions.push(actionResult.actionRecord);
-      if (actionResult.policyDecision !== undefined) {
-        policyDecisions.push(actionResult.policyDecision);
-      }
+      policyDecisions.push(...actionResult.policyDecisions);
       if (actionResult.approvalDecision !== undefined) {
         approvalDecisions.push(actionResult.approvalDecision);
       }

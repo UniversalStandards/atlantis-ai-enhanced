@@ -348,6 +348,63 @@ describe("HarnessRuntime", () => {
     });
   });
 
+  it("re-evaluates policy immediately before retry dispatch and records the stale authorization denial", async () => {
+    const execute = vi.fn(async () => ({
+      status: "failed",
+      failure: { kind: "transient", code: "busy", message: "retry later" },
+    } as const));
+    const policy = {
+      evaluate: vi
+        .fn()
+        .mockResolvedValueOnce({ allowed: true, reason: "initial allow", metadata: { phase: "first" } })
+        .mockResolvedValueOnce({ allowed: false, reason: "authorization expired", metadata: { phase: "retry" } }),
+    };
+    const clock = new DeterministicClock();
+    const { runtime } = createRuntime({
+      clock,
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "fails once so policy must be re-checked",
+          schema: echoSchema,
+          retry: { maxAttempts: 2, backoffMs: [5] },
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+      policy,
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Retry authorization must not go stale",
+        desiredOutcome: "Stop before second dispatch when policy changes",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("policy_denied");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(policy.evaluate).toHaveBeenCalledTimes(2);
+    expect(clock.sleeps).toEqual([5]);
+    expect(result.workDelta.policyDecisions).toHaveLength(2);
+    expect(result.workDelta.policyDecisions[1]).toMatchObject({
+      allowed: false,
+      reason: "authorization expired",
+      metadata: { phase: "retry" },
+    });
+    expect(result.workDelta.attemptedActions[0]?.attempts).toHaveLength(1);
+  });
+
   it("fails closed on approval rejection", async () => {
     const execute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
     const approvals = {
@@ -562,6 +619,51 @@ describe("HarnessRuntime", () => {
       backoffMsAfter: 11,
     });
     expect(clock.sleeps).toEqual([7, 11]);
+  });
+
+  it("fails closed on thrown write executions unless retry safety is explicitly authorized", async () => {
+    const execute = vi.fn(async () => {
+      throw new Error("transport reset");
+    });
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "dangerous",
+          capability: "write",
+          description: "throws during execution",
+          schema: echoSchema,
+          retry: { maxAttempts: 3, backoffMs: [5, 5] },
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt dangerous tool",
+        rationale: "Thrown writes must fail closed by default",
+        desiredOutcome: "No implicit retry",
+        toolName: "dangerous",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("tool_failed");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result.workDelta.attemptedActions[0]?.attempts).toHaveLength(1);
+    expect(result.workDelta.attemptedActions[0]?.failure).toMatchObject({
+      code: "tool_execution_error",
+      kind: "deterministic",
+      message: "transport reset",
+    });
+    expect(result.workDelta.usage).toMatchObject({ toolCalls: 1, retries: 0 });
   });
 
   it("counts a thrown first attempt against retry budget before dispatching another attempt", async () => {
@@ -1035,5 +1137,40 @@ describe("HarnessRuntime", () => {
       },
     ];
     expect(() => validateWorkDelta(rejectedWithApprovedResolution)).toThrow(InvalidHarnessDataError);
+
+    const mismatchedExecution = JSON.parse(
+      serializeWorkDelta(rejectedResult.workDelta),
+    ) as Record<string, unknown>;
+    const mismatchedExecutionDecision = (
+      mismatchedExecution.approvalDecisions as Array<Record<string, unknown>>
+    )[0];
+    mismatchedExecution.approvalDecisions = [
+      {
+        ...mismatchedExecutionDecision,
+        request: {
+          ...(mismatchedExecutionDecision?.request as Record<string, unknown>),
+          executionId: "different-execution",
+        },
+      },
+    ];
+    expect(() => validateWorkDelta(mismatchedExecution)).toThrow(InvalidHarnessDataError);
+
+    const mismatchedAction = JSON.parse(
+      serializeWorkDelta(rejectedResult.workDelta),
+    ) as Record<string, unknown>;
+    const mismatchedActionDecision = (
+      mismatchedAction.approvalDecisions as Array<Record<string, unknown>>
+    )[0];
+    mismatchedAction.approvalDecisions = [
+      {
+        ...mismatchedActionDecision,
+        actionId: "other-action",
+        request: {
+          ...(mismatchedActionDecision?.request as Record<string, unknown>),
+          stepId: "other-action",
+        },
+      },
+    ];
+    expect(() => validateWorkDelta(mismatchedAction)).toThrow(InvalidHarnessDataError);
   });
 });

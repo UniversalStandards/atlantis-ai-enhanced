@@ -148,6 +148,7 @@ export type ToolInvocationStatus =
 export interface ToolInvocationResult {
   readonly status: ToolInvocationStatus;
   readonly actionRecord: ActionAttemptRecord;
+  readonly policyDecisions: readonly HarnessPolicyDecisionRecord[];
   readonly policyDecision?: HarnessPolicyDecisionRecord;
   readonly approvalDecision?: HarnessApprovalDecisionRecord;
   readonly evidenceReads: readonly HarnessEvidenceRecord[];
@@ -254,31 +255,23 @@ export class ToolRouter {
       );
     }
 
+    const policyDecisions: HarnessPolicyDecisionRecord[] = [];
     const policyDecision = await this.#evaluatePolicy(
       context,
       tool,
       input,
       idempotency,
     );
+    policyDecisions.push(policyDecision);
     if (!policyDecision.allowed) {
-      return Object.freeze({
-        status: "policy_denied",
-        actionRecord: Object.freeze({
-          iteration: context.iteration,
-          actionId: context.action.actionId,
-          toolName: context.action.toolName,
-          capability: tool.capability,
-          startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
-          completedAt: context.clock.nowIso(),
-          correlationId: context.correlationId,
-          idempotency,
-          input,
-          outcome: "policy_denied",
-          attempts: Object.freeze([]),
-        }),
-        policyDecision,
-        evidenceReads: Object.freeze([]),
-      });
+      return this.#policyDenied(
+        context,
+        actionStartedAt,
+        input,
+        tool.capability,
+        idempotency,
+        Object.freeze([...policyDecisions]),
+      );
     }
 
     const approvalDecision = await this.#evaluateApproval(
@@ -303,6 +296,7 @@ export class ToolRouter {
           outcome: "approval_denied",
           attempts: Object.freeze([]),
         }),
+        policyDecisions: Object.freeze([...policyDecisions]),
         policyDecision,
         approvalDecision,
         evidenceReads: Object.freeze([]),
@@ -339,13 +333,34 @@ export class ToolRouter {
             tool.capability,
             idempotency,
             attempts,
-            policyDecision,
+            Object.freeze([...policyDecisions]),
             approvalDecision,
           );
         }
       }
 
       const attemptStartedAt = context.clock.nowIso();
+      if (attempt > 1) {
+        const retryPolicyDecision = await this.#evaluatePolicy(
+          context,
+          tool,
+          input,
+          idempotency,
+        );
+        policyDecisions.push(retryPolicyDecision);
+        if (!retryPolicyDecision.allowed) {
+          return this.#policyDenied(
+            context,
+            actionStartedAt,
+            input,
+            tool.capability,
+            idempotency,
+            Object.freeze([...policyDecisions]),
+            Object.freeze(attempts),
+            approvalDecision,
+          );
+        }
+      }
       let resultSettled = false;
       let result: ToolHandlerResult | undefined;
       try {
@@ -397,7 +412,8 @@ export class ToolRouter {
               attempts: Object.freeze(attempts),
               output: output as JsonValue,
             }),
-            policyDecision,
+            policyDecisions: Object.freeze([...policyDecisions]),
+            policyDecision: policyDecisions.at(-1),
             ...(approvalDecision === undefined ? {} : { approvalDecision }),
             evidenceReads: Object.freeze(evidenceReads),
           });
@@ -431,7 +447,7 @@ export class ToolRouter {
             tool.capability,
             idempotency,
             Object.freeze(attempts),
-            policyDecision,
+            Object.freeze([...policyDecisions]),
             approvalDecision,
           );
         }
@@ -453,7 +469,8 @@ export class ToolRouter {
               attempts: Object.freeze(attempts),
               failure: finalFailure as ToolFailure,
             }),
-            policyDecision,
+            policyDecisions: Object.freeze([...policyDecisions]),
+            policyDecision: policyDecisions.at(-1),
             ...(approvalDecision === undefined ? {} : { approvalDecision }),
             evidenceReads: Object.freeze(evidenceReads),
           });
@@ -466,7 +483,7 @@ export class ToolRouter {
           tool,
           idempotency,
           attempts,
-          policyDecision,
+          Object.freeze([...policyDecisions]),
           approvalDecision,
           backoffMsAfter,
         );
@@ -483,7 +500,7 @@ export class ToolRouter {
         const shouldRetry =
           !isInvalidToolResult &&
           attempt < retryPolicy.maxAttempts &&
-          (retryPolicy.shouldRetry?.(error, attempt) ?? true);
+          retryPolicy.shouldRetry?.(error, attempt) === true;
         if (shouldRetry) {
           context.usage.retries += 1;
         }
@@ -536,7 +553,8 @@ export class ToolRouter {
               attempts: Object.freeze(attempts),
               failure: executionFailure,
             }),
-            policyDecision,
+            policyDecisions: Object.freeze([...policyDecisions]),
+            policyDecision: policyDecisions.at(-1),
             ...(approvalDecision === undefined ? {} : { approvalDecision }),
             evidenceReads: Object.freeze(evidenceReads),
           });
@@ -549,7 +567,7 @@ export class ToolRouter {
           tool,
           idempotency,
           attempts,
-          policyDecision,
+          Object.freeze([...policyDecisions]),
           approvalDecision,
           backoffMsAfter,
         );
@@ -575,7 +593,8 @@ export class ToolRouter {
         attempts: Object.freeze(attempts),
         ...(finalFailure === undefined ? {} : { failure: finalFailure }),
       }),
-      policyDecision,
+      policyDecisions: Object.freeze([...policyDecisions]),
+      policyDecision: policyDecisions.at(-1),
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze(evidenceReads),
     });
@@ -760,6 +779,7 @@ export class ToolRouter {
         attempts: Object.freeze([]),
         failure: normalizeToolFailure("failure", failure),
       }),
+      policyDecisions: Object.freeze([]),
       evidenceReads: Object.freeze([]),
     });
   }
@@ -771,7 +791,7 @@ export class ToolRouter {
     capability: string,
     idempotency: ExternalEffectIdentity,
     attempts: readonly ToolAttemptRecord[] = Object.freeze([]),
-    policyDecision?: HarnessPolicyDecisionRecord,
+    policyDecisions: readonly HarnessPolicyDecisionRecord[] = Object.freeze([]),
     approvalDecision?: HarnessApprovalDecisionRecord,
   ): ToolInvocationResult {
     return Object.freeze({
@@ -789,7 +809,40 @@ export class ToolRouter {
         outcome: "budget_exhausted",
         attempts,
       }),
-      ...(policyDecision === undefined ? {} : { policyDecision }),
+      policyDecisions,
+      ...(policyDecisions.length === 0 ? {} : { policyDecision: policyDecisions.at(-1) }),
+      ...(approvalDecision === undefined ? {} : { approvalDecision }),
+      evidenceReads: Object.freeze([]),
+    });
+  }
+
+  #policyDenied(
+    context: ToolInvocationContext,
+    actionStartedAt: string,
+    input: JsonValue,
+    capability: string,
+    idempotency: ExternalEffectIdentity,
+    policyDecisions: readonly HarnessPolicyDecisionRecord[],
+    attempts: readonly ToolAttemptRecord[] = Object.freeze([]),
+    approvalDecision?: HarnessApprovalDecisionRecord,
+  ): ToolInvocationResult {
+    return Object.freeze({
+      status: "policy_denied",
+      actionRecord: Object.freeze({
+        iteration: context.iteration,
+        actionId: context.action.actionId,
+        toolName: context.action.toolName,
+        capability,
+        startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
+        completedAt: context.clock.nowIso(),
+        correlationId: context.correlationId,
+        idempotency,
+        input,
+        outcome: "policy_denied",
+        attempts,
+      }),
+      policyDecisions,
+      policyDecision: policyDecisions.at(-1),
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze([]),
     });
@@ -802,7 +855,7 @@ export class ToolRouter {
     tool: ToolDescriptor,
     idempotency: ExternalEffectIdentity,
     attempts: ToolAttemptRecord[],
-    policyDecision?: HarnessPolicyDecisionRecord,
+    policyDecisions: readonly HarnessPolicyDecisionRecord[] = Object.freeze([]),
     approvalDecision?: HarnessApprovalDecisionRecord,
     backoffMsAfter = 0,
   ): Promise<ToolInvocationResult | undefined> {
@@ -817,7 +870,7 @@ export class ToolRouter {
         tool.capability,
         idempotency,
         Object.freeze(attempts),
-        policyDecision,
+        policyDecisions,
         approvalDecision,
       );
     }

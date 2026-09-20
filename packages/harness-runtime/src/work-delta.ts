@@ -364,9 +364,11 @@ export function validateWorkDelta(value: unknown): WorkDelta {
   if (schemaVersion !== 1) {
     throw new InvalidHarnessDataError("workDelta.schemaVersion must equal 1");
   }
+  const executionId = normalizeString("workDelta.executionId", record.executionId);
+  const attemptedActions = normalizeActionRecords(record.attemptedActions);
   return Object.freeze({
     schemaVersion: 1,
-    executionId: normalizeString("workDelta.executionId", record.executionId),
+    executionId,
     correlationId: normalizeString("workDelta.correlationId", record.correlationId),
     startedAt: normalizeTimestamp("workDelta.startedAt", record.startedAt),
     completedAt: normalizeTimestamp("workDelta.completedAt", record.completedAt),
@@ -374,9 +376,13 @@ export function validateWorkDelta(value: unknown): WorkDelta {
     startState: normalizeJsonValue("workDelta.startState", record.startState),
     selectedPlans: normalizePlanRecords(record.selectedPlans),
     evidenceReads: normalizeEvidenceRecords(record.evidenceReads),
-    attemptedActions: normalizeActionRecords(record.attemptedActions),
+    attemptedActions,
     policyDecisions: normalizePolicyRecords(record.policyDecisions),
-    approvalDecisions: normalizeApprovalRecords(record.approvalDecisions),
+    approvalDecisions: normalizeApprovalRecords(
+      record.approvalDecisions,
+      executionId,
+      attemptedActions,
+    ),
     evaluations: normalizeEvaluationRecords(record.evaluations),
     stateChanges: normalizeStateChangeRecords(record.stateChanges),
     usage: normalizeUsage("workDelta.usage", record.usage),
@@ -608,7 +614,11 @@ function normalizePolicyRecords(value: unknown): readonly HarnessPolicyDecisionR
   );
 }
 
-function normalizeApprovalRecords(value: unknown): readonly HarnessApprovalDecisionRecord[] {
+function normalizeApprovalRecords(
+  value: unknown,
+  executionId: string,
+  attemptedActions: readonly ActionAttemptRecord[],
+): readonly HarnessApprovalDecisionRecord[] {
   if (!Array.isArray(value)) {
     throw new InvalidHarnessDataError("workDelta.approvalDecisions must be an array");
   }
@@ -643,12 +653,34 @@ function normalizeApprovalRecords(value: unknown): readonly HarnessApprovalDecis
           `approvalDecisions[${index}].resolution.decision must match ${outcome}`,
         );
       }
+      const actionId = normalizeString(`approvalDecisions[${index}].actionId`, record.actionId);
+      if (request.executionId !== executionId) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].request.executionId must match workDelta.executionId`,
+        );
+      }
+      if (request.stepId !== actionId) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].request.stepId must match approvalDecisions[${index}].actionId`,
+        );
+      }
+      const matchingAction = attemptedActions.find((entry) => entry.actionId === actionId);
+      if (matchingAction === undefined) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}] must reference a matching attempted action`,
+        );
+      }
+      if (matchingAction.toolName !== record.toolName) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].toolName must match the referenced attempted action`,
+        );
+      }
       return Object.freeze({
         iteration: normalizePositiveInteger(
           `approvalDecisions[${index}].iteration`,
           record.iteration,
         ),
-        actionId: normalizeString(`approvalDecisions[${index}].actionId`, record.actionId),
+        actionId,
         toolName: normalizeString(`approvalDecisions[${index}].toolName`, record.toolName),
         outcome,
         recordedAt: normalizeTimestamp(
