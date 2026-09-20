@@ -3,6 +3,7 @@ export {
   type HarnessEvaluation,
   type HarnessExecutionContext,
   type HarnessInspectResult,
+  type HarnessLifecycleUsageReport,
   type HarnessObservation,
   type HarnessRefinement,
   type HarnessRunRequest,
