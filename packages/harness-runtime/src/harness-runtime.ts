@@ -267,6 +267,7 @@ export class HarnessRuntime {
         iteration,
         action: plan.action,
         executionId,
+        executionStartedAtMs: startedAtMs,
         correlationId,
         executionMetadata: requestMetadata,
         budget: request.budget,

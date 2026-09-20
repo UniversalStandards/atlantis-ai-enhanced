@@ -634,6 +634,15 @@ function normalizeApprovalRecords(value: unknown): readonly HarnessApprovalDecis
           `approvalDecisions[${index}].resolution is not allowed for required`,
         );
       }
+      if (
+        resolution !== undefined &&
+        ((outcome === "approved" && resolution.decision !== "approved") ||
+          (outcome === "rejected" && resolution.decision !== "rejected"))
+      ) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].resolution.decision must match ${outcome}`,
+        );
+      }
       return Object.freeze({
         iteration: normalizePositiveInteger(
           `approvalDecisions[${index}].iteration`,

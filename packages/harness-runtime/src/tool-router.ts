@@ -182,6 +182,7 @@ export interface ToolInvocationContext {
   readonly iteration: number;
   readonly action: HarnessPlanAction;
   readonly executionId: string;
+  readonly executionStartedAtMs: number;
   readonly correlationId: string;
   readonly executionMetadata: Readonly<Record<string, string>>;
   readonly budget: ExecutionBudget;
@@ -241,6 +242,7 @@ export class ToolRouter {
       effectType: tool.capability,
     });
 
+    this.#synchronizeDuration(context);
     const budgetStatus = this.#checkBudget(context.budget, context.usage, { toolCalls: 1 }, tool);
     if (budgetStatus !== undefined) {
       return this.#budgetExceeded(
@@ -322,10 +324,11 @@ export class ToolRouter {
 
     for (let attempt = 1; attempt <= retryPolicy.maxAttempts; attempt += 1) {
       if (attempt > 1) {
+        this.#synchronizeDuration(context);
         const retryBudgetStatus = this.#checkBudget(
           context.budget,
           context.usage,
-          { toolCalls: 1, retries: 1 },
+          { toolCalls: 1 },
           tool,
         );
         if (retryBudgetStatus !== undefined) {
@@ -348,6 +351,7 @@ export class ToolRouter {
       try {
         result = await tool.execute(input, metadata);
         resultSettled = true;
+        context.usage.toolCalls += 1;
         const normalizedUsage = normalizeUsageContribution(result.usage);
         const normalizedEvidence = Object.freeze(
           (result.evidence ?? []).map((entry) =>
@@ -362,11 +366,8 @@ export class ToolRouter {
           result.status === "failed"
             ? normalizeToolFailure("tool.failure", result.failure)
             : undefined;
-        context.usage.toolCalls += 1;
-        if (attempt > 1) {
-          context.usage.retries += 1;
-        }
         applyUsageDelta(context.usage, normalizedUsage);
+        this.#synchronizeDuration(context);
         const withinBudget = this.#isWithinBudget(context.budget, context.usage);
         evidenceReads.push(...normalizedEvidence);
         const attemptCompletedAt = context.clock.nowIso();
@@ -407,6 +408,9 @@ export class ToolRouter {
           finalFailure.kind === "transient" &&
           attempt < retryPolicy.maxAttempts &&
           (retryPolicy.shouldRetry?.(finalFailure, attempt) ?? true);
+        if (shouldRetry) {
+          context.usage.retries += 1;
+        }
         const backoffMsAfter = shouldRetry ? retryPolicy.backoffMs?.[attempt - 1] ?? 0 : undefined;
         attempts.push(
           Object.freeze({
@@ -472,10 +476,17 @@ export class ToolRouter {
       } catch (error) {
         const attemptCompletedAt = context.clock.nowIso();
         const isInvalidToolResult = resultSettled;
+        if (!resultSettled) {
+          context.usage.toolCalls += 1;
+        }
+        this.#synchronizeDuration(context);
         const shouldRetry =
           !isInvalidToolResult &&
           attempt < retryPolicy.maxAttempts &&
           (retryPolicy.shouldRetry?.(error, attempt) ?? true);
+        if (shouldRetry) {
+          context.usage.retries += 1;
+        }
         const executionFailure = normalizeToolFailure("tool.failure", {
           kind: shouldRetry ? "transient" : "deterministic",
           code: isInvalidToolResult ? "invalid_tool_result" : "tool_execution_error",
@@ -614,10 +625,13 @@ export class ToolRouter {
     idempotency: ExternalEffectIdentity,
   ): Promise<HarnessPolicyDecisionRecord> {
     const decidedAt = context.clock.nowIso();
-    const decision =
-      this.options.policy === undefined
-        ? { allowed: false, reason: "policy evaluator required", metadata: {} }
-        : await this.options.policy.evaluate({
+    let decision: ToolPolicyDecision;
+    if (this.options.policy === undefined) {
+      decision = { allowed: false, reason: "policy evaluator required", metadata: {} };
+    } else {
+      try {
+        decision = normalizePolicyDecision(
+          await this.options.policy.evaluate({
             toolName: tool.name,
             capability: tool.capability,
             input,
@@ -626,7 +640,18 @@ export class ToolRouter {
             actionId: context.action.actionId,
             executionMetadata: context.executionMetadata,
             metadata: idempotency,
-          });
+          }),
+        );
+      } catch (error) {
+        decision = {
+          allowed: false,
+          reason: "invalid policy decision",
+          metadata: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    }
     return Object.freeze({
       iteration: context.iteration,
       actionId: context.action.actionId,
@@ -782,10 +807,8 @@ export class ToolRouter {
     backoffMsAfter = 0,
   ): Promise<ToolInvocationResult | undefined> {
     await context.clock.sleep(backoffMsAfter);
-    if (backoffMsAfter > 0) {
-      context.usage.durationMs += backoffMsAfter;
-    }
-    const budgetStatus = this.#checkBudget(context.budget, context.usage, { toolCalls: 1, retries: 1 }, tool);
+    this.#synchronizeDuration(context);
+    const budgetStatus = this.#checkBudget(context.budget, context.usage, { toolCalls: 1 }, tool);
     if (budgetStatus !== undefined) {
       return this.#budgetExceeded(
         context,
@@ -799,6 +822,13 @@ export class ToolRouter {
       );
     }
     return undefined;
+  }
+
+  #synchronizeDuration(context: ToolInvocationContext): void {
+    context.usage.durationMs = Math.max(
+      context.usage.durationMs,
+      context.clock.nowMs() - context.executionStartedAtMs,
+    );
   }
 }
 
@@ -877,4 +907,19 @@ function describeInvalidToolResult(value: unknown): string {
   } catch {
     return JSON.stringify({ fallback: String(value) });
   }
+}
+
+function normalizePolicyDecision(value: unknown): ToolPolicyDecision {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("policy decision must be a plain object");
+  }
+  const decision = value as Partial<ToolPolicyDecision>;
+  if (typeof decision.allowed !== "boolean") {
+    throw new Error("policy.allowed must be boolean");
+  }
+  return Object.freeze({
+    allowed: decision.allowed,
+    reason: normalizeString("policy.reason", decision.reason),
+    metadata: normalizeStringRecord("policy.metadata", decision.metadata ?? {}),
+  });
 }
