@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   HarnessRuntime,
+  InvalidHarnessDataError,
   ToolRouter,
   serializeWorkDelta,
+  validateWorkDelta,
   type HarnessClock,
   type HarnessIdSource,
   type JsonValue,
@@ -72,7 +74,7 @@ function jsonSchema<T extends JsonValue>(assertion: (input: unknown) => T) {
 
 function createRuntime(options: {
   tools: readonly ToolDescriptor[];
-  policy?: ConstructorParameters<typeof ToolRouter>[0]["policy"];
+  policy?: ConstructorParameters<typeof ToolRouter>[0]["policy"] | null;
   approvals?: ConstructorParameters<typeof ToolRouter>[0]["approvals"];
   clock?: DeterministicClock;
 }) {
@@ -83,7 +85,15 @@ function createRuntime(options: {
     runtime: new HarnessRuntime({
       toolRouter: new ToolRouter({
         tools: options.tools,
-        ...(options.policy === undefined ? {} : { policy: options.policy }),
+        ...(options.policy === null
+          ? {}
+          : {
+              policy:
+                options.policy ??
+                ({
+                  evaluate: async () => ({ allowed: true, reason: "allow", metadata: {} }),
+                } satisfies NonNullable<ConstructorParameters<typeof ToolRouter>[0]["policy"]>),
+            }),
         ...(options.approvals === undefined ? {} : { approvals: options.approvals }),
       }),
       clock,
@@ -231,6 +241,46 @@ describe("HarnessRuntime", () => {
     );
     expect(execute).not.toHaveBeenCalled();
     expect(result.workDelta.policyDecisions[0]).toMatchObject({ allowed: false, reason: "policy denied" });
+  });
+
+  it("fails closed when no policy evaluator is configured", async () => {
+    const execute = vi.fn(async () => ({ status: "succeeded", output: { ok: true } } as const));
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "returns the provided message",
+          schema: echoSchema,
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+      policy: null,
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Policy evaluator is intentionally absent",
+        desiredOutcome: "Fail closed before tool execution",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("policy_denied");
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.workDelta.policyDecisions[0]).toMatchObject({
+      allowed: false,
+      reason: "policy evaluator required",
+    });
   });
 
   it("fails closed on approval rejection", async () => {
@@ -388,6 +438,158 @@ describe("HarnessRuntime", () => {
     expect(result.workDelta.attemptedActions[0]?.attempts[1]).toMatchObject({ backoffMsAfter: 20 });
     expect(clock.sleeps).toEqual([10, 20]);
     expect(result.workDelta.usage).toMatchObject({ toolCalls: 3, retries: 2 });
+  });
+
+  it("records thrown tool execution errors and retries them within the configured bound", async () => {
+    const clock = new DeterministicClock();
+    let attempts = 0;
+    const { runtime } = createRuntime({
+      clock,
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "throws before succeeding",
+          schema: echoSchema,
+          retry: {
+            maxAttempts: 3,
+            backoffMs: [7, 11],
+            shouldRetry: (error) => error instanceof Error && error.message === "temporary outage",
+          },
+          execute: async () => {
+            attempts += 1;
+            if (attempts < 3) {
+              throw new Error("temporary outage");
+            }
+            return { status: "succeeded", output: { echoed: "hello" } } as const;
+          },
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Thrown execution errors should remain auditable",
+        desiredOutcome: "Success after bounded retries",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async ({ toolOutput }) => ({ summary: { observed: toolOutput } }),
+      evaluate: async () => ({ score: 1, passed: true, reasons: ["recovered"], metrics: { retries: 2 } }),
+      refine: async ({ toolOutput }) => ({ status: "complete", finalState: { completed: true }, output: toolOutput }),
+    });
+
+    expect(result.terminalState).toBe("succeeded");
+    expect(result.workDelta.attemptedActions[0]?.attempts).toHaveLength(3);
+    expect(result.workDelta.attemptedActions[0]?.attempts[0]).toMatchObject({
+      status: "failed",
+      failure: { code: "tool_execution_error", kind: "transient", message: "temporary outage" },
+      backoffMsAfter: 7,
+    });
+    expect(result.workDelta.attemptedActions[0]?.attempts[1]).toMatchObject({
+      status: "failed",
+      failure: { code: "tool_execution_error", kind: "transient", message: "temporary outage" },
+      backoffMsAfter: 11,
+    });
+    expect(clock.sleeps).toEqual([7, 11]);
+  });
+
+  it("honors shouldRetry=false for transient failures", async () => {
+    const execute = vi.fn(async () => ({
+      status: "failed",
+      failure: { kind: "transient", code: "busy", message: "retry disallowed" },
+    } as const));
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "returns a transient failure once",
+          schema: echoSchema,
+          retry: {
+            maxAttempts: 3,
+            backoffMs: [5, 5],
+            shouldRetry: () => false,
+          },
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Inherited retry policy should stop retries",
+        desiredOutcome: "No second dispatch",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("tool_failed");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result.workDelta.attemptedActions[0]?.attempts).toHaveLength(1);
+    expect(result.workDelta.attemptedActions[0]?.attempts[0]).toMatchObject({
+      failure: { kind: "transient", code: "busy" },
+    });
+  });
+
+  it("terminates before retry dispatch when backoff exhausts the deadline budget", async () => {
+    const clock = new DeterministicClock();
+    const execute = vi.fn(async () => ({
+      status: "failed",
+      failure: { kind: "transient", code: "busy", message: "retry later" },
+    } as const));
+    const { runtime } = createRuntime({
+      clock,
+      tools: [
+        {
+          name: "echo",
+          capability: "read-only",
+          description: "backoff exceeds deadline budget",
+          schema: echoSchema,
+          retry: { maxAttempts: 3, backoffMs: [10, 10] },
+          execute,
+        } satisfies ToolDescriptor,
+      ],
+    });
+
+    const result = await runtime.run({
+      input: { request: "hello" },
+      budget: budget({ maxDurationMs: 5 }),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt echo",
+        rationale: "Backoff should consume the remaining deadline budget",
+        desiredOutcome: "No second dispatch after sleep",
+        toolName: "echo",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    expect(result.terminalState).toBe("budget_exhausted");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(clock.sleeps).toEqual([10]);
+    expect(result.workDelta.usage.durationMs).toBe(10);
+    expect(result.workDelta.attemptedActions[0]?.attempts[0]).toMatchObject({
+      backoffMsAfter: 10,
+    });
   });
 
   it("terminates on repeated non-progress", async () => {
@@ -559,5 +761,91 @@ describe("HarnessRuntime", () => {
     expect(policy.evaluate).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     expect(result.workDelta.attemptedActions[0]).toMatchObject({ outcome: "budget_exhausted" });
+  });
+
+  it("requires approval resolutions for approved and rejected outcomes and forbids them for required", async () => {
+    const approvals = {
+      resolve: vi.fn(async (request: ApprovalRequest): Promise<ApprovalResolution | undefined> => ({
+        approvalId: request.approvalId,
+        executionId: request.executionId,
+        requestVersion: request.requestVersion,
+        decision: "rejected",
+        resolvedBy: "reviewer",
+        resolvedAt: request.requestedAt,
+        comment: "denied",
+      })),
+    };
+    const { runtime } = createRuntime({
+      tools: [
+        {
+          name: "dangerous",
+          capability: "write",
+          description: "requires approval",
+          schema: echoSchema,
+          approval: {
+            action: "tool:dangerous",
+            reason: "Needs human approval",
+          },
+          execute: async () => ({ status: "succeeded", output: { ok: true } }) as const,
+        } satisfies ToolDescriptor,
+      ],
+      approvals,
+    });
+
+    const rejectedResult = await runtime.run({
+      input: { request: "hello" },
+      budget: budget(),
+      inspect: async () => ({ startState: { phase: "inspected" } }),
+      plan: async () => ({
+        summary: "Attempt dangerous tool",
+        rationale: "Capture approval evidence",
+        desiredOutcome: "Obtain a rejected approval decision",
+        toolName: "dangerous",
+        input: { message: "hello" },
+        metadata: {},
+      }),
+      observe: async () => ({ summary: { unreachable: true } }),
+      evaluate: async () => ({ score: 0, passed: false, reasons: ["unreachable"], metrics: {} }),
+      refine: async () => ({ status: "continue", nextState: { unreachable: true } }),
+    });
+
+    const rejectedWithoutResolution = JSON.parse(
+      serializeWorkDelta(rejectedResult.workDelta),
+    ) as Record<string, unknown>;
+    rejectedWithoutResolution.approvalDecisions = [
+      {
+        ...(rejectedWithoutResolution.approvalDecisions as Array<Record<string, unknown>>)[0],
+        resolution: undefined,
+      },
+    ];
+    expect(() => validateWorkDelta(rejectedWithoutResolution)).toThrow(InvalidHarnessDataError);
+
+    const requiredWithResolution = JSON.parse(
+      serializeWorkDelta(rejectedResult.workDelta),
+    ) as Record<string, unknown>;
+    const rejectedDecision = (
+      requiredWithResolution.approvalDecisions as Array<Record<string, unknown>>
+    )[0];
+    requiredWithResolution.approvalDecisions = [
+      {
+        ...rejectedDecision,
+        outcome: "required",
+      },
+    ];
+    expect(() => validateWorkDelta(requiredWithResolution)).toThrow(InvalidHarnessDataError);
+
+    const approvedWithoutResolution = JSON.parse(
+      serializeWorkDelta(rejectedResult.workDelta),
+    ) as Record<string, unknown>;
+    approvedWithoutResolution.approvalDecisions = [
+      {
+        ...(
+          approvedWithoutResolution.approvalDecisions as Array<Record<string, unknown>>
+        )[0],
+        outcome: "approved",
+        resolution: undefined,
+      },
+    ];
+    expect(() => validateWorkDelta(approvedWithoutResolution)).toThrow(InvalidHarnessDataError);
   });
 });

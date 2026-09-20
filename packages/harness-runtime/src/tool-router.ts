@@ -343,8 +343,11 @@ export class ToolRouter {
       }
 
       const attemptStartedAt = context.clock.nowIso();
-      const result = await tool.execute(input, metadata);
+      let resultSettled = false;
+      let result: ToolHandlerResult | undefined;
       try {
+        result = await tool.execute(input, metadata);
+        resultSettled = true;
         const normalizedUsage = normalizeUsageContribution(result.usage);
         const normalizedEvidence = Object.freeze(
           (result.evidence ?? []).map((entry) =>
@@ -400,10 +403,11 @@ export class ToolRouter {
         }
 
         finalFailure = normalizedFailure as ToolFailure;
-        const backoffMsAfter =
-          finalFailure.kind === "transient" && attempt < retryPolicy.maxAttempts
-            ? retryPolicy.backoffMs?.[attempt - 1] ?? 0
-            : undefined;
+        const shouldRetry =
+          finalFailure.kind === "transient" &&
+          attempt < retryPolicy.maxAttempts &&
+          (retryPolicy.shouldRetry?.(finalFailure, attempt) ?? true);
+        const backoffMsAfter = shouldRetry ? retryPolicy.backoffMs?.[attempt - 1] ?? 0 : undefined;
         attempts.push(
           Object.freeze({
             attempt,
@@ -428,7 +432,7 @@ export class ToolRouter {
           );
         }
 
-        if (finalFailure.kind !== "transient" || attempt >= retryPolicy.maxAttempts) {
+        if (!shouldRetry) {
           return Object.freeze({
             status: "tool_failed",
             actionRecord: Object.freeze({
@@ -451,51 +455,96 @@ export class ToolRouter {
           });
         }
 
-        await context.clock.sleep(backoffMsAfter ?? 0);
+        const retryBudgetResult = await this.#sleepForRetry(
+          context,
+          actionStartedAt,
+          input,
+          tool,
+          idempotency,
+          attempts,
+          policyDecision,
+          approvalDecision,
+          backoffMsAfter,
+        );
+        if (retryBudgetResult !== undefined) {
+          return retryBudgetResult;
+        }
       } catch (error) {
         const attemptCompletedAt = context.clock.nowIso();
-        const invalidResultFailure = normalizeToolFailure("tool.failure", {
-          kind: "deterministic",
-          code: "invalid_tool_result",
+        const isInvalidToolResult = resultSettled;
+        const shouldRetry =
+          !isInvalidToolResult &&
+          attempt < retryPolicy.maxAttempts &&
+          (retryPolicy.shouldRetry?.(error, attempt) ?? true);
+        const executionFailure = normalizeToolFailure("tool.failure", {
+          kind: shouldRetry ? "transient" : "deterministic",
+          code: isInvalidToolResult ? "invalid_tool_result" : "tool_execution_error",
           message: error instanceof Error ? error.message : String(error),
           details: {
-            returnedUsage:
-              result.usage === undefined ? null : describeInvalidToolResult(result.usage),
-            returnedPayload:
-              result.status === "succeeded"
-                ? describeInvalidToolResult(result.output)
-                : describeInvalidToolResult(result.failure),
+            ...(isInvalidToolResult
+              ? {
+                  returnedUsage:
+                    result?.usage === undefined ? null : describeInvalidToolResult(result.usage),
+                  returnedPayload:
+                    result?.status === "succeeded"
+                      ? describeInvalidToolResult(result.output)
+                      : describeInvalidToolResult(result?.failure),
+                }
+              : {
+                  thrown: describeInvalidToolResult(error),
+                }),
           },
         });
+        const backoffMsAfter = shouldRetry ? retryPolicy.backoffMs?.[attempt - 1] ?? 0 : undefined;
         attempts.push(
           Object.freeze({
             attempt,
             startedAt: normalizeTimestamp("attempt.startedAt", attemptStartedAt),
             completedAt: normalizeTimestamp("attempt.completedAt", attemptCompletedAt),
             status: "failed",
-            failure: invalidResultFailure,
+            failure: executionFailure,
+            ...(backoffMsAfter === undefined ? {} : { backoffMsAfter }),
           }),
         );
-        return Object.freeze({
-          status: "tool_failed",
-          actionRecord: Object.freeze({
-            iteration: context.iteration,
-            actionId: context.action.actionId,
-            toolName: context.action.toolName,
-            capability: tool.capability,
-            startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
-            completedAt: attemptCompletedAt,
-            correlationId: context.correlationId,
-            idempotency,
-            input,
-            outcome: "tool_failed",
-            attempts: Object.freeze(attempts),
-            failure: invalidResultFailure,
-          }),
+        finalFailure = executionFailure;
+
+        if (!shouldRetry) {
+          return Object.freeze({
+            status: "tool_failed",
+            actionRecord: Object.freeze({
+              iteration: context.iteration,
+              actionId: context.action.actionId,
+              toolName: context.action.toolName,
+              capability: tool.capability,
+              startedAt: normalizeTimestamp("action.startedAt", actionStartedAt),
+              completedAt: attemptCompletedAt,
+              correlationId: context.correlationId,
+              idempotency,
+              input,
+              outcome: "tool_failed",
+              attempts: Object.freeze(attempts),
+              failure: executionFailure,
+            }),
+            policyDecision,
+            ...(approvalDecision === undefined ? {} : { approvalDecision }),
+            evidenceReads: Object.freeze(evidenceReads),
+          });
+        }
+
+        const retryBudgetResult = await this.#sleepForRetry(
+          context,
+          actionStartedAt,
+          input,
+          tool,
+          idempotency,
+          attempts,
           policyDecision,
-          ...(approvalDecision === undefined ? {} : { approvalDecision }),
-          evidenceReads: Object.freeze(evidenceReads),
-        });
+          approvalDecision,
+          backoffMsAfter,
+        );
+        if (retryBudgetResult !== undefined) {
+          return retryBudgetResult;
+        }
       }
     }
 
@@ -566,16 +615,18 @@ export class ToolRouter {
   ): Promise<HarnessPolicyDecisionRecord> {
     const decidedAt = context.clock.nowIso();
     const decision =
-      (await this.options.policy?.evaluate({
-        toolName: tool.name,
-        capability: tool.capability,
-        input,
-        executionId: context.executionId,
-        correlationId: context.correlationId,
-        actionId: context.action.actionId,
-        executionMetadata: context.executionMetadata,
-        metadata: idempotency,
-      })) ?? { allowed: true, reason: "default-allow", metadata: {} };
+      this.options.policy === undefined
+        ? { allowed: false, reason: "policy evaluator required", metadata: {} }
+        : await this.options.policy.evaluate({
+            toolName: tool.name,
+            capability: tool.capability,
+            input,
+            executionId: context.executionId,
+            correlationId: context.correlationId,
+            actionId: context.action.actionId,
+            executionMetadata: context.executionMetadata,
+            metadata: idempotency,
+          });
     return Object.freeze({
       iteration: context.iteration,
       actionId: context.action.actionId,
@@ -717,6 +768,37 @@ export class ToolRouter {
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze([]),
     });
+  }
+
+  async #sleepForRetry(
+    context: ToolInvocationContext,
+    actionStartedAt: string,
+    input: JsonValue,
+    tool: ToolDescriptor,
+    idempotency: ExternalEffectIdentity,
+    attempts: ToolAttemptRecord[],
+    policyDecision?: HarnessPolicyDecisionRecord,
+    approvalDecision?: HarnessApprovalDecisionRecord,
+    backoffMsAfter = 0,
+  ): Promise<ToolInvocationResult | undefined> {
+    await context.clock.sleep(backoffMsAfter);
+    if (backoffMsAfter > 0) {
+      context.usage.durationMs += backoffMsAfter;
+    }
+    const budgetStatus = this.#checkBudget(context.budget, context.usage, { toolCalls: 1, retries: 1 }, tool);
+    if (budgetStatus !== undefined) {
+      return this.#budgetExceeded(
+        context,
+        actionStartedAt,
+        input,
+        tool.capability,
+        idempotency,
+        Object.freeze(attempts),
+        policyDecision,
+        approvalDecision,
+      );
+    }
+    return undefined;
   }
 }
 

@@ -619,6 +619,21 @@ function normalizeApprovalRecords(value: unknown): readonly HarnessApprovalDecis
       if (outcome !== "approved" && outcome !== "rejected" && outcome !== "required") {
         throw new InvalidHarnessDataError(`approvalDecisions[${index}].outcome is invalid`);
       }
+      const request = normalizeApprovalRequest(record.request as unknown as ApprovalRequest);
+      const resolution =
+        record.resolution === undefined
+          ? undefined
+          : resolveApproval(request, record.resolution as unknown as ApprovalResolution).resolution;
+      if ((outcome === "approved" || outcome === "rejected") && resolution === undefined) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].resolution is required for ${outcome}`,
+        );
+      }
+      if (outcome === "required" && resolution !== undefined) {
+        throw new InvalidHarnessDataError(
+          `approvalDecisions[${index}].resolution is not allowed for required`,
+        );
+      }
       return Object.freeze({
         iteration: normalizePositiveInteger(
           `approvalDecisions[${index}].iteration`,
@@ -631,15 +646,8 @@ function normalizeApprovalRecords(value: unknown): readonly HarnessApprovalDecis
           `approvalDecisions[${index}].recordedAt`,
           record.recordedAt,
         ),
-        request: normalizeApprovalRequest(record.request as unknown as ApprovalRequest),
-        ...(record.resolution === undefined
-          ? {}
-          : {
-              resolution: resolveApproval(
-                record.request as unknown as ApprovalRequest,
-                record.resolution as unknown as ApprovalResolution,
-              ).resolution,
-            }),
+        request,
+        ...(resolution === undefined ? {} : { resolution }),
       });
     }),
   );
