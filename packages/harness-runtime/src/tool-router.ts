@@ -413,7 +413,7 @@ export class ToolRouter {
               output: output as JsonValue,
             }),
             policyDecisions: Object.freeze([...policyDecisions]),
-            policyDecision: policyDecisions.at(-1),
+            ...this.#latestPolicyDecision(policyDecisions),
             ...(approvalDecision === undefined ? {} : { approvalDecision }),
             evidenceReads: Object.freeze(evidenceReads),
           });
@@ -470,7 +470,7 @@ export class ToolRouter {
               failure: finalFailure as ToolFailure,
             }),
             policyDecisions: Object.freeze([...policyDecisions]),
-            policyDecision: policyDecisions.at(-1),
+            ...this.#latestPolicyDecision(policyDecisions),
             ...(approvalDecision === undefined ? {} : { approvalDecision }),
             evidenceReads: Object.freeze(evidenceReads),
           });
@@ -554,7 +554,7 @@ export class ToolRouter {
               failure: executionFailure,
             }),
             policyDecisions: Object.freeze([...policyDecisions]),
-            policyDecision: policyDecisions.at(-1),
+            ...this.#latestPolicyDecision(policyDecisions),
             ...(approvalDecision === undefined ? {} : { approvalDecision }),
             evidenceReads: Object.freeze(evidenceReads),
           });
@@ -594,7 +594,7 @@ export class ToolRouter {
         ...(finalFailure === undefined ? {} : { failure: finalFailure }),
       }),
       policyDecisions: Object.freeze([...policyDecisions]),
-      policyDecision: policyDecisions.at(-1),
+      ...this.#latestPolicyDecision(policyDecisions),
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze(evidenceReads),
     });
@@ -810,7 +810,7 @@ export class ToolRouter {
         attempts,
       }),
       policyDecisions,
-      ...(policyDecisions.length === 0 ? {} : { policyDecision: policyDecisions.at(-1) }),
+      ...this.#latestPolicyDecision(policyDecisions),
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze([]),
     });
@@ -842,7 +842,7 @@ export class ToolRouter {
         attempts,
       }),
       policyDecisions,
-      policyDecision: policyDecisions.at(-1),
+      ...this.#latestPolicyDecision(policyDecisions),
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze([]),
     });
@@ -882,6 +882,13 @@ export class ToolRouter {
       context.usage.durationMs,
       context.clock.nowMs() - context.executionStartedAtMs,
     );
+  }
+
+  #latestPolicyDecision(
+    policyDecisions: readonly HarnessPolicyDecisionRecord[],
+  ): { readonly policyDecision: HarnessPolicyDecisionRecord } | {} {
+    const policyDecision = policyDecisions.at(-1);
+    return policyDecision === undefined ? {} : { policyDecision };
   }
 }
 

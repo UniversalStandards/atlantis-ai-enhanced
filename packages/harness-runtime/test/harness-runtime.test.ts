@@ -1151,6 +1151,10 @@ describe("HarnessRuntime", () => {
           ...(mismatchedExecutionDecision?.request as Record<string, unknown>),
           executionId: "different-execution",
         },
+        resolution: {
+          ...((mismatchedExecutionDecision?.resolution as Record<string, unknown>) ?? {}),
+          executionId: "different-execution",
+        },
       },
     ];
     expect(() => validateWorkDelta(mismatchedExecution)).toThrow(InvalidHarnessDataError);
