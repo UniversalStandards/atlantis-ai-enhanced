@@ -17,7 +17,6 @@ import {
   normalizeJsonValue,
   normalizeString,
   normalizeStringRecord,
-  normalizeToolFailure,
   stableStringify,
   validateWorkDelta,
   type HarnessApprovalDecisionRecord,
@@ -29,7 +28,6 @@ import {
   type HarnessStateChangeRecord,
   type HarnessTerminalState,
   type JsonValue,
-  type ToolFailure,
   type WorkDelta,
 } from "./work-delta.js";
 
@@ -123,13 +121,6 @@ export interface HarnessExecutionContext {
   readonly budget: ExecutionBudget;
   readonly usage: ExecutionUsage;
   readonly metadata: Readonly<Record<string, string>>;
-  reportUsage(usage: HarnessLifecycleUsageReport): void;
-}
-
-export interface HarnessLifecycleUsageReport {
-  readonly inputTokens?: number;
-  readonly outputTokens?: number;
-  readonly costUsd?: number;
 }
 
 export interface HarnessRunResult {
@@ -173,9 +164,6 @@ export class HarnessRuntime {
     const usage = createUsage();
     const executionId = request.executionId ?? this.#ids.nextId("execution");
     const correlationId = request.correlationId ?? executionId;
-    const reportUsage = (delta: HarnessLifecycleUsageReport): void => {
-      applyLifecycleUsageReport(usage, delta);
-    };
     const executionContext = (): HarnessExecutionContext =>
       Object.freeze({
         executionId,
@@ -184,7 +172,6 @@ export class HarnessRuntime {
         budget: request.budget,
         usage: snapshotUsage(usage),
         metadata: requestMetadata,
-        reportUsage,
       });
 
     const selectedPlans: HarnessPlanRecord[] = [];
@@ -195,87 +182,16 @@ export class HarnessRuntime {
     const evaluations: HarnessEvaluationRecord[] = [];
     const stateChanges: HarnessStateChangeRecord[] = [];
     const unresolvedItems = new Set<string>();
-    const emptyState = normalizeJsonValue("lifecycle.emptyState", null);
-    let inspect: HarnessInspectResult;
-    try {
-      inspect = await request.inspect(input, executionContext());
-    } catch (error) {
-      return this.#lifecycleFailure({
-        phase: "inspect",
-        error,
-        iteration: 1,
-        input,
-        startState: emptyState,
-        finalState: emptyState,
-        startedAt,
-        startedAtMs,
-        executionId,
-        correlationId,
-        usage,
-        selectedPlans,
-        evidenceReads,
-        attemptedActions,
-        policyDecisions,
-        approvalDecisions,
-        evaluations,
-        stateChanges,
-        unresolvedItems,
-      });
-    }
-    let startState: JsonValue;
-    try {
-      startState = normalizeJsonValue("inspect.startState", inspect.startState);
-      inspect.evidence?.forEach((entry) => {
-        evidenceReads.push(normalizeEvidenceInput(1, "inspect", startedAt, entry));
-      });
-      inspect.unresolvedItems?.forEach((item) =>
-        unresolvedItems.add(normalizeString("inspect.unresolvedItems", item)),
-      );
-    } catch (error) {
-      return this.#lifecycleFailure({
-        phase: "inspect",
-        error,
-        iteration: 1,
-        input,
-        startState: emptyState,
-        finalState: emptyState,
-        startedAt,
-        startedAtMs,
-        executionId,
-        correlationId,
-        usage,
-        selectedPlans,
-        evidenceReads,
-        attemptedActions,
-        policyDecisions,
-        approvalDecisions,
-        evaluations,
-        stateChanges,
-        unresolvedItems,
-      });
-    }
+
+    const inspect = await request.inspect(input, executionContext());
+    const startState = normalizeJsonValue("inspect.startState", inspect.startState);
     let currentState = startState;
-    this.#synchronizeDuration(usage, startedAtMs);
-    if (!this.#isWithinBudget(request.budget, usage)) {
-      return this.#finish({
-        input,
-        startState,
-        startedAt,
-        executionId,
-        correlationId,
-        usage,
-        terminalState: "budget_exhausted",
-        finalState: currentState,
-        selectedPlans,
-        evidenceReads,
-        attemptedActions,
-        policyDecisions,
-        approvalDecisions,
-        evaluations,
-        stateChanges,
-        unresolvedItems,
-      });
-    }
+    inspect.evidence?.forEach((entry) => {
+      evidenceReads.push(normalizeEvidenceInput(1, "inspect", startedAt, entry));
+    });
+    inspect.unresolvedItems?.forEach((item) =>
+      unresolvedItems.add(normalizeString("inspect.unresolvedItems", item)),
+    );
 
     let lastProgressToken: string | undefined;
     let repeatedProgressCount = 0;
@@ -324,99 +240,28 @@ export class HarnessRuntime {
         });
       }
 
-      let proposedPlan: ProposedHarnessPlan;
-      try {
-        proposedPlan = await request.plan({
-          input,
-          state: currentState,
-          iteration,
-          context: executionContext(),
-        });
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "plan",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-      let plan: HarnessPlan;
-      try {
-        const selectedAt = this.#clock.nowIso();
-        plan = normalizeHarnessPlan({
-          planId: this.#ids.nextId("plan"),
-          summary: proposedPlan.summary,
-          rationale: proposedPlan.rationale,
-          desiredOutcome: proposedPlan.desiredOutcome,
-          action: {
-            actionId: proposedPlan.actionId ?? this.#ids.nextId("action"),
-            toolName: proposedPlan.toolName,
-            input: proposedPlan.input,
-          },
-          metadata: proposedPlan.metadata,
-        });
-        selectedPlans.push(
-          Object.freeze({ iteration, selectedAt, plan }),
-        );
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "plan",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-      this.#synchronizeDuration(usage, startedAtMs);
-      if (!this.#isWithinBudget(request.budget, usage)) {
-        return this.#finish({
-          input,
-          startState,
-          startedAt,
-          executionId,
-          correlationId,
-          usage,
-          terminalState: "budget_exhausted",
-          finalState: currentState,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
+      const proposedPlan = await request.plan({
+        input,
+        state: currentState,
+        iteration,
+        context: executionContext(),
+      });
+      const selectedAt = this.#clock.nowIso();
+      const plan = normalizeHarnessPlan({
+        planId: this.#ids.nextId("plan"),
+        summary: proposedPlan.summary,
+        rationale: proposedPlan.rationale,
+        desiredOutcome: proposedPlan.desiredOutcome,
+        action: {
+          actionId: proposedPlan.actionId ?? this.#ids.nextId("action"),
+          toolName: proposedPlan.toolName,
+          input: proposedPlan.input,
+        },
+        metadata: proposedPlan.metadata,
+      });
+      selectedPlans.push(
+        Object.freeze({ iteration, selectedAt, plan }),
+      );
 
       const actionResult = await this.options.toolRouter.invoke({
         iteration,
@@ -480,274 +325,82 @@ export class HarnessRuntime {
       }
 
       const toolOutput = actionResult.actionRecord.output ?? normalizeJsonValue("toolOutput", null);
-      let observation: HarnessObservation;
-      try {
-        observation = await request.observe({
-          input,
-          state: currentState,
-          plan,
-          toolOutput,
+      const observation = await request.observe({
+        input,
+        state: currentState,
+        plan,
+        toolOutput,
+        iteration,
+        context: executionContext(),
+      });
+      const normalizedObservation: HarnessObservation = Object.freeze({
+        summary: normalizeJsonValue("observation.summary", observation.summary),
+        ...(observation.evidence === undefined
+          ? {}
+          : { evidence: Object.freeze(observation.evidence.map((entry) => ({ ...entry }))) }),
+        ...(observation.unresolvedItems === undefined
+          ? {}
+          : {
+              unresolvedItems: Object.freeze(
+                observation.unresolvedItems.map((item) =>
+                  normalizeString("observation.unresolvedItem", item),
+                ),
+              ),
+            }),
+      });
+      normalizedObservation.evidence?.forEach((entry) => {
+        evidenceReads.push(
+          normalizeEvidenceInput(iteration, "observe", this.#clock.nowIso(), entry),
+        );
+      });
+      normalizedObservation.unresolvedItems?.forEach((item) => unresolvedItems.add(item));
+
+      const evaluation = await request.evaluate({
+        input,
+        state: currentState,
+        plan,
+        observation: normalizedObservation,
+        toolOutput,
+        iteration,
+        context: executionContext(),
+      });
+      const normalizedEvaluation = normalizeEvaluation(evaluation, this.#clock.nowIso(), iteration);
+      evaluations.push(normalizedEvaluation);
+      evaluation.unresolvedItems?.forEach((item) =>
+        unresolvedItems.add(normalizeString("evaluation.unresolvedItems", item)),
+      );
+
+      const refinement = await request.refine({
+        input,
+        state: currentState,
+        plan,
+        observation: normalizedObservation,
+        evaluation,
+        toolOutput,
+        iteration,
+        context: executionContext(),
+      });
+
+      const nextState =
+        refinement.status === "complete"
+          ? normalizeJsonValue("refinement.finalState", refinement.finalState)
+          : normalizeJsonValue("refinement.nextState", refinement.nextState);
+      stateChanges.push(
+        Object.freeze({
           iteration,
-          context: executionContext(),
-        });
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "observe",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-      let normalizedObservation: HarnessObservation;
-      try {
-        normalizedObservation = Object.freeze({
-          summary: normalizeJsonValue("observation.summary", observation.summary),
-          ...(observation.evidence === undefined
-            ? {}
-            : { evidence: Object.freeze(observation.evidence.map((entry) => ({ ...entry }))) }),
-          ...(observation.unresolvedItems === undefined
+          recordedAt: this.#clock.nowIso(),
+          before: currentState,
+          after: nextState,
+          ...(refinement.stateChangeSummary === undefined
             ? {}
             : {
-                unresolvedItems: Object.freeze(
-                  observation.unresolvedItems.map((item) =>
-                    normalizeString("observation.unresolvedItem", item),
-                  ),
+                summary: normalizeJsonValue(
+                  "refinement.stateChangeSummary",
+                  refinement.stateChangeSummary,
                 ),
               }),
-        });
-        normalizedObservation.evidence?.forEach((entry) => {
-          evidenceReads.push(
-            normalizeEvidenceInput(iteration, "observe", this.#clock.nowIso(), entry),
-          );
-        });
-        normalizedObservation.unresolvedItems?.forEach((item) => unresolvedItems.add(item));
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "observe",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-      this.#synchronizeDuration(usage, startedAtMs);
-      if (!this.#isWithinBudget(request.budget, usage)) {
-        return this.#finish({
-          input,
-          startState,
-          startedAt,
-          executionId,
-          correlationId,
-          usage,
-          terminalState: "budget_exhausted",
-          finalState: currentState,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-
-      let evaluation: HarnessEvaluation;
-      try {
-        evaluation = await request.evaluate({
-          input,
-          state: currentState,
-          plan,
-          observation: normalizedObservation,
-          toolOutput,
-          iteration,
-          context: executionContext(),
-        });
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "evaluate",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-      let normalizedEvaluation: HarnessEvaluationRecord;
-      try {
-        normalizedEvaluation = normalizeEvaluation(evaluation, this.#clock.nowIso(), iteration);
-        evaluations.push(normalizedEvaluation);
-        evaluation.unresolvedItems?.forEach((item) =>
-          unresolvedItems.add(normalizeString("evaluation.unresolvedItems", item)),
-        );
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "evaluate",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-      this.#synchronizeDuration(usage, startedAtMs);
-      if (!this.#isWithinBudget(request.budget, usage)) {
-        return this.#finish({
-          input,
-          startState,
-          startedAt,
-          executionId,
-          correlationId,
-          usage,
-          terminalState: "budget_exhausted",
-          finalState: currentState,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-
-      let refinement: HarnessRefinement;
-      try {
-        refinement = await request.refine({
-          input,
-          state: currentState,
-          plan,
-          observation: normalizedObservation,
-          evaluation,
-          toolOutput,
-          iteration,
-          context: executionContext(),
-        });
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "refine",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
-
-      let nextState: JsonValue;
-      try {
-        nextState =
-          refinement.status === "complete"
-            ? normalizeJsonValue("refinement.finalState", refinement.finalState)
-            : normalizeJsonValue("refinement.nextState", refinement.nextState);
-        stateChanges.push(
-          Object.freeze({
-            iteration,
-            recordedAt: this.#clock.nowIso(),
-            before: currentState,
-            after: nextState,
-            ...(refinement.stateChangeSummary === undefined
-              ? {}
-              : {
-                  summary: normalizeJsonValue(
-                    "refinement.stateChangeSummary",
-                    refinement.stateChangeSummary,
-                  ),
-                }),
-          }),
-        );
-      } catch (error) {
-        return this.#lifecycleFailure({
-          phase: "refine",
-          error,
-          iteration,
-          input,
-          startState,
-          finalState: currentState,
-          startedAt,
-          startedAtMs,
-          executionId,
-          correlationId,
-          usage,
-          selectedPlans,
-          evidenceReads,
-          attemptedActions,
-          policyDecisions,
-          approvalDecisions,
-          evaluations,
-          stateChanges,
-          unresolvedItems,
-        });
-      }
+        }),
+      );
       currentState = nextState;
       usage.iterations += 1;
       this.#synchronizeDuration(usage, startedAtMs);
@@ -857,7 +510,6 @@ export class HarnessRuntime {
     readonly terminalState: HarnessTerminalState;
     readonly finalState: JsonValue;
     readonly output?: JsonValue;
-    readonly failure?: ToolFailure;
     readonly selectedPlans: readonly HarnessPlanRecord[];
     readonly evidenceReads: readonly ReturnType<typeof normalizeEvidenceInput>[];
     readonly attemptedActions: readonly Awaited<ReturnType<ToolRouter["invoke"]>>["actionRecord"][];
@@ -886,79 +538,12 @@ export class HarnessRuntime {
       terminalState: args.terminalState,
       finalState: args.finalState,
       ...(args.output === undefined ? {} : { output: args.output }),
-      ...(args.failure === undefined ? {} : { failure: args.failure }),
       unresolvedItems: [...args.unresolvedItems],
     });
     return Object.freeze({
       terminalState: args.terminalState,
       workDelta: delta,
       ...(args.output === undefined ? {} : { output: args.output }),
-    });
-  }
-
-  #lifecycleFailure(args: {
-    readonly phase: "inspect" | "plan" | "observe" | "evaluate" | "refine";
-    readonly error: unknown;
-    readonly iteration: number;
-    readonly input: JsonValue;
-    readonly startState: JsonValue;
-    readonly finalState: JsonValue;
-    readonly startedAt: string;
-    readonly startedAtMs: number;
-    readonly executionId: string;
-    readonly correlationId: string;
-    readonly usage: ExecutionUsage;
-    readonly selectedPlans: readonly HarnessPlanRecord[];
-    readonly evidenceReads: ReturnType<typeof normalizeEvidenceInput>[];
-    readonly attemptedActions: readonly Awaited<ReturnType<ToolRouter["invoke"]>>["actionRecord"][];
-    readonly policyDecisions: readonly HarnessPolicyDecisionRecord[];
-    readonly approvalDecisions: readonly HarnessApprovalDecisionRecord[];
-    readonly evaluations: readonly HarnessEvaluationRecord[];
-    readonly stateChanges: readonly HarnessStateChangeRecord[];
-    readonly unresolvedItems: ReadonlySet<string>;
-  }): HarnessRunResult {
-    const failure = normalizeToolFailure("lifecycle.failure", {
-      kind: "deterministic",
-      code: `${args.phase}_failed`,
-      message: args.error instanceof Error ? args.error.message : String(args.error),
-      details: {
-        phase: args.phase,
-        thrown: describeLifecycleFailure(args.error),
-      },
-    });
-    args.evidenceReads.push(
-      normalizeEvidenceInput(args.iteration, args.phase, this.#clock.nowIso(), {
-        source: `runtime:${args.phase}`,
-        detail: `${args.phase} callback failed`,
-        value: {
-          failure: {
-            kind: failure.kind,
-            code: failure.code,
-            message: failure.message,
-            ...(failure.details === undefined ? {} : { details: failure.details }),
-          },
-        },
-      }),
-    );
-    this.#synchronizeDuration(args.usage, args.startedAtMs);
-    return this.#finish({
-      input: args.input,
-      startState: args.startState,
-      startedAt: args.startedAt,
-      executionId: args.executionId,
-      correlationId: args.correlationId,
-      usage: args.usage,
-      terminalState: "lifecycle_failed",
-      finalState: args.finalState,
-      failure,
-      selectedPlans: args.selectedPlans,
-      evidenceReads: args.evidenceReads,
-      attemptedActions: args.attemptedActions,
-      policyDecisions: args.policyDecisions,
-      approvalDecisions: args.approvalDecisions,
-      evaluations: args.evaluations,
-      stateChanges: args.stateChanges,
-      unresolvedItems: args.unresolvedItems,
     });
   }
 
@@ -1006,21 +591,6 @@ function snapshotUsage(usage: ExecutionUsage): ExecutionUsage {
   return Object.freeze({ ...usage }) as ExecutionUsage;
 }
 
-function applyLifecycleUsageReport(
-  usage: ExecutionUsage,
-  delta: HarnessLifecycleUsageReport,
-): void {
-  if (delta.inputTokens !== undefined) {
-    usage.inputTokens += normalizeNonNegativeNumber("usage.inputTokens", delta.inputTokens);
-  }
-  if (delta.outputTokens !== undefined) {
-    usage.outputTokens += normalizeNonNegativeNumber("usage.outputTokens", delta.outputTokens);
-  }
-  if (delta.costUsd !== undefined) {
-    usage.costUsd += normalizeNonNegativeNumber("usage.costUsd", delta.costUsd);
-  }
-}
-
 function normalizeEvaluation(
   evaluation: HarnessEvaluation,
   recordedAt: string,
@@ -1053,14 +623,4 @@ function normalizeNonNegativeNumber(field: string, value: unknown): number {
     throw new TypeError(`${field} must be a finite non-negative number`);
   }
   return value;
-}
-
-function describeLifecycleFailure(error: unknown): JsonValue {
-  if (error instanceof Error) {
-    return Object.freeze({
-      name: error.name,
-      message: error.message,
-    });
-  }
-  return normalizeJsonValue("lifecycle.failureValue", String(error));
 }

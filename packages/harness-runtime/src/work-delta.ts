@@ -108,7 +108,6 @@ export interface HarnessApprovalDecisionRecord {
   readonly recordedAt: string;
   readonly request: ApprovalRequest;
   readonly resolution?: ApprovalResolution;
-  readonly failure?: ToolFailure;
 }
 
 export interface HarnessEvaluationRecord {
@@ -132,7 +131,6 @@ export interface HarnessStateChangeRecord {
 export type HarnessTerminalState =
   | "succeeded"
   | "evaluation_failed"
-  | "lifecycle_failed"
   | "policy_denied"
   | "approval_denied"
   | "tool_failed"
@@ -158,7 +156,6 @@ export interface WorkDelta {
   readonly terminalState: HarnessTerminalState;
   readonly finalState: JsonValue;
   readonly output?: JsonValue;
-  readonly failure?: ToolFailure;
   readonly unresolvedItems: readonly string[];
 }
 
@@ -181,24 +178,15 @@ export function normalizeJsonValue(subject: string, value: unknown): JsonValue {
   }
   if (Array.isArray(value)) {
     const ownKeys = Reflect.ownKeys(value);
-    for (const key of ownKeys) {
-      if (key === "length") {
-        continue;
-      }
-      if (
-        typeof key !== "string" ||
-        !/^(0|[1-9]\d*)$/.test(key) ||
-        Number(key) >= value.length ||
-        String(Number(key)) !== key
-      ) {
-        throw new InvalidHarnessDataError(`${subject} arrays must not contain extra properties`);
-      }
+    const allowedKeys = new Set<PropertyKey>([
+      "length",
+      ...Array.from({ length: value.length }, (_unused, index) => String(index)),
+    ]);
+    if (ownKeys.some((key) => !allowedKeys.has(key))) {
+      throw new InvalidHarnessDataError(`${subject} arrays must not contain extra properties`);
     }
-    if (ownKeys.length !== value.length + 1) {
-      throw new InvalidHarnessDataError(`${subject} arrays must not contain sparse elements`);
-    }
-    const normalized = Array.from({ length: value.length }, (_unused, index) =>
-      normalizeJsonValue(`${subject}[${index}]`, value[index]),
+    const normalized = value.map((entry, index) =>
+      normalizeJsonValue(`${subject}[${index}]`, entry),
     );
     return Object.freeze(normalized) as JsonArray;
   }
@@ -378,19 +366,6 @@ export function validateWorkDelta(value: unknown): WorkDelta {
   }
   const executionId = normalizeString("workDelta.executionId", record.executionId);
   const attemptedActions = normalizeActionRecords(record.attemptedActions);
-  const policyDecisions = normalizePolicyRecords(record.policyDecisions);
-  assertPolicyCoverage(attemptedActions, policyDecisions);
-  const terminalState = normalizeTerminalState(record.terminalState);
-  const failure =
-    record.failure === undefined
-      ? undefined
-      : normalizeToolFailure("workDelta.failure", record.failure as unknown as ToolFailure);
-  if (terminalState === "lifecycle_failed" && failure === undefined) {
-    throw new InvalidHarnessDataError("workDelta.failure is required for lifecycle_failed");
-  }
-  if (terminalState !== "lifecycle_failed" && failure !== undefined) {
-    throw new InvalidHarnessDataError("workDelta.failure is only allowed for lifecycle_failed");
-  }
   return Object.freeze({
     schemaVersion: 1,
     executionId,
@@ -402,7 +377,7 @@ export function validateWorkDelta(value: unknown): WorkDelta {
     selectedPlans: normalizePlanRecords(record.selectedPlans),
     evidenceReads: normalizeEvidenceRecords(record.evidenceReads),
     attemptedActions,
-    policyDecisions,
+    policyDecisions: normalizePolicyRecords(record.policyDecisions),
     approvalDecisions: normalizeApprovalRecords(
       record.approvalDecisions,
       executionId,
@@ -411,12 +386,11 @@ export function validateWorkDelta(value: unknown): WorkDelta {
     evaluations: normalizeEvaluationRecords(record.evaluations),
     stateChanges: normalizeStateChangeRecords(record.stateChanges),
     usage: normalizeUsage("workDelta.usage", record.usage),
-    terminalState,
+    terminalState: normalizeTerminalState(record.terminalState),
     finalState: normalizeJsonValue("workDelta.finalState", record.finalState),
     ...(record.output === undefined
       ? {}
       : { output: normalizeJsonValue("workDelta.output", record.output) }),
-    ...(failure === undefined ? {} : { failure }),
     unresolvedItems: normalizeStringArray("workDelta.unresolvedItems", record.unresolvedItems),
   });
 }
@@ -640,30 +614,6 @@ function normalizePolicyRecords(value: unknown): readonly HarnessPolicyDecisionR
   );
 }
 
-function assertPolicyCoverage(
-  attemptedActions: readonly ActionAttemptRecord[],
-  policyDecisions: readonly HarnessPolicyDecisionRecord[],
-): void {
-  attemptedActions.forEach((action, index) => {
-    const dispatchCount = action.attempts.length;
-    if (dispatchCount === 0) {
-      return;
-    }
-    const matchingAllowedPolicyDecisions = policyDecisions.filter(
-      (record) =>
-        record.allowed &&
-        record.iteration === action.iteration &&
-        record.actionId === action.actionId &&
-        record.toolName === action.toolName,
-    );
-    if (matchingAllowedPolicyDecisions.length < dispatchCount) {
-      throw new InvalidHarnessDataError(
-        `attemptedActions[${index}] must include one allowed policy decision per dispatched attempt`,
-      );
-    }
-  });
-}
-
 function normalizeApprovalRecords(
   value: unknown,
   executionId: string,
@@ -684,13 +634,6 @@ function normalizeApprovalRecords(
         record.resolution === undefined
           ? undefined
           : resolveApproval(request, record.resolution as unknown as ApprovalResolution).resolution;
-      const failure =
-        record.failure === undefined
-          ? undefined
-          : normalizeToolFailure(
-              `approvalDecisions[${index}].failure`,
-              record.failure as unknown as ToolFailure,
-            );
       if ((outcome === "approved" || outcome === "rejected") && resolution === undefined) {
         throw new InvalidHarnessDataError(
           `approvalDecisions[${index}].resolution is required for ${outcome}`,
@@ -708,11 +651,6 @@ function normalizeApprovalRecords(
       ) {
         throw new InvalidHarnessDataError(
           `approvalDecisions[${index}].resolution.decision must match ${outcome}`,
-        );
-      }
-      if (failure !== undefined && outcome !== "required") {
-        throw new InvalidHarnessDataError(
-          `approvalDecisions[${index}].failure is only allowed for required`,
         );
       }
       const actionId = normalizeString(`approvalDecisions[${index}].actionId`, record.actionId);
@@ -751,7 +689,6 @@ function normalizeApprovalRecords(
         ),
         request,
         ...(resolution === undefined ? {} : { resolution }),
-        ...(failure === undefined ? {} : { failure }),
       });
     }),
   );
@@ -841,7 +778,6 @@ function normalizeTerminalState(value: unknown): HarnessTerminalState {
   if (
     value !== "succeeded" &&
     value !== "evaluation_failed" &&
-    value !== "lifecycle_failed" &&
     value !== "policy_denied" &&
     value !== "approval_denied" &&
     value !== "tool_failed" &&

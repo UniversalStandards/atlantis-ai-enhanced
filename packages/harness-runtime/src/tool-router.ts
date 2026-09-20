@@ -273,18 +273,6 @@ export class ToolRouter {
         Object.freeze([...policyDecisions]),
       );
     }
-    const policyBudgetResult = this.#preDispatchBudgetExceeded(
-      context,
-      actionStartedAt,
-      input,
-      tool,
-      idempotency,
-      Object.freeze([]),
-      Object.freeze([...policyDecisions]),
-    );
-    if (policyBudgetResult !== undefined) {
-      return policyBudgetResult;
-    }
 
     const approvalDecision = await this.#evaluateApproval(
       context,
@@ -313,19 +301,6 @@ export class ToolRouter {
         approvalDecision,
         evidenceReads: Object.freeze([]),
       });
-    }
-    const approvalBudgetResult = this.#preDispatchBudgetExceeded(
-      context,
-      actionStartedAt,
-      input,
-      tool,
-      idempotency,
-      Object.freeze([]),
-      Object.freeze([...policyDecisions]),
-      approvalDecision,
-    );
-    if (approvalBudgetResult !== undefined) {
-      return approvalBudgetResult;
     }
 
     const metadata: ToolExecutionMetadata = Object.freeze({
@@ -384,19 +359,6 @@ export class ToolRouter {
             Object.freeze(attempts),
             approvalDecision,
           );
-        }
-        const retryDispatchBudgetResult = this.#preDispatchBudgetExceeded(
-          context,
-          actionStartedAt,
-          input,
-          tool,
-          idempotency,
-          Object.freeze([...attempts]),
-          Object.freeze([...policyDecisions]),
-          approvalDecision,
-        );
-        if (retryDispatchBudgetResult !== undefined) {
-          return retryDispatchBudgetResult;
         }
       }
       let resultSettled = false;
@@ -729,32 +691,31 @@ export class ToolRouter {
     if (tool.approval === undefined) {
       return undefined;
     }
-    let request: ApprovalRequest | undefined;
+    const request: ApprovalRequest = Object.freeze({
+      approvalId: context.ids.nextId("approval"),
+      executionId: context.executionId,
+      requestVersion: tool.approval.requestVersion ?? 1,
+      stepId: context.action.actionId,
+      action: normalizeString("approval.action", tool.approval.action),
+      reason: normalizeString(
+        "approval.reason",
+        typeof tool.approval.reason === "function"
+          ? tool.approval.reason(input)
+          : tool.approval.reason,
+      ),
+      requestedBy: normalizeString(
+        "approval.requestedBy",
+        tool.approval.requestedBy ?? "harness-runtime",
+      ),
+      requestedAt: context.clock.nowIso(),
+      metadata: Object.freeze({
+        ...normalizeStringRecord("approval.metadata", tool.approval.metadata ?? {}),
+        correlationId: context.correlationId,
+        idempotencyKey: idempotency.idempotencyKey,
+      }),
+    });
+    const resolution = await this.options.approvals?.resolve(request);
     try {
-      request = Object.freeze({
-        approvalId: context.ids.nextId("approval"),
-        executionId: context.executionId,
-        requestVersion: tool.approval.requestVersion ?? 1,
-        stepId: context.action.actionId,
-        action: normalizeString("approval.action", tool.approval.action),
-        reason: normalizeString(
-          "approval.reason",
-          typeof tool.approval.reason === "function"
-            ? tool.approval.reason(input)
-            : tool.approval.reason,
-        ),
-        requestedBy: normalizeString(
-          "approval.requestedBy",
-          tool.approval.requestedBy ?? "harness-runtime",
-        ),
-        requestedAt: context.clock.nowIso(),
-        metadata: Object.freeze({
-          ...normalizeStringRecord("approval.metadata", tool.approval.metadata ?? {}),
-          correlationId: context.correlationId,
-          idempotencyKey: idempotency.idempotencyKey,
-        }),
-      });
-      const resolution = await this.options.approvals?.resolve(request);
       const approved = requireApproved(request, resolution);
       return Object.freeze({
         iteration: context.iteration,
@@ -773,7 +734,7 @@ export class ToolRouter {
           toolName: tool.name,
           outcome: "required",
           recordedAt: context.clock.nowIso(),
-          request: request ?? this.#fallbackApprovalRequest(context, tool, idempotency),
+          request,
         });
       }
       if (error instanceof ApprovalRejectedError) {
@@ -783,52 +744,12 @@ export class ToolRouter {
           toolName: tool.name,
           outcome: "rejected",
           recordedAt: context.clock.nowIso(),
-          request: request ?? this.#fallbackApprovalRequest(context, tool, idempotency),
+          request,
           resolution: error.approval.resolution,
         });
       }
-      return Object.freeze({
-        iteration: context.iteration,
-        actionId: context.action.actionId,
-        toolName: tool.name,
-        outcome: "required",
-        recordedAt: context.clock.nowIso(),
-        request: request ?? this.#fallbackApprovalRequest(context, tool, idempotency),
-        failure: normalizeToolFailure("approval.failure", {
-          kind: "deterministic",
-          code: "approval_resolution_error",
-          message: error instanceof Error ? error.message : String(error),
-          details: {
-            thrown: describeInvalidToolResult(error),
-          },
-        }),
-      });
+      throw error;
     }
-  }
-
-  #fallbackApprovalRequest(
-    context: ToolInvocationContext,
-    tool: ToolDescriptor,
-    idempotency: ExternalEffectIdentity,
-  ): ApprovalRequest {
-    return Object.freeze({
-      approvalId: context.ids.nextId("approval-failed"),
-      executionId: context.executionId,
-      requestVersion: tool.approval?.requestVersion ?? 1,
-      stepId: context.action.actionId,
-      action: normalizeString("approval.action", tool.approval?.action ?? "tool-approval"),
-      reason: "approval resolution failed before a canonical request could be recorded",
-      requestedBy: normalizeString(
-        "approval.requestedBy",
-        tool.approval?.requestedBy ?? "harness-runtime",
-      ),
-      requestedAt: context.clock.nowIso(),
-      metadata: Object.freeze({
-        ...normalizeStringRecord("approval.metadata", tool.approval?.metadata ?? {}),
-        correlationId: context.correlationId,
-        idempotencyKey: idempotency.idempotencyKey,
-      }),
-    });
   }
 
   #failureWithoutAttempts(
@@ -925,38 +846,6 @@ export class ToolRouter {
       ...(approvalDecision === undefined ? {} : { approvalDecision }),
       evidenceReads: Object.freeze([]),
     });
-  }
-
-  #preDispatchBudgetExceeded(
-    context: ToolInvocationContext,
-    actionStartedAt: string,
-    input: JsonValue,
-    tool: ToolDescriptor,
-    idempotency: ExternalEffectIdentity,
-    attempts: readonly ToolAttemptRecord[],
-    policyDecisions: readonly HarnessPolicyDecisionRecord[],
-    approvalDecision?: HarnessApprovalDecisionRecord,
-  ): ToolInvocationResult | undefined {
-    this.#synchronizeDuration(context);
-    const dispatchBudgetStatus = this.#checkBudget(
-      context.budget,
-      context.usage,
-      { toolCalls: 1 },
-      tool,
-    );
-    if (dispatchBudgetStatus !== undefined) {
-      return this.#budgetExceeded(
-        context,
-        actionStartedAt,
-        input,
-        tool.capability,
-        idempotency,
-        attempts,
-        policyDecisions,
-        approvalDecision,
-      );
-    }
-    return undefined;
   }
 
   async #sleepForRetry(
