@@ -1,0 +1,23 @@
+{
+  "name": "@atlantis/harness-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./harness-runtime": "./src/harness-runtime.ts",
+    "./tool-router": "./src/tool-router.ts",
+    "./work-delta": "./src/work-delta.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
