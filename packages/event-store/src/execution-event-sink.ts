@@ -1,0 +1,462 @@
+import {
+  executionEventTypes,
+  type EventSink,
+  type ExecutionEvent,
+  type ExecutionEventType,
+} from "@atlantis/contracts";
+
+import {
+  AbortAcknowledgedExecutionWriter,
+  type AbortableExecutionWriteHandle,
+  type AbortAcknowledgedExecutionWriterOptions,
+} from "./abortable-execution-writer.js";
+import {
+  InvalidEventError,
+  type EventStore,
+  type StoredEvent,
+} from "./index.js";
+
+interface PersistedExecutionEventPayload<T = unknown> {
+  readonly sequence: number;
+  readonly actor: string;
+  readonly parentEventId?: string;
+  readonly payload: T;
+}
+
+export interface GovernedExecutionAppendContext {
+  readonly executionId: string;
+  readonly signal: AbortSignal;
+  append<T>(event: ExecutionEvent<T>): Promise<void>;
+  acknowledgeAbort(): void;
+}
+
+export interface DurableExecutionEventSinkOptions
+  extends AbortAcknowledgedExecutionWriterOptions {}
+
+const executionEventFields = new Set([
+  "id",
+  "executionId",
+  "sequence",
+  "type",
+  "occurredAt",
+  "actor",
+  "parentEventId",
+  "payload",
+]);
+const requiredExecutionEventFields = [
+  "id",
+  "executionId",
+  "sequence",
+  "type",
+  "occurredAt",
+  "actor",
+  "payload",
+] as const;
+const storedEventFields = new Set([
+  "streamId",
+  "eventId",
+  "eventType",
+  "payload",
+  "occurredAt",
+  "traceId",
+  "correlationId",
+  "causationId",
+  "sequence",
+  "streamVersion",
+]);
+const requiredStoredEventFields = [
+  "streamId",
+  "eventId",
+  "eventType",
+  "payload",
+  "occurredAt",
+  "traceId",
+  "correlationId",
+  "sequence",
+  "streamVersion",
+] as const;
+const persistedExecutionPayloadFields = new Set([
+  "sequence",
+  "actor",
+  "parentEventId",
+  "payload",
+]);
+const requiredPersistedExecutionPayloadFields = [
+  "sequence",
+  "actor",
+  "payload",
+] as const;
+const recognizedExecutionEventTypes = new Set<ExecutionEventType>(
+  executionEventTypes,
+);
+
+function assertCanonicalExecutionId(executionId: unknown): string {
+  if (typeof executionId !== "string") {
+    throw new InvalidEventError("executionId must be a string.");
+  }
+  const canonicalExecutionId = executionId.trim();
+  if (canonicalExecutionId.length === 0) {
+    throw new InvalidEventError("executionId must be non-empty.");
+  }
+  if (canonicalExecutionId !== executionId) {
+    throw new InvalidEventError(
+      "executionId must not contain leading or trailing whitespace.",
+    );
+  }
+  return canonicalExecutionId;
+}
+
+function assertGovernedExecutionIdentity(
+  admittedExecutionId: string,
+  eventExecutionId: string,
+): void {
+  if (eventExecutionId !== admittedExecutionId) {
+    throw new InvalidEventError(
+      "governed execution append event executionId must match its admitted executionId.",
+    );
+  }
+}
+
+function assertCanonicalEventId(
+  value: unknown,
+  field: "id" | "parentEventId",
+): string {
+  if (typeof value !== "string") {
+    throw new InvalidEventError(`execution event ${field} must be a string.`);
+  }
+  const canonicalValue = value.trim();
+  if (canonicalValue.length === 0) {
+    throw new InvalidEventError(`execution event ${field} must be non-empty.`);
+  }
+  if (canonicalValue !== value) {
+    throw new InvalidEventError(
+      `execution event ${field} must not contain leading or trailing whitespace.`,
+    );
+  }
+  return canonicalValue;
+}
+
+function assertExecutionActor(actor: unknown): string {
+  if (typeof actor !== "string") {
+    throw new InvalidEventError("execution event actor must be a non-empty string.");
+  }
+  const canonicalActor = actor.trim();
+  if (canonicalActor.length === 0) {
+    throw new InvalidEventError("execution event actor must be a non-empty string.");
+  }
+  if (canonicalActor !== actor) {
+    throw new InvalidEventError(
+      "execution event actor must not contain leading or trailing whitespace.",
+    );
+  }
+  return canonicalActor;
+}
+
+function assertExecutionEventType(type: unknown): ExecutionEventType {
+  if (
+    typeof type !== "string" ||
+    !recognizedExecutionEventTypes.has(type as ExecutionEventType)
+  ) {
+    throw new InvalidEventError("execution event type is not recognized.");
+  }
+  return type as ExecutionEventType;
+}
+
+function assertAppendOperation<T>(operation: unknown): () => T | Promise<T> {
+  if (typeof operation !== "function") {
+    throw new InvalidEventError("execution append operation must be a function.");
+  }
+  return operation as () => T | Promise<T>;
+}
+
+function assertGovernedAppendOperation<T>(
+  operation: unknown,
+): (context: GovernedExecutionAppendContext) => T | Promise<T> {
+  if (typeof operation !== "function") {
+    throw new InvalidEventError("governed execution append operation must be a function.");
+  }
+  return operation as (
+    context: GovernedExecutionAppendContext,
+  ) => T | Promise<T>;
+}
+
+function assertPositiveSafeInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new InvalidEventError(`${field} must be a positive safe integer.`);
+  }
+  return value as number;
+}
+
+function assertCanonicalTimestamp(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new InvalidEventError(
+      `${field} must be a canonical ISO-8601 UTC timestamp.`,
+    );
+  }
+  const parsedTimestamp = Date.parse(value);
+  if (
+    !Number.isFinite(parsedTimestamp) ||
+    new Date(parsedTimestamp).toISOString() !== value
+  ) {
+    throw new InvalidEventError(
+      `${field} must be a canonical ISO-8601 UTC timestamp.`,
+    );
+  }
+  return value;
+}
+
+function normalizeExactRecord(
+  subject: string,
+  value: unknown,
+  allowedFields: ReadonlySet<string>,
+  requiredFields: readonly string[],
+): Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new InvalidEventError(`${subject} must be an object.`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new InvalidEventError(`${subject} must be a plain data record.`);
+  }
+
+  const normalized: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      throw new InvalidEventError(`${subject} must not contain symbol fields.`);
+    }
+    if (!allowedFields.has(key)) {
+      throw new InvalidEventError(`${subject} contains unexpected field ${key}.`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      descriptor.enumerable !== true ||
+      !("value" in descriptor)
+    ) {
+      throw new InvalidEventError(
+        `${subject}.${key} must be an enumerable data property.`,
+      );
+    }
+    normalized[key] = descriptor.value;
+  }
+  for (const field of requiredFields) {
+    if (!Object.prototype.hasOwnProperty.call(normalized, field)) {
+      throw new InvalidEventError(`${subject} is missing required field ${field}.`);
+    }
+  }
+  return Object.freeze(normalized);
+}
+
+function normalizeExecutionEvent<T>(event: unknown): ExecutionEvent<T> {
+  return normalizeExactRecord(
+    "execution event",
+    event,
+    executionEventFields,
+    requiredExecutionEventFields,
+  ) as unknown as ExecutionEvent<T>;
+}
+
+function normalizeStoredEvent(event: unknown): StoredEvent {
+  return normalizeExactRecord(
+    "stored execution event",
+    event,
+    storedEventFields,
+    requiredStoredEventFields,
+  ) as unknown as StoredEvent;
+}
+
+function normalizePersistedExecutionPayload(
+  payload: unknown,
+): PersistedExecutionEventPayload {
+  return normalizeExactRecord(
+    "persisted execution event payload",
+    payload,
+    persistedExecutionPayloadFields,
+    requiredPersistedExecutionPayloadFields,
+  ) as unknown as PersistedExecutionEventPayload;
+}
+
+function assertExecutionSequence(sequence: number, expectedVersion: number): void {
+  const expectedSequence = expectedVersion + 1;
+  if (sequence !== expectedSequence) {
+    throw new InvalidEventError(
+      `execution event sequence ${sequence} does not match expected stream sequence ${expectedSequence}.`,
+    );
+  }
+}
+
+function restoreExecutionEvent(untrustedStored: StoredEvent): ExecutionEvent {
+  const stored = normalizeStoredEvent(untrustedStored);
+  const storedSequence = assertPositiveSafeInteger(
+    stored.sequence,
+    "stored execution event sequence",
+  );
+  const streamVersion = assertPositiveSafeInteger(
+    stored.streamVersion,
+    "stored execution event streamVersion",
+  );
+  const occurredAt = assertCanonicalTimestamp(
+    stored.occurredAt,
+    "stored execution event occurredAt",
+  );
+  const persisted = normalizePersistedExecutionPayload(stored.payload);
+  if (!Number.isSafeInteger(persisted.sequence) || persisted.sequence < 1) {
+    throw new InvalidEventError("persisted execution event payload is invalid.");
+  }
+  if (persisted.sequence !== streamVersion) {
+    throw new InvalidEventError(
+      "persisted execution event sequence must match its stream version.",
+    );
+  }
+  if (storedSequence < streamVersion) {
+    throw new InvalidEventError(
+      "stored execution event sequence must not precede its stream version.",
+    );
+  }
+
+  const executionId = assertCanonicalExecutionId(stored.streamId);
+  const eventId = assertCanonicalEventId(stored.eventId, "id");
+  const actor = assertExecutionActor(persisted.actor);
+  const type = assertExecutionEventType(stored.eventType);
+  const parentEventId =
+    persisted.parentEventId === undefined
+      ? undefined
+      : assertCanonicalEventId(persisted.parentEventId, "parentEventId");
+  if (stored.traceId !== executionId || stored.correlationId !== executionId) {
+    throw new InvalidEventError(
+      "persisted execution event trace and correlation identities must match its stream identity.",
+    );
+  }
+  if (stored.causationId !== parentEventId) {
+    throw new InvalidEventError(
+      "persisted execution event parentEventId must match its causationId.",
+    );
+  }
+
+  return Object.freeze({
+    id: eventId,
+    executionId,
+    sequence: persisted.sequence,
+    type,
+    occurredAt,
+    actor,
+    ...(parentEventId === undefined ? {} : { parentEventId }),
+    payload: persisted.payload,
+  });
+}
+
+/**
+ * Bridges provider-neutral execution events into the canonical durable event
+ * store without leaking persistence details into the workflow runner.
+ *
+ * Abortable work receives a bound append capability whose final synchronous
+ * store mutation is routed through that work item's revocable commit guard.
+ * The compatibility lock remains available and is serialized by the same
+ * event-store-owned writer.
+ */
+export class DurableExecutionEventSink implements EventSink {
+  private readonly writer: AbortAcknowledgedExecutionWriter;
+
+  public constructor(
+    private readonly store: EventStore,
+    options: DurableExecutionEventSinkOptions = {},
+  ) {
+    this.writer = new AbortAcknowledgedExecutionWriter(options);
+  }
+
+  public enqueueExecutionAppend<T>(
+    executionId: string,
+    operation: (context: GovernedExecutionAppendContext) => T | Promise<T>,
+  ): AbortableExecutionWriteHandle<T> {
+    const canonicalExecutionId = assertCanonicalExecutionId(executionId);
+    const validatedOperation = assertGovernedAppendOperation<T>(operation);
+
+    return this.writer.enqueue(canonicalExecutionId, (writerContext) =>
+      validatedOperation(
+        Object.freeze({
+          executionId: canonicalExecutionId,
+          signal: writerContext.signal,
+          append: <TPayload>(event: ExecutionEvent<TPayload>): Promise<void> => {
+            const validatedEvent = normalizeExecutionEvent<TPayload>(event);
+            const eventExecutionId = assertCanonicalExecutionId(
+              validatedEvent.executionId,
+            );
+            assertGovernedExecutionIdentity(
+              canonicalExecutionId,
+              eventExecutionId,
+            );
+            writerContext.commit(() => this.appendSynchronously(validatedEvent));
+            return Promise.resolve();
+          },
+          acknowledgeAbort: () => writerContext.acknowledgeAbort(),
+        }),
+      ),
+    );
+  }
+
+  public async withExecutionAppendLock<T>(
+    executionId: string,
+    operation: () => T | Promise<T>,
+  ): Promise<T> {
+    const validatedOperation = assertAppendOperation<T>(operation);
+    return await this.enqueueExecutionAppend(
+      executionId,
+      () => validatedOperation(),
+    ).result;
+  }
+
+  public async append<T>(event: ExecutionEvent<T>): Promise<void> {
+    this.appendSynchronously(event);
+  }
+
+  private appendSynchronously<T>(event: ExecutionEvent<T>): void {
+    const validatedEvent = normalizeExecutionEvent<T>(event);
+    const executionId = assertCanonicalExecutionId(validatedEvent.executionId);
+    const eventId = assertCanonicalEventId(validatedEvent.id, "id");
+    const sequence = assertPositiveSafeInteger(
+      validatedEvent.sequence,
+      "execution event sequence",
+    );
+    const parentEventId =
+      validatedEvent.parentEventId === undefined
+        ? undefined
+        : assertCanonicalEventId(validatedEvent.parentEventId, "parentEventId");
+    const actor = assertExecutionActor(validatedEvent.actor);
+    const type = assertExecutionEventType(validatedEvent.type);
+    const occurredAt = assertCanonicalTimestamp(
+      validatedEvent.occurredAt,
+      "execution event occurredAt",
+    );
+    const expectedVersion = this.store.getStreamVersion(executionId);
+    assertExecutionSequence(sequence, expectedVersion);
+
+    this.store.append(
+      {
+        streamId: executionId,
+        eventId,
+        eventType: type,
+        occurredAt,
+        traceId: executionId,
+        correlationId: executionId,
+        ...(parentEventId === undefined ? {} : { causationId: parentEventId }),
+        payload: {
+          sequence,
+          actor,
+          ...(parentEventId === undefined ? {} : { parentEventId }),
+          payload: validatedEvent.payload,
+        },
+      },
+      expectedVersion,
+    );
+  }
+
+  public readExecution(executionId: string): readonly ExecutionEvent[] {
+    const canonicalExecutionId = assertCanonicalExecutionId(executionId);
+    return Object.freeze(
+      this.store.readStream(canonicalExecutionId).map(restoreExecutionEvent),
+    );
+  }
+}
