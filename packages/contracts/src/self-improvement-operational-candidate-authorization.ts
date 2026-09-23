@@ -36,6 +36,7 @@ export interface ExpectedSelfImprovementOperationalCandidateAdmission {
   readonly candidateId: string;
   readonly repository: string;
   readonly baseRevision: string;
+  readonly isolatedWorkspaceNamespace: string;
   readonly configurationDigest: string;
   readonly credentialClass: string;
   readonly networkBoundary: string;
@@ -63,7 +64,7 @@ const authorizationFields = [
   ...requiredFields, "executionEnvironment", "featureGateDefault", "authorityBoundary", "approvals",
 ] as const;
 const expectedAdmissionFields = [
-  "candidateId", "repository", "baseRevision", "configurationDigest", "credentialClass", "networkBoundary",
+  "candidateId", "repository", "baseRevision", "isolatedWorkspaceNamespace", "configurationDigest", "credentialClass", "networkBoundary",
   "verificationGates", "decisionEvidence", "approvalIdentities",
 ] as const;
 const approvalRoles = ["architecture", "operations", "security-network"] as const;
@@ -165,6 +166,10 @@ function expectedAdmission(value: unknown): Readonly<ExpectedSelfImprovementOper
     candidateId: nonBlank("expectedAdmission.candidateId", candidate.candidateId),
     repository: nonBlank("expectedAdmission.repository", candidate.repository),
     baseRevision: nonBlank("expectedAdmission.baseRevision", candidate.baseRevision),
+    isolatedWorkspaceNamespace: nonBlank(
+      "expectedAdmission.isolatedWorkspaceNamespace",
+      candidate.isolatedWorkspaceNamespace,
+    ),
     configurationDigest: nonBlank("expectedAdmission.configurationDigest", candidate.configurationDigest),
     credentialClass: nonBlank("expectedAdmission.credentialClass", candidate.credentialClass),
     networkBoundary: nonBlank("expectedAdmission.networkBoundary", candidate.networkBoundary),
@@ -190,6 +195,7 @@ export function authorizeSelfImprovementOperationalCandidateAdmission(
     ["candidateId", admitted.candidateId, trusted.candidateId],
     ["repository", admitted.repository, trusted.repository],
     ["baseRevision", admitted.baseRevision, trusted.baseRevision],
+    ["isolatedWorkspaceNamespace", admitted.isolatedWorkspaceNamespace, trusted.isolatedWorkspaceNamespace],
     ["configurationDigest", admitted.configurationDigest, trusted.configurationDigest],
     ["credentialClass", admitted.credentialClass, trusted.credentialClass],
     ["networkBoundary", admitted.networkBoundary, trusted.networkBoundary],

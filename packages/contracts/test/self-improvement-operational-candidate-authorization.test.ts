@@ -43,6 +43,7 @@ function expectedAdmission() {
     candidateId: "self-improvement-candidate-1",
     repository: "UniversalStandards/atlantis-ai-enhanced",
     baseRevision: "abc123",
+    isolatedWorkspaceNamespace: "proposal/",
     configurationDigest: "sha256:configuration",
     credentialClass: "non-secret-classification-only",
     networkBoundary: "documented-non-production-boundary",
@@ -66,9 +67,10 @@ describe("self-improvement operational candidate authorization", () => {
     expect(Object.isFrozen(result.approvals)).toBe(true);
   });
 
-  it("binds admission to independently supplied candidate, base, config, verification, network, credential, decision, and approver identities", () => {
+  it("binds admission to independently supplied candidate, base, namespace, config, verification, network, credential, decision, and approver identities", () => {
     const result = authorizeSelfImprovementOperationalCandidateAdmission(candidate(), expectedAdmission());
     expect(result.baseRevision).toBe(expectedAdmission().baseRevision);
+    expect(result.isolatedWorkspaceNamespace).toBe(expectedAdmission().isolatedWorkspaceNamespace);
     expect(result.configurationDigest).toBe(expectedAdmission().configurationDigest);
     expect(result.verificationGates).toBe(expectedAdmission().verificationGates);
   });
@@ -96,6 +98,7 @@ describe("self-improvement operational candidate authorization", () => {
 
   it.each([
     ["baseRevision", { baseRevision: "substituted-base" }, /baseRevision does not match/],
+    ["isolatedWorkspaceNamespace", { isolatedWorkspaceNamespace: "sprint/" }, /isolatedWorkspaceNamespace does not match/],
     ["configurationDigest", { configurationDigest: "sha256:substituted" }, /configurationDigest does not match/],
     ["verificationGates", { verificationGates: "caller-supplied-pass" }, /verificationGates does not match/],
     ["networkBoundary", { networkBoundary: "expanded-network" }, /networkBoundary does not match/],
