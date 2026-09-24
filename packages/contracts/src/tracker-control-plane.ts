@@ -478,6 +478,23 @@ export async function reconcileTrackerProjection<
     );
   }
 
+  if (!hasTrackerSyncAuthority(request.authority)) {
+    return {
+      status: "failed",
+      trigger: request.trigger,
+      idempotencyKey,
+      source,
+      mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
+      incident: createTrackerIncident(
+        request.incidentPolicy,
+        "authority-denied",
+        "Tracker reconciliation requires the tracker-sync authority role",
+        idempotencyKey,
+        source.sourceRevision,
+      ),
+    };
+  }
+
   if (shouldClaimIdempotency && request.idempotencyStore) {
     const claim = await request.idempotencyStore.claim(idempotencyKey);
     if (claim.state !== "claimed") {
@@ -494,23 +511,6 @@ export async function reconcileTrackerProjection<
       };
     }
     idempotencyClaimed = true;
-  }
-
-  if (!hasTrackerSyncAuthority(request.authority)) {
-    return finalize({
-      status: "failed",
-      trigger: request.trigger,
-      idempotencyKey,
-      source,
-      mutationPlan: emptyTrackerMutationPlan<TPlanningContext>(null, false),
-      incident: createTrackerIncident(
-        request.incidentPolicy,
-        "authority-denied",
-        "Tracker reconciliation requires the tracker-sync authority role",
-        idempotencyKey,
-        source.sourceRevision,
-      ),
-    });
   }
 
   try {
@@ -861,3 +861,4 @@ function isTrackerCanonicalRecord(
 ): value is TrackerProjectionFields {
   return !Array.isArray(value) && typeof value === "object" && value !== null;
 }
+

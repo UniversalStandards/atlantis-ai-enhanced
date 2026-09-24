@@ -18,6 +18,11 @@ const AUTHORITY = {
   roles: ["tracker-sync"] as const,
 };
 
+const UNAUTHORIZED_AUTHORITY = {
+  actorId: "untrusted-caller",
+  roles: [] as const,
+};
+
 const INCIDENT_POLICY: TrackerIncidentPolicy = {
   owner: "tracker-ops",
   slaClass: "p1",
@@ -210,6 +215,50 @@ describe("tracker control plane", () => {
     expect(
       validateTrackerProjectionVersion([" tracker-v1 "], "tracker-v1"),
     ).toEqual({ compatible: true });
+  });
+
+  it("does not let an unauthorized caller poison the idempotency key", async () => {
+    const adapter = new InMemoryAdapter();
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const source = {
+      sourceSystem: "github",
+      repository: "UniversalStandards/atlantis-ai-enhanced",
+      entityType: "issue",
+      entityId: "46",
+      projectionVersion: "tracker-v1",
+      projectedFields: {
+        labels: ["enhancement"],
+        state: "open",
+        title: "Tracker issue",
+      },
+    } as const;
+
+    const unauthorized = await reconcileTrackerProjection({
+      trigger: "webhook",
+      authority: UNAUTHORIZED_AUTHORITY,
+      source,
+      adapter,
+      incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
+    });
+
+    expect(unauthorized.status).toBe("failed");
+    expect(unauthorized.incident).toMatchObject({
+      code: "authority-denied",
+    });
+    expect(idempotencyStore.claims.size).toBe(0);
+
+    const authorized = await reconcileTrackerProjection({
+      trigger: "anti-entropy",
+      authority: AUTHORITY,
+      source,
+      adapter,
+      incidentPolicy: INCIDENT_POLICY,
+      idempotencyStore,
+    });
+
+    expect(authorized.status).toBe("applied");
+    expect(adapter.createCalls).toHaveLength(1);
   });
 
   it("shares one idempotency identity between webhook and anti-entropy replays", async () => {
@@ -546,3 +595,4 @@ describe("tracker control plane", () => {
     expect(adapter.createCalls).toHaveLength(0);
   });
 });
+
