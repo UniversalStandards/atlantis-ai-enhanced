@@ -1,5 +1,7 @@
 export type ExecutionMode = "workflow" | "supervisor" | "hybrid";
 
+export * from "./identity.js";
+
 export type ExecutionStatus =
   | "pending"
   | "running"
