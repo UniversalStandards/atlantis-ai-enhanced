@@ -34,15 +34,23 @@ export interface CredentialRequest {
   readonly requestId?: string;
 }
 
-export interface AuthenticationResult {
-  readonly authenticated: boolean;
-  readonly principal?: PrincipalContext;
-  readonly reason?:
-    | "missing_credential"
-    | "invalid_credential"
-    | "malformed_principal"
-    | "expired_credential";
-}
+export type AuthenticationFailureReason =
+  | "missing_credential"
+  | "invalid_credential"
+  | "malformed_principal"
+  | "expired_credential";
+
+export type AuthenticationResult =
+  | {
+      readonly authenticated: true;
+      readonly principal: PrincipalContext;
+      readonly reason?: never;
+    }
+  | {
+      readonly authenticated: false;
+      readonly principal?: never;
+      readonly reason: AuthenticationFailureReason;
+    };
 
 export type AuthorizationDecision =
   | {

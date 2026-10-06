@@ -35,4 +35,43 @@ describe("identity contracts", () => {
     expect(authentication.authenticated).toBe(false);
     expect(authorization.capabilityId).toBe("mcp.tools.list");
   });
+
+  it("requires a principal on authentication success", () => {
+    const principal: PrincipalContext = {
+      principalId: "user-1",
+      principalType: "user",
+      authMethod: "oauth",
+      roles: [],
+      scopes: [],
+      attributes: {},
+    };
+    const authentication: AuthenticationResult = {
+      authenticated: true,
+      principal,
+    };
+
+    expect(authentication.principal.principalId).toBe("user-1");
+  });
+
+  it("rejects contradictory authentication payloads at compile time", () => {
+    // @ts-expect-error A successful result cannot omit its principal.
+    const missingPrincipal: AuthenticationResult = { authenticated: true };
+    const invalidPrincipal: PrincipalContext = {
+      principalId: "user-1",
+      principalType: "user",
+      authMethod: "oauth",
+      roles: [],
+      scopes: [],
+      attributes: {},
+    };
+    // @ts-expect-error A failed result cannot carry a principal.
+    const principalOnFailure: AuthenticationResult = {
+      authenticated: false,
+      principal: invalidPrincipal,
+      reason: "invalid_credential",
+    };
+
+    expect(missingPrincipal).toBeDefined();
+    expect(principalOnFailure).toBeDefined();
+  });
 });

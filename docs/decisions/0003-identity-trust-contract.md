@@ -9,6 +9,11 @@ ATLANTIS uses a provider-neutral `PrincipalContext`, `Authenticator`, and
 authorization independently decides whether that principal may invoke a
 capability for a tenant and resource.
 
+Authentication results are a discriminated union: successful authentication
+requires a `PrincipalContext`, while failed authentication requires a typed
+failure reason and cannot carry a principal. This prevents malformed adapter
+responses from reaching authorization.
+
 The normative field set is maintained in the Universal Standards control plane:
 
 - `standards/identity-trust/principal-context.schema.json`
