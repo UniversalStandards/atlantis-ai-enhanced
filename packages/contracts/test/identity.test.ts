@@ -75,3 +75,52 @@ describe("identity contracts", () => {
     expect(principalOnFailure).toBeDefined();
   });
 });
+
+describe("identity contracts: authentication method binding", () => {
+  it("allows only anonymous principals to be unauthenticated", () => {
+    const anonymous: PrincipalContext = {
+      principalId: "anonymous",
+      principalType: "anonymous",
+      authMethod: "none",
+      roles: [],
+      scopes: [],
+      attributes: {},
+    };
+
+    expect(anonymous.authMethod).toBe("none");
+  });
+
+  it("rejects credential-less non-anonymous principals at compile time", () => {
+    // @ts-expect-error A user principal cannot use authMethod "none".
+    const unauthenticatedUser: PrincipalContext = {
+      principalId: "user-1",
+      principalType: "user",
+      authMethod: "none",
+      roles: [],
+      scopes: [],
+      attributes: {},
+    };
+    // @ts-expect-error An agent principal cannot use authMethod "none".
+    const unauthenticatedAgent: PrincipalContext = {
+      principalId: "agent-1",
+      principalType: "agent",
+      authMethod: "none",
+      roles: [],
+      scopes: [],
+      attributes: {},
+    };
+    // @ts-expect-error An anonymous principal cannot claim a credential method.
+    const anonymousWithOauth: PrincipalContext = {
+      principalId: "anonymous",
+      principalType: "anonymous",
+      authMethod: "oauth",
+      roles: [],
+      scopes: [],
+      attributes: {},
+    };
+
+    expect(unauthenticatedUser).toBeDefined();
+    expect(unauthenticatedAgent).toBeDefined();
+    expect(anonymousWithOauth).toBeDefined();
+  });
+});

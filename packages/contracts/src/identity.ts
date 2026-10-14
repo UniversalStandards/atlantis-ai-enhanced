@@ -12,11 +12,27 @@ export type AuthMethod =
   | "api_key"
   | "workload_identity";
 
-export interface PrincipalContext {
+/**
+ * Only an anonymous principal may be unauthenticated. Every other principal
+ * type must carry a real authentication method, and an anonymous principal
+ * may never claim one. Enforced at compile time so a credential-less "user",
+ * "agent", or "workload" cannot be constructed through the shared contract.
+ */
+export type AnonymousIdentity = {
+  readonly principalType: "anonymous";
+  readonly authMethod: "none";
+};
+
+export type AuthenticatedIdentity = {
+  readonly principalType: Exclude<PrincipalType, "anonymous">;
+  readonly authMethod: Exclude<AuthMethod, "none">;
+};
+
+export type PrincipalContext = (AnonymousIdentity | AuthenticatedIdentity) & PrincipalContextFields;
+
+export interface PrincipalContextFields {
   readonly principalId: string;
-  readonly principalType: PrincipalType;
   readonly tenantId?: string;
-  readonly authMethod: AuthMethod;
   readonly roles: readonly string[];
   readonly scopes: readonly string[];
   readonly attributes: Readonly<Record<string, string | number | boolean>>;
