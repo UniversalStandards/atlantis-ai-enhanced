@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { ExternalEffectOwnershipLostError } from "../src/external-effect-execution.js";
-import { withExternalEffectOwnershipLossEvidence } from "../src/external-effect-ownership-loss-evidence.js";
+import {
+  withExternalEffectOwnershipLossEvidence,
+  type ExternalEffectOwnershipLossExecutionEvent,
+} from "../src/external-effect-ownership-loss-evidence.js";
 import type { ExternalEffectClaim } from "../src/external-effect-ownership.js";
+
+// Vitest 4 types an untyped vi.fn() as Mock<Procedure | Constructable>, which is not
+// assignable to a plain function sink. Pin mocks to the real sink signature instead.
+type EvidenceAppend = (event: ExternalEffectOwnershipLossExecutionEvent) => void | Promise<void>;
 
 const claim: ExternalEffectClaim = {
   idempotencyKey: "execution-1:publish-change",
@@ -15,7 +22,7 @@ const claim: ExternalEffectClaim = {
   generation: 3,
 };
 
-function context(append: ReturnType<typeof vi.fn>) {
+function context(append: EvidenceAppend) {
   return {
     eventSink: { append },
     executionId: "execution-1",
@@ -29,7 +36,7 @@ function context(append: ReturnType<typeof vi.fn>) {
 
 describe("external effect ownership loss evidence", () => {
   it("records token-safe durable evidence and rethrows the authoritative error", async () => {
-    const append = vi.fn().mockResolvedValue(undefined);
+    const append = vi.fn<EvidenceAppend>().mockResolvedValue(undefined);
     const ownershipLoss = new ExternalEffectOwnershipLostError(
       "provider_execution",
       claim,
@@ -79,7 +86,7 @@ describe("external effect ownership loss evidence", () => {
     await expect(
       withExternalEffectOwnershipLossEvidence(
         {
-          ...context(vi.fn().mockRejectedValue(evidenceFailure)),
+          ...context(vi.fn<EvidenceAppend>().mockRejectedValue(evidenceFailure)),
           onEvidenceError,
         },
         () => Promise.reject(ownershipLoss),
@@ -90,7 +97,7 @@ describe("external effect ownership loss evidence", () => {
   });
 
   it("passes through successful results and unrelated failures without evidence", async () => {
-    const append = vi.fn();
+    const append = vi.fn<EvidenceAppend>();
 
     await expect(
       withExternalEffectOwnershipLossEvidence(context(append), () => "ok"),
