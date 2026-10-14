@@ -12,14 +12,27 @@ authorization independently decides whether that principal may invoke a
 capability for a tenant and resource.
 
 Authentication results are a discriminated union: successful authentication
-requires a `PrincipalContext`, while failed authentication requires a typed
-failure reason and cannot carry a principal. This prevents malformed adapter
-responses from reaching authorization.
+requires an authenticated principal, while failed authentication requires a
+typed failure reason and cannot carry a principal. `Authenticator` returns
+untrusted `unknown`; callers must pass its result through
+`validateAuthenticationResult` before using it. Principal validation rejects
+unknown fields and unsafe object shapes, then returns a frozen snapshot.
 
-The normative field set is maintained in the Universal Standards control plane:
+Delegation is either absent or contains the delegator, delegation identifier,
+non-empty delegated scopes that are a subset of the principal's scopes, and
+canonical expiration timestamp. Runtime validation rejects incomplete,
+escalating, or expired delegation grants. Adapter-specific release controls
+must link to their actual validation and audit evidence.
 
-- `standards/identity-trust/principal-context.schema.json`
-- `manifests/IDENTITY_TRUST_CONTROLS.json`
+The canonical field set and runtime validators for this packet are maintained
+together in this repository:
+
+- `packages/contracts/src/identity.ts`
+- `packages/contracts/test/identity.test.ts`
+
+The adopted UniversalStandards commit (`8d309029`) does not contain an
+identity-specific schema or control manifest. This ADR therefore does not
+claim an upstream schema or release-gate linkage through such a manifest.
 
 This repository exports the TypeScript contract from
 `packages/contracts/src/identity.ts` so workflows, provider adapters, SWARM,
@@ -43,9 +56,9 @@ objects into the core.
   prompts, issue bodies, or logs.
 - The contract is necessary but not sufficient for production readiness; each
   adapter must provide tests, audit evidence, and release-gate linkage through
-  the shared control manifest.
+  the applicable repository release controls.
 
 ## Verification
 
-The contract package includes compile-time and runtime shape tests in
-`packages/contracts/test/identity.test.ts`.
+The contract package includes compile-time tests and runtime validation tests
+in `packages/contracts/test/identity.test.ts`.
