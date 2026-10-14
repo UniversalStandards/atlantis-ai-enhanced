@@ -256,3 +256,5 @@ export {
   type SupervisorResolution,
   type WorkflowRouteDecision,
 } from "./workflow-orchestration.js";
+
+export * from "./identity.js";
