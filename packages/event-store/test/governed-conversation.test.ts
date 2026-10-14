@@ -7,6 +7,7 @@ import {
 import {
   ConversationAccessDeniedError,
   ConversationApprovalStateError,
+  ConversationDeletionUnsupportedError,
   ConversationPolicyDeniedError,
   GovernedConversationService,
   InvalidConversationIdentityError,
@@ -77,6 +78,38 @@ class ConcurrentApprovalStore implements EventStore {
         expectedVersion,
       );
     }
+    return this.store.append(event, expectedVersion);
+  }
+
+  public readStream(streamId: string, afterVersion?: number): readonly StoredEvent[] {
+    return this.store.readStream(streamId, afterVersion);
+  }
+
+  public readAll(afterSequence?: number): readonly StoredEvent[] {
+    return this.store.readAll(afterSequence);
+  }
+
+  public getStreamVersion(streamId: string): number {
+    return this.store.getStreamVersion(streamId);
+  }
+}
+
+class NonRedactableConversationStore implements EventStore {
+  private readonly store = new InMemoryEventStore();
+
+  public append<TPayload>(
+    event: {
+      readonly streamId: string;
+      readonly eventId: string;
+      readonly eventType: string;
+      readonly payload: TPayload;
+      readonly occurredAt: string;
+      readonly traceId: string;
+      readonly correlationId?: string;
+      readonly causationId?: string;
+    },
+    expectedVersion: number,
+  ): StoredEvent<TPayload> {
     return this.store.append(event, expectedVersion);
   }
 
@@ -583,6 +616,24 @@ describe("governed conversation vertical slice", () => {
    expect(service.readConversation(actor, id)).toMatchObject({ deleted: true, messages: [] });
    const eventTypes = service.readAuditEvents(actor, id).map((event) => event.eventType);
    expect(eventTypes).toContain("conversation.deleted");
+  });
+
+  it("fails closed when the store cannot redact persisted content", async () => {
+   const store = new NonRedactableConversationStore();
+   const service = new GovernedConversationService(store, undefined, deterministicClock());
+   const id = service.createConversation(actor.tenantId, actor.userId);
+
+   await service.sendMessage(actor, id, "must not be falsely deleted");
+   const versionBefore = store.getStreamVersion(id);
+
+   expect(() => service.deleteConversation(actor, id)).toThrow(ConversationDeletionUnsupportedError);
+
+   // No deletion marker is recorded, so the system never claims a deletion it cannot honour.
+   expect(store.getStreamVersion(id)).toBe(versionBefore);
+   expect(store.readStream(id).map((event) => event.eventType)).not.toContain("conversation.deleted");
+   expect(service.readConversation(actor, id)).toMatchObject({ deleted: false });
+   const messages = service.readConversation(actor, id).messages.map((message) => message.content);
+   expect(messages).toEqual(["must not be falsely deleted", "mock:must not be falsely deleted"]);
   });
 
   it("does not redact a redact-only store when deletion cannot be recorded", async () => {
