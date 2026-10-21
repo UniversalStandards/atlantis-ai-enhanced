@@ -1,0 +1,904 @@
+import {
+  assertWithinBudget,
+  BudgetExceededError,
+  type ExecutionBudget,
+  type EventSink,
+  type ExecutionEvent,
+  type ExecutionUsage,
+  type WorkflowContext,
+  type WorkflowStep,
+} from "./index.js";
+import {
+  ApprovalRejectedError,
+  ApprovalRequiredError,
+  InvalidApprovalError,
+  normalizeApprovalRequest,
+  resolveApproval,
+  type ApprovalRequest,
+  type ApprovalResolution,
+  type ResolvedApproval,
+} from "./approval-control.js";
+import {
+  assertValidRetryPolicy,
+  executeWithControl,
+  ExecutionCancelledError,
+  ExecutionTimedOutError,
+  type CancellationSignal,
+  type ExecutionDeadline,
+  type RetryPolicy,
+} from "./execution-control.js";
+import { coordinateAtomicResumableCompletion } from "./resumable-completion-coordinator.js";
+import { commitAtomicAttemptFailure } from "./resumable-attempt-failure-transition.js";
+import {
+  terminalExecutionEventsEqual,
+  validateTerminalExecutionCommit,
+  type ResumableDurabilityPort,
+  type TerminalExecutionResultReference,
+} from "./step-completion-commit.js";
+
+export interface ResumableWorkflow<I, O> {
+  readonly id: string;
+  readonly version: string;
+  readonly steps: readonly WorkflowStep<unknown, unknown>[];
+  readonly mapInput?: (input: I) => unknown;
+  readonly mapOutput?: (value: unknown) => O;
+}
+
+/**
+ * Durable record of retry allowances already consumed by the pending step.
+ *
+ * Retry budget is execution-wide, so it cannot by itself tell recovery whether
+ * the pending step has already spent its own attempts. Without this record an
+ * exhausted execution would still grant every restart one further unpaid step
+ * execution, which is unbounded re-execution of a failing step.
+ */
+export interface StepAttemptConsumption {
+  readonly stepId: string;
+  readonly stepIndex: number;
+  /** Durably recorded failed attempts of this step, retrying and terminal. */
+  readonly consumedAttempts: number;
+}
+
+export interface WorkflowCheckpoint {
+  readonly executionId: string;
+  readonly workflowId: string;
+  readonly workflowVersion: string;
+  readonly nextStepIndex: number;
+  readonly completedStepIds: readonly string[];
+  readonly value: unknown;
+  readonly usage: ExecutionUsage;
+  readonly lastEventSequence: number;
+  readonly parentEventId?: string;
+  readonly pendingApproval?: ApprovalRequest;
+  readonly approvedApproval?: ResolvedApproval;
+  readonly stepAttemptConsumption?: StepAttemptConsumption;
+  readonly revision: number;
+}
+
+export interface CheckpointStore {
+  load(executionId: string): Promise<WorkflowCheckpoint | undefined>;
+  save(
+    checkpoint: Omit<WorkflowCheckpoint, "revision">,
+    expectedRevision: number | undefined,
+  ): Promise<WorkflowCheckpoint>;
+  clear(executionId: string, expectedRevision: number): Promise<void>;
+}
+
+export interface ExecutionEventCursor {
+  readonly sequence: number;
+  readonly parentEventId?: string;
+}
+
+/**
+ * Raised before a step is invoked when authoritative state proves no retry
+ * allowance remains to pay for another attempt of that step.
+ */
+export class RetryBudgetExhaustedError extends Error {
+  public constructor(
+    public readonly stepId: string,
+    public readonly stepIndex: number,
+    public readonly consumedAttempts: number,
+    public readonly maxRetries: number,
+  ) {
+    super(
+      `Step ${stepId} exhausted its retry allowance after ${consumedAttempts} durable attempts (maxRetries ${maxRetries})`,
+    );
+    this.name = "RetryBudgetExhaustedError";
+  }
+}
+
+export class InvalidCheckpointError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "InvalidCheckpointError";
+  }
+}
+
+export interface ResumableRunnerOptions {
+  /**
+   * Authoritative consistency domain for checkpoints, ordinary execution events,
+   * restart cursor state, and atomic completed-step publication.
+   *
+   * Optional only as a source-compatibility bridge while callers migrate. A run
+   * without this authority fails closed before workflow work begins; the legacy
+   * split stores below are never used as an execution fallback.
+   */
+  readonly durability?: ResumableDurabilityPort;
+  /** @deprecated Supply `durability`; retained only so unmigrated callers fail at runtime, not compile time. */
+  readonly checkpointStore?: CheckpointStore;
+  /** @deprecated Supply `durability`; retained only so unmigrated callers fail at runtime, not compile time. */
+  readonly eventSink?: EventSink;
+  /** @deprecated Supply `durability`; retained only so unmigrated callers fail at runtime, not compile time. */
+  readonly loadEventCursor?: (
+    executionId: string,
+  ) => ExecutionEventCursor | Promise<ExecutionEventCursor>;
+  readonly nextEventId: () => string;
+  readonly retryPolicyForStep?: (
+    step: WorkflowStep<unknown, unknown>,
+    stepIndex: number,
+  ) => RetryPolicy;
+  readonly approvalForStep?: (
+    step: WorkflowStep<unknown, unknown>,
+    stepIndex: number,
+    context: WorkflowContext,
+  ) => ApprovalRequest | undefined | Promise<ApprovalRequest | undefined>;
+  readonly loadApprovalResolution?: (
+    request: ApprovalRequest,
+  ) => ApprovalResolution | undefined | Promise<ApprovalResolution | undefined>;
+  readonly cancellation?: CancellationSignal;
+  readonly deadline?: ExecutionDeadline;
+  readonly actor?: string;
+  readonly now?: () => string;
+}
+
+function copyUsage(usage: ExecutionUsage): ExecutionUsage {
+  return { ...usage };
+}
+
+function restoreUsage(target: ExecutionUsage, source: ExecutionUsage): void {
+  Object.assign(target, copyUsage(source));
+}
+
+function validateEventCursor(cursor: ExecutionEventCursor): void {
+  if (!Number.isSafeInteger(cursor.sequence) || cursor.sequence < 0) {
+    throw new InvalidCheckpointError("Execution event cursor sequence is invalid");
+  }
+  if (
+    cursor.parentEventId !== undefined &&
+    (typeof cursor.parentEventId !== "string" || cursor.parentEventId.trim().length === 0)
+  ) {
+    throw new InvalidCheckpointError("Execution event cursor parentEventId is invalid");
+  }
+  if (cursor.sequence === 0 && cursor.parentEventId !== undefined) {
+    throw new InvalidCheckpointError("An empty execution stream cannot have a parent event");
+  }
+  if (cursor.sequence > 0 && cursor.parentEventId === undefined) {
+    throw new InvalidCheckpointError("A non-empty execution stream must identify its tail event");
+  }
+}
+
+function validateApprovalBinding(
+  request: ApprovalRequest,
+  executionId: string,
+  stepId: string,
+): ApprovalRequest {
+  const normalized = normalizeApprovalRequest(request);
+  if (normalized.executionId !== executionId) {
+    throw new InvalidApprovalError("approval request executionId does not match context");
+  }
+  if (normalized.stepId !== stepId) {
+    throw new InvalidApprovalError("approval request stepId does not match workflow step");
+  }
+  return normalized;
+}
+
+function validateCheckpoint<I, O>(
+  checkpoint: WorkflowCheckpoint,
+  workflow: ResumableWorkflow<I, O>,
+  context: WorkflowContext,
+): void {
+  if (checkpoint.executionId !== context.executionId) {
+    throw new InvalidCheckpointError("Checkpoint execution identity does not match context");
+  }
+  if (
+    checkpoint.workflowId !== workflow.id ||
+    checkpoint.workflowVersion !== workflow.version ||
+    context.workflowId !== workflow.id ||
+    context.workflowVersion !== workflow.version
+  ) {
+    throw new InvalidCheckpointError("Checkpoint workflow identity or version does not match");
+  }
+  if (
+    !Number.isInteger(checkpoint.nextStepIndex) ||
+    checkpoint.nextStepIndex < 0 ||
+    checkpoint.nextStepIndex > workflow.steps.length
+  ) {
+    throw new InvalidCheckpointError("Checkpoint nextStepIndex is outside the workflow");
+  }
+  const expectedCompleted = workflow.steps
+    .slice(0, checkpoint.nextStepIndex)
+    .map((step) => step.id);
+  if (
+    checkpoint.completedStepIds.length !== expectedCompleted.length ||
+    checkpoint.completedStepIds.some((stepId, index) => stepId !== expectedCompleted[index])
+  ) {
+    throw new InvalidCheckpointError("Checkpoint completed steps are not a valid workflow prefix");
+  }
+  if (!Number.isSafeInteger(checkpoint.lastEventSequence) || checkpoint.lastEventSequence < 0) {
+    throw new InvalidCheckpointError("Checkpoint event sequence is invalid");
+  }
+  if (!Number.isInteger(checkpoint.revision) || checkpoint.revision < 1) {
+    throw new InvalidCheckpointError("Checkpoint revision is invalid");
+  }
+  if (
+    checkpoint.pendingApproval !== undefined &&
+    checkpoint.approvedApproval !== undefined
+  ) {
+    throw new InvalidCheckpointError(
+      "Checkpoint cannot retain pending and approved authorization simultaneously",
+    );
+  }
+
+  const step = workflow.steps[checkpoint.nextStepIndex];
+  const consumption = checkpoint.stepAttemptConsumption;
+  if (consumption !== undefined) {
+    if (step === undefined) {
+      throw new InvalidCheckpointError(
+        "Completed workflow cannot retain pending step attempt consumption",
+      );
+    }
+    if (
+      consumption.stepIndex !== checkpoint.nextStepIndex ||
+      consumption.stepId !== step.id
+    ) {
+      throw new InvalidCheckpointError(
+        "Checkpoint attempt consumption does not identify the pending step",
+      );
+    }
+    if (
+      !Number.isSafeInteger(consumption.consumedAttempts) ||
+      consumption.consumedAttempts < 1
+    ) {
+      throw new InvalidCheckpointError(
+        "Checkpoint attempt consumption count is invalid",
+      );
+    }
+  }
+
+  if (checkpoint.pendingApproval !== undefined) {
+    if (step === undefined) {
+      throw new InvalidCheckpointError("Completed workflow cannot retain a pending approval");
+    }
+    try {
+      validateApprovalBinding(checkpoint.pendingApproval, context.executionId, step.id);
+    } catch (error) {
+      throw new InvalidCheckpointError(
+        error instanceof Error ? error.message : "Checkpoint approval is invalid",
+      );
+    }
+  }
+
+  if (checkpoint.approvedApproval !== undefined) {
+    if (step === undefined) {
+      throw new InvalidCheckpointError("Completed workflow cannot retain an approved authorization");
+    }
+    try {
+      const request = validateApprovalBinding(
+        checkpoint.approvedApproval.request,
+        context.executionId,
+        step.id,
+      );
+      const approval = resolveApproval(request, checkpoint.approvedApproval.resolution);
+      if (approval.resolution.decision !== "approved") {
+        throw new InvalidApprovalError(
+          "checkpoint approved authorization must contain an approved decision",
+        );
+      }
+    } catch (error) {
+      throw new InvalidCheckpointError(
+        error instanceof Error
+          ? error.message
+          : "Checkpoint approved authorization is invalid",
+      );
+    }
+  }
+}
+
+function terminalPayload(event: Readonly<ExecutionEvent<unknown>>): Record<string, unknown> {
+  if (event.payload === null || typeof event.payload !== "object" || Array.isArray(event.payload)) {
+    throw new InvalidCheckpointError("Terminal execution event payload is invalid");
+  }
+  return event.payload as Record<string, unknown>;
+}
+
+function readNumber(payload: Readonly<Record<string, unknown>>, field: string): number {
+  const value = payload[field];
+  if (!Number.isSafeInteger(value)) {
+    throw new InvalidCheckpointError(`Terminal execution event ${field} is invalid`);
+  }
+  return value as number;
+}
+
+function readTerminalUsage(payload: Readonly<Record<string, unknown>>): ExecutionUsage {
+  const usage = payload.usage;
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    throw new InvalidCheckpointError("Terminal execution event usage is invalid");
+  }
+  const candidate = usage as Partial<ExecutionUsage>;
+  for (const field of [
+    "toolCalls",
+    "retries",
+    "iterations",
+    "inputTokens",
+    "outputTokens",
+    "durationMs",
+    "costUsd",
+  ] as const) {
+    if (typeof candidate[field] !== "number" || !Number.isFinite(candidate[field])) {
+      throw new InvalidCheckpointError(`Terminal execution event usage ${field} is invalid`);
+    }
+  }
+  return candidate as ExecutionUsage;
+}
+
+function readResultReference(
+  payload: Readonly<Record<string, unknown>>,
+): TerminalExecutionResultReference {
+  const result = payload.result;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    throw new InvalidCheckpointError("Completed terminal event result reference is invalid");
+  }
+  const reference = result as Partial<TerminalExecutionResultReference>;
+  if (
+    reference.kind !== "terminal-result-reference" ||
+    reference.version !== 1 ||
+    typeof reference.reference !== "string" ||
+    reference.reference.trim().length === 0
+  ) {
+    throw new InvalidCheckpointError("Completed terminal event result reference is invalid");
+  }
+  return reference as TerminalExecutionResultReference;
+}
+
+function validateTerminalPayloadVersion(payload: Readonly<Record<string, unknown>>): void {
+  if (payload.terminalSchemaVersion !== 1) {
+    throw new InvalidCheckpointError("Terminal execution event schema version is invalid");
+  }
+}
+
+async function restoreTerminalOutcome<O>(
+  event: Readonly<ExecutionEvent<unknown>>,
+  durability: ResumableDurabilityPort,
+  context: WorkflowContext,
+): Promise<O> {
+  const payload = terminalPayload(event);
+  validateTerminalPayloadVersion(payload);
+  restoreUsage(context.usage, readTerminalUsage(payload));
+  if (event.type === "execution.completed") {
+    const resultReference = readResultReference(payload);
+    const result = await durability.loadTerminalResult(resultReference);
+    if (result === undefined) {
+      throw new InvalidCheckpointError("Completed terminal result is unavailable");
+    }
+    return result.value as O;
+  }
+  if (event.type === "execution.cancelled") {
+    const reason = typeof payload.reason === "string" ? payload.reason : undefined;
+    throw new ExecutionCancelledError(reason);
+  }
+  if (event.type === "execution.timed_out") {
+    throw new ExecutionTimedOutError(
+      readNumber(payload, "deadlineAtMs"),
+      readNumber(payload, "observedAtMs"),
+    );
+  }
+  if (event.type === "execution.failed") {
+    if (payload.reason === "approval_rejected") {
+      throw new ApprovalRejectedError(payload.approval as ResolvedApproval);
+    }
+    if (payload.reason === "retry_budget_exhausted") {
+      throw new RetryBudgetExhaustedError(
+        payload.stepId as string,
+        readNumber(payload, "stepIndex"),
+        readNumber(payload, "consumedAttempts"),
+        readNumber(payload, "maxRetries"),
+      );
+    }
+    if (payload.reason === "budget_exceeded") {
+      throw new BudgetExceededError(
+        payload.dimension as keyof ExecutionBudget,
+        readNumber(payload, "limit"),
+        readNumber(payload, "observed"),
+      );
+    }
+    const error = typeof payload.error === "string" ? payload.error : "Execution failed";
+    throw new Error(error);
+  }
+  throw new InvalidCheckpointError("Execution terminal event type is invalid");
+}
+
+function requireDurability(options: Readonly<ResumableRunnerOptions>): ResumableDurabilityPort {
+  if (options.durability === undefined) {
+    throw new InvalidCheckpointError(
+      "Authoritative resumable durability is required; split checkpoint/event authorities are not permitted",
+    );
+  }
+  return options.durability;
+}
+
+export class ResumableSequentialWorkflowRunner {
+  private readonly actor: string;
+  private readonly now: () => string;
+
+  public constructor(private readonly options: ResumableRunnerOptions) {
+    this.actor = options.actor ?? "resumable-sequential-workflow-runner";
+    this.now = options.now ?? (() => new Date().toISOString());
+  }
+
+  public async run<I, O>(
+    workflow: ResumableWorkflow<I, O>,
+    input: I,
+    context: WorkflowContext,
+  ): Promise<O> {
+    const durability = requireDurability(this.options);
+    const loaded = await durability.load(context.executionId);
+    if (loaded !== undefined) {
+      validateCheckpoint(loaded, workflow, context);
+      restoreUsage(context.usage, loaded.usage);
+    }
+
+    const cursor = await durability.loadEventCursor(context.executionId);
+    validateEventCursor(cursor);
+    if (loaded !== undefined && cursor.sequence < loaded.lastEventSequence) {
+      throw new InvalidCheckpointError(
+        "Execution event stream is behind the durable checkpoint",
+      );
+    }
+
+    const terminalEvent = await durability.loadTerminalEvent(context.executionId);
+    if (terminalEvent !== undefined) {
+      if (loaded !== undefined) {
+        await durability
+          .commitTerminalExecution({
+            terminalEvent,
+            checkpoint: loaded,
+            expectedCheckpointRevision: loaded.revision,
+            completedStepIds: loaded.completedStepIds,
+          })
+          .catch(() => undefined);
+      }
+      return restoreTerminalOutcome<O>(terminalEvent, durability, context);
+    }
+
+    let checkpoint = loaded;
+    let value: unknown = checkpoint?.value ?? workflow.mapInput?.(input) ?? input;
+    let nextStepIndex = checkpoint?.nextStepIndex ?? 0;
+    let pendingApproval = checkpoint?.pendingApproval;
+    let approvedApproval = checkpoint?.approvedApproval;
+    let stepAttemptConsumption = checkpoint?.stepAttemptConsumption;
+    let sequence = cursor.sequence;
+    let parentEventId = cursor.parentEventId;
+
+    const createEvent = <T>(type: ExecutionEvent<T>["type"], payload: T): ExecutionEvent<T> => {
+      const id = this.options.nextEventId();
+      return {
+        id,
+        executionId: context.executionId,
+        sequence: sequence + 1,
+        type,
+        occurredAt: this.now(),
+        actor: this.actor,
+        ...(parentEventId === undefined ? {} : { parentEventId }),
+        payload,
+      };
+    };
+
+    const append = async <T>(type: ExecutionEvent<T>["type"], payload: T): Promise<void> => {
+      const event = createEvent(type, payload);
+      await durability.append(event);
+      sequence = event.sequence;
+      parentEventId = event.id;
+    };
+
+    const saveCheckpoint = async (): Promise<void> => {
+      checkpoint = await durability.save(
+        {
+          executionId: context.executionId,
+          workflowId: workflow.id,
+          workflowVersion: workflow.version,
+          nextStepIndex,
+          completedStepIds: workflow.steps.slice(0, nextStepIndex).map((item) => item.id),
+          value,
+          usage: copyUsage(context.usage),
+          lastEventSequence: sequence,
+          ...(parentEventId === undefined ? {} : { parentEventId }),
+          ...(pendingApproval === undefined ? {} : { pendingApproval }),
+          ...(approvedApproval === undefined ? {} : { approvedApproval }),
+          ...(stepAttemptConsumption === undefined ? {} : { stepAttemptConsumption }),
+        },
+        checkpoint?.revision,
+      );
+    };
+
+    const completedPrefix = (): readonly string[] =>
+      workflow.steps.slice(0, nextStepIndex).map((item) => item.id);
+
+    const commitTerminal = async <T extends Record<string, unknown>>(
+      type: ExecutionEvent<T & { readonly completedStepIds: readonly string[] }>["type"],
+      payload: T,
+      terminalResult?: { readonly value: unknown },
+    ): Promise<void> => {
+      const completedStepIds = completedPrefix();
+      const resultReference: TerminalExecutionResultReference = {
+        kind: "terminal-result-reference",
+        version: 1,
+        reference: `${context.executionId}:terminal-result:${sequence + 1}`,
+      };
+      const event = createEvent(type, {
+        ...payload,
+        terminalSchemaVersion: 1,
+        usage: copyUsage(context.usage),
+        completedStepIds,
+        ...(terminalResult === undefined ? {} : { result: resultReference }),
+      });
+      const request = {
+        terminalEvent: event as ExecutionEvent<unknown>,
+        checkpoint,
+        expectedCheckpointRevision: checkpoint?.revision,
+        completedStepIds,
+        ...(terminalResult === undefined
+          ? {}
+          : {
+              terminalResult: {
+                reference: resultReference,
+                value: terminalResult.value,
+              },
+            }),
+      } as const;
+
+      try {
+        const result = await durability.commitTerminalExecution(request);
+        validateTerminalExecutionCommit(request, result);
+        checkpoint = result.checkpoint;
+        sequence = result.eventSequence;
+        parentEventId = result.eventId;
+      } catch (error) {
+        const published = await durability.loadTerminalEvent(context.executionId);
+        if (published !== undefined && terminalExecutionEventsEqual(published, event)) {
+          sequence = published.sequence;
+          parentEventId = published.id;
+          checkpoint = await durability.load(context.executionId);
+          return;
+        }
+        throw error;
+      }
+    };
+
+    await append("execution.started", {
+      workflowId: workflow.id,
+      workflowVersion: workflow.version,
+      stepCount: workflow.steps.length,
+      resumed: checkpoint !== undefined,
+      nextStepIndex,
+    });
+
+    try {
+      assertWithinBudget(context);
+
+      for (let index = nextStepIndex; index < workflow.steps.length; index += 1) {
+        const step = workflow.steps[index];
+        if (step === undefined) {
+          throw new InvalidCheckpointError(`Workflow step ${index} is missing`);
+        }
+
+        const requestedApproval =
+          pendingApproval ??
+          approvedApproval?.request ??
+          (await this.options.approvalForStep?.(step, index, context));
+        if (requestedApproval !== undefined) {
+          const request = validateApprovalBinding(
+            requestedApproval,
+            context.executionId,
+            step.id,
+          );
+
+          if (approvedApproval !== undefined) {
+            const restored = resolveApproval(request, approvedApproval.resolution);
+            if (restored.resolution.decision !== "approved") {
+              throw new InvalidApprovalError(
+                "persisted protected-step authorization is not approved",
+              );
+            }
+            approvedApproval = restored;
+          } else {
+            if (pendingApproval === undefined) {
+              pendingApproval = request;
+              await append("approval.requested", request);
+              await saveCheckpoint();
+            }
+
+            const resolution = await this.options.loadApprovalResolution?.(request);
+            if (resolution === undefined) {
+              throw new ApprovalRequiredError(request);
+            }
+
+            const approval = resolveApproval(request, resolution);
+            await append("approval.resolved", {
+              approvalId: approval.request.approvalId,
+              executionId: approval.request.executionId,
+              requestVersion: approval.request.requestVersion,
+              stepId: approval.request.stepId,
+              decision: approval.resolution.decision,
+              resolvedBy: approval.resolution.resolvedBy,
+              resolvedAt: approval.resolution.resolvedAt,
+              ...(approval.resolution.comment === undefined
+                ? {}
+                : { comment: approval.resolution.comment }),
+            });
+            if (approval.resolution.decision === "rejected") {
+              throw new ApprovalRejectedError(approval);
+            }
+            pendingApproval = undefined;
+            approvedApproval = approval;
+            await saveCheckpoint();
+          }
+        }
+
+        assertWithinBudget(context);
+
+        const requestedPolicy = this.options.retryPolicyForStep?.(step, index) ?? {
+          maxAttempts: 1,
+        };
+        assertValidRetryPolicy(requestedPolicy);
+        const remainingRetries = context.budget.maxRetries - context.usage.retries;
+        const consumedAttempts =
+          stepAttemptConsumption?.stepIndex === index &&
+          stepAttemptConsumption.stepId === step.id
+            ? stepAttemptConsumption.consumedAttempts
+            : 0;
+        // A step may attempt at most `maxRetries + 1` times in total, and every
+        // durable failed attempt is subtracted from that allowance. Because the
+        // consumed count is durable, an exhausted step cannot buy another
+        // execution by restarting.
+        const availableAttempts =
+          Math.min(requestedPolicy.maxAttempts, remainingRetries + 1) - consumedAttempts;
+        if (availableAttempts < 1) {
+          throw new RetryBudgetExhaustedError(
+            step.id,
+            index,
+            consumedAttempts,
+            context.budget.maxRetries,
+          );
+        }
+        const retryPolicy: RetryPolicy = {
+          ...requestedPolicy,
+          maxAttempts: availableAttempts,
+        };
+
+        await append("workflow.step.started", { stepId: step.id, stepIndex: index });
+
+        try {
+          value = await executeWithControl(
+            async (attemptContext) => {
+              const { attempt, maxAttempts } = attemptContext;
+              await append("workflow.step.attempt.started", {
+                stepId: step.id,
+                stepIndex: index,
+                attempt,
+                maxAttempts,
+              });
+              return step.execute(value, context, attemptContext);
+            },
+            retryPolicy,
+            {
+              cancellation: this.options.cancellation,
+              deadline: this.options.deadline,
+              hooks: {
+                onAttemptFailed: async ({ attempt, maxAttempts }, error, willRetry) => {
+                  const message = error instanceof Error ? error.message : String(error);
+                  const consumedAttemptsBefore = consumedAttempts + attempt - 1;
+                  if (!willRetry && consumedAttemptsBefore === 0) {
+                    // The step's first attempt is its free one: a terminal
+                    // failure there consumes no allowance and leaves ordinary
+                    // interruption/resume semantics unchanged.
+                    await append("workflow.step.attempt.failed", {
+                      stepId: step.id,
+                      stepIndex: index,
+                      attempt,
+                      maxAttempts,
+                      willRetry,
+                      error: message,
+                    });
+                    return;
+                  }
+
+                  // Failure evidence and the allowance it consumes are one
+                  // authoritative transition. A crash can leave neither or both,
+                  // so durable evidence can never restore spent retry budget.
+                  // Terminal failures are committed too once the step has spent
+                  // an allowance, so a restart cannot replay the final attempt
+                  // of an exhausted step without ever paying for it.
+                  const consumption = await commitAtomicAttemptFailure({
+                    durability,
+                    executionId: context.executionId,
+                    workflowId: workflow.id,
+                    workflowVersion: workflow.version,
+                    stepId: step.id,
+                    stepIndex: index,
+                    completedStepIds: workflow.steps
+                      .slice(0, index)
+                      .map((item) => item.id),
+                    attempt,
+                    maxAttempts,
+                    error: message,
+                    value,
+                    usage: copyUsage(context.usage),
+                    consumedAttemptsBefore,
+                    willRetry,
+                    cursor: {
+                      sequence,
+                      ...(parentEventId === undefined ? {} : { parentEventId }),
+                    },
+                    expectedCheckpointRevision: checkpoint?.revision,
+                    ...(pendingApproval === undefined ? {} : { pendingApproval }),
+                    ...(approvedApproval === undefined ? {} : { approvedApproval }),
+                    nextEventId: this.options.nextEventId,
+                    actor: this.actor,
+                    occurredAt: this.now(),
+                  });
+
+                  checkpoint = consumption.checkpoint;
+                  stepAttemptConsumption = checkpoint.stepAttemptConsumption;
+                  restoreUsage(context.usage, checkpoint.usage);
+                  sequence = consumption.cursor.sequence;
+                  parentEventId = consumption.cursor.parentEventId;
+                  assertWithinBudget(context);
+                },
+                onTimedOut: async ({ attempt, maxAttempts, deadlineAtMs, observedAtMs }) => {
+                  await append("workflow.step.timed_out", {
+                    stepId: step.id,
+                    stepIndex: index,
+                    attempt,
+                    maxAttempts,
+                    deadlineAtMs,
+                    observedAtMs,
+                  });
+                },
+              },
+            },
+          );
+          context.usage.iterations += 1;
+          assertWithinBudget(context);
+
+          const completion = await coordinateAtomicResumableCompletion({
+            durability,
+            executionId: context.executionId,
+            workflowId: workflow.id,
+            workflowVersion: workflow.version,
+            stepId: step.id,
+            stepIndex: index,
+            completedStepIds: workflow.steps.slice(0, index + 1).map((item) => item.id),
+            value,
+            usage: copyUsage(context.usage),
+            cursor: {
+              sequence,
+              ...(parentEventId === undefined ? {} : { parentEventId }),
+            },
+            expectedCheckpointRevision: checkpoint?.revision,
+            nextEventId: this.options.nextEventId,
+            actor: this.actor,
+            occurredAt: this.now(),
+          });
+
+          checkpoint = completion.checkpoint;
+          validateCheckpoint(checkpoint, workflow, context);
+          restoreUsage(context.usage, checkpoint.usage);
+          value = checkpoint.value;
+          nextStepIndex = checkpoint.nextStepIndex;
+          pendingApproval = checkpoint.pendingApproval;
+          approvedApproval = checkpoint.approvedApproval;
+          sequence = completion.cursor.sequence;
+          parentEventId = completion.cursor.parentEventId;
+        } catch (error) {
+          if (error instanceof BudgetExceededError) {
+            await append("budget.exceeded", {
+              dimension: error.dimension,
+              limit: error.limit,
+              observed: error.observed,
+              stepId: step.id,
+            });
+          } else if (
+            !(error instanceof ExecutionCancelledError) &&
+            !(error instanceof ExecutionTimedOutError)
+          ) {
+            await append("workflow.step.failed", {
+              stepId: step.id,
+              stepIndex: index,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          throw error;
+        }
+      }
+
+      assertWithinBudget(context);
+      const output = workflow.mapOutput ? workflow.mapOutput(value) : (value as O);
+      await commitTerminal("execution.completed", {
+        workflowId: workflow.id,
+        completedSteps: workflow.steps.length,
+      }, { value: output });
+      return output;
+    } catch (error) {
+      if (error instanceof ApprovalRequiredError) {
+        throw error;
+      }
+      if (error instanceof ApprovalRejectedError) {
+        await commitTerminal("execution.failed", {
+          workflowId: workflow.id,
+          reason: "approval_rejected",
+          approvalId: error.approval.request.approvalId,
+          stepId: error.approval.request.stepId,
+          approval: error.approval,
+        });
+      } else if (error instanceof ExecutionCancelledError) {
+        await commitTerminal("execution.cancelled", {
+          workflowId: workflow.id,
+          reason: error.reason,
+          nextStepIndex,
+        });
+      } else if (error instanceof ExecutionTimedOutError) {
+        await commitTerminal("execution.timed_out", {
+          workflowId: workflow.id,
+          deadlineAtMs: error.deadlineAtMs,
+          observedAtMs: error.observedAtMs,
+          nextStepIndex,
+        });
+      } else if (error instanceof RetryBudgetExhaustedError) {
+        // Exhaustion is terminal, so it is published and retired through the
+        // same authoritative terminal transition as every other terminal
+        // disposition. Recovery then replays that evidence instead of granting
+        // the step another execution.
+        await commitTerminal("execution.failed", {
+          workflowId: workflow.id,
+          reason: "retry_budget_exhausted",
+          stepId: error.stepId,
+          stepIndex: error.stepIndex,
+          consumedAttempts: error.consumedAttempts,
+          maxRetries: error.maxRetries,
+          error: error.message,
+        });
+      } else if (error instanceof BudgetExceededError) {
+        await commitTerminal("execution.failed", {
+          workflowId: workflow.id,
+          reason: "budget_exceeded",
+          error: error.message,
+          dimension: error.dimension,
+          limit: error.limit,
+          observed: error.observed,
+        });
+      } else {
+        const authoritativeCursor = await durability.loadEventCursor(context.executionId);
+        validateEventCursor(authoritativeCursor);
+        sequence = authoritativeCursor.sequence;
+        parentEventId = authoritativeCursor.parentEventId;
+        const authoritativeCheckpoint = await durability.load(context.executionId);
+        if (authoritativeCheckpoint !== undefined) {
+          validateCheckpoint(authoritativeCheckpoint, workflow, context);
+          checkpoint = authoritativeCheckpoint;
+          restoreUsage(context.usage, checkpoint.usage);
+          value = checkpoint.value;
+          nextStepIndex = checkpoint.nextStepIndex;
+          pendingApproval = checkpoint.pendingApproval;
+          approvedApproval = checkpoint.approvedApproval;
+        }
+        await append("execution.interrupted", {
+          workflowId: workflow.id,
+          reason: "recoverable_error",
+          error: error instanceof Error ? error.message : String(error),
+          nextStepIndex,
+        });
+      }
+      throw error;
+    }
+  }
+}

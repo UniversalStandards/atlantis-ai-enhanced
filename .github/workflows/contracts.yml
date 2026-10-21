@@ -2,18 +2,8 @@ name: Contracts
 
 on:
   pull_request:
-    paths:
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "packages/contracts/**"
-      - ".github/workflows/contracts.yml"
   push:
     branches: [main]
-    paths:
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "packages/contracts/**"
-      - ".github/workflows/contracts.yml"
 
 permissions:
   contents: read
@@ -23,14 +13,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 10.14.0
-      - uses: actions/setup-node@v4
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+
+      - run: pnpm install --frozen-lockfile
+      - name: SEC-20 lockfile integrity and source gate
+        run: node scripts/sec20-supply-chain-gate.mjs
+      - name: SEC-20 structured vulnerability audit
+        run: |
+          pnpm audit --json > sec20-audit.json || true
+          node scripts/sec20-audit-gate.mjs sec20-audit.json
+      - name: SEC-20 dependency inventory validation
+        run: |
+          pnpm list --json --depth Infinity > sec20-dependency-inventory.json
+          node -e 'const fs=require("node:fs"); const inventory=JSON.parse(fs.readFileSync("sec20-dependency-inventory.json","utf8")); if (!Array.isArray(inventory) || inventory.length === 0) process.exit(1); console.log(`SEC-20 dependency inventory generated for ${inventory.length} workspace root(s).`);'
+      - name: Release-control evidence probe contract
+        run: |
+          node --check scripts/release-control-evidence.mjs
+          node scripts/release-control-evidence.mjs --self-test
       - run: pnpm typecheck
       - run: pnpm test
