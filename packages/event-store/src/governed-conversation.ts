@@ -67,6 +67,18 @@ export class ConversationApprovalStateError extends Error {
   }
 }
 
+/**
+ * Raised when a conversation deletion is requested against an event store that
+ * cannot redact persisted message content. Deletion fails closed: no deletion
+ * marker is appended, so the system never reports a deletion it cannot honour.
+ */
+export class ConversationDeletionUnsupportedError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "ConversationDeletionUnsupportedError";
+  }
+}
+
 export class ConversationPolicyDeniedError extends Error {
   public constructor(message: string) {
     super(message);
@@ -496,12 +508,9 @@ export class GovernedConversationService {
      this.store.redactStream(id, redactPersistedConversationPayload);
      return;
    }
-   if (!record.snapshot.deleted) {
-     this.append(id, "conversation.deleted", {
-       tenantId: record.snapshot.tenantId,
-       userId: record.snapshot.userId,
-     }, record.streamVersion);
-   }
+   throw new ConversationDeletionUnsupportedError(
+     "conversation deletion requires an event store that can redact persisted content",
+   );
   }
   public readConversation(identity: ConversationIdentity, id: string): ConversationSnapshot {
    return this.requireOwnedConversation(identity, id).snapshot;
