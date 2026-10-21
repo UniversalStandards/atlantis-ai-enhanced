@@ -53,6 +53,54 @@ export interface WorkflowDefinition<I, O> {
   run(input: I, context: WorkflowContext): Promise<O>;
 }
 
+export type PrincipalType =
+  | "anonymous"
+  | "user"
+  | "agent"
+  | "service_account"
+  | "application"
+  | "workload";
+
+export type AuthMethod =
+  | "none"
+  | "api_key"
+  | "oauth"
+  | "session"
+  | "jwt"
+  | "mtls"
+  | "service_token";
+
+export interface AnonymousIdentity {
+  readonly principalType: "anonymous";
+  readonly authMethod: "none";
+  readonly subject: null;
+}
+
+export interface AuthenticatedIdentity {
+  readonly principalType: Exclude<PrincipalType, "anonymous">;
+  readonly authMethod: Exclude<AuthMethod, "none">;
+  readonly subject: string;
+}
+
+export type PrincipalContext = AnonymousIdentity | AuthenticatedIdentity;
+
+export function assertPrincipalContext(
+  principal: PrincipalContext,
+): asserts principal is PrincipalContext {
+  if (principal.principalType === "anonymous") {
+    if (principal.authMethod !== "none") {
+      throw new Error("Anonymous principals must not declare an auth method.");
+    }
+    return;
+  }
+
+  if (principal.authMethod === "none") {
+    throw new Error(
+      "Authenticated principals must declare a non-empty auth method.",
+    );
+  }
+}
+
 export type ExecutionEventType =
   | "execution.started"
   | "execution.completed"
@@ -115,9 +163,7 @@ export class BudgetExceededError extends Error {
 
 export function assertWithinBudget(context: WorkflowContext): void {
   const { budget, usage } = context;
-  const checks: ReadonlyArray<
-    readonly [keyof ExecutionBudget, number, number]
-  > = [
+  const checks: ReadonlyArray<readonly [keyof ExecutionBudget, number, number]> = [
     ["maxToolCalls", budget.maxToolCalls, usage.toolCalls],
     ["maxRetries", budget.maxRetries, usage.retries],
     ["maxIterations", budget.maxIterations, usage.iterations],
