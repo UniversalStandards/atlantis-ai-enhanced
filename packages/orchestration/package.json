@@ -1,0 +1,19 @@
+{
+  "name": "@atlantis/orchestration",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic sequential workflow runner with budgets, bounded refinement, and supervisor escalation.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/contracts": "workspace:*",
+    "@atlantis/events": "workspace:*"
+  }
+}

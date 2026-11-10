@@ -2,6 +2,22 @@
 
 All notable changes to the ATLANTIS AI project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `@atlantis/events`: hash-chained, append-only in-memory event store and event recorder.
+- `@atlantis/orchestration`: sequential workflow runner with budgets, retries, duration limits, cancellation, bounded refinement, and supervisor escalation.
+- `@atlantis/contracts`: `EventStore`, `createUsage`, `assertValidBudget`, `assertValidUsage`, `InvalidBudgetStateError`, `execution.cancelled`, `WorkflowContext.signal`.
+- Lockfile, ESLint, coverage thresholds, build step, Dependabot, `SECURITY.md`, `CONTRIBUTING.md`, CODEOWNERS, PR template.
+
+### Fixed
+- `assertWithinBudget` no longer passes when a counter or limit is `NaN`.
+- CodeQL workflow now declares the languages it analyzes.
+
+### Changed
+- CI installs with `--frozen-lockfile`, runs on Node 22 and 24, and pins actions to commit SHAs.
+- README rewritten to describe the current state; the prior README moved to `docs/VISION.md`.
+
 ## [2.0.0-enhanced] - 2026-01-30
 
 ### Major Enhancements

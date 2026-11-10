@@ -37,6 +37,11 @@ export interface WorkflowContext {
   readonly budget: ExecutionBudget;
   usage: ExecutionUsage;
   readonly metadata: Readonly<Record<string, string>>;
+  /**
+   * Aborted when the execution is cancelled, exceeds its duration budget, or
+   * ends. Long-running steps should stop work when it fires.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface WorkflowStep<I, O> {
@@ -57,6 +62,7 @@ export type ExecutionEventType =
   | "execution.started"
   | "execution.completed"
   | "execution.failed"
+  | "execution.cancelled"
   | "workflow.step.started"
   | "workflow.step.completed"
   | "workflow.step.failed"
@@ -83,6 +89,16 @@ export interface ExecutionEvent<T = unknown> {
 
 export interface EventSink {
   append<T>(event: ExecutionEvent<T>): Promise<void>;
+}
+
+/**
+ * Append-only, replayable event history for executions (ADR-0001 §7).
+ * Implementations must reject out-of-order or duplicate events rather than
+ * silently reordering them.
+ */
+export interface EventStore extends EventSink {
+  /** Events for one execution, ordered by `sequence`, starting at 0. */
+  read(executionId: string): Promise<readonly ExecutionEvent[]>;
 }
 
 export interface EvaluationResult {
@@ -113,8 +129,84 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/**
+ * Raised when a budget or usage record contains a value that cannot be
+ * compared safely (NaN, Infinity, negative). Budget enforcement fails closed:
+ * an unreadable counter is treated as a violation, never as "within budget".
+ */
+export class InvalidBudgetStateError extends Error {
+  constructor(
+    public readonly field: string,
+    public readonly value: unknown,
+  ) {
+    super(
+      `Execution budget state is invalid: ${field} must be a finite, non-negative number (received ${String(value)})`,
+    );
+    this.name = "InvalidBudgetStateError";
+  }
+}
+
+const BUDGET_FIELDS = [
+  "maxToolCalls",
+  "maxRetries",
+  "maxIterations",
+  "maxTokens",
+  "maxDurationMs",
+  "maxCostUsd",
+] as const satisfies ReadonlyArray<keyof ExecutionBudget>;
+
+const USAGE_FIELDS = [
+  "toolCalls",
+  "retries",
+  "iterations",
+  "inputTokens",
+  "outputTokens",
+  "durationMs",
+  "costUsd",
+] as const satisfies ReadonlyArray<keyof ExecutionUsage>;
+
+function assertCounter(field: string, value: unknown): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new InvalidBudgetStateError(field, value);
+  }
+}
+
+/** A zeroed usage record. Always start an execution from this. */
+export function createUsage(): ExecutionUsage {
+  return {
+    toolCalls: 0,
+    retries: 0,
+    iterations: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    durationMs: 0,
+    costUsd: 0,
+  };
+}
+
+/** Validates every limit in a budget. Throws {@link InvalidBudgetStateError}. */
+export function assertValidBudget(budget: ExecutionBudget): void {
+  for (const field of BUDGET_FIELDS) {
+    assertCounter(`budget.${field}`, budget[field]);
+  }
+}
+
+/** Validates every counter in a usage record. Throws {@link InvalidBudgetStateError}. */
+export function assertValidUsage(usage: ExecutionUsage): void {
+  for (const field of USAGE_FIELDS) {
+    assertCounter(`usage.${field}`, usage[field]);
+  }
+}
+
+/**
+ * Throws if any usage counter exceeds its limit, or if any limit or counter is
+ * not a finite, non-negative number. Usage exactly at a limit is allowed.
+ */
 export function assertWithinBudget(context: WorkflowContext): void {
   const { budget, usage } = context;
+  assertValidBudget(budget);
+  assertValidUsage(usage);
+
   const checks: ReadonlyArray<
     readonly [keyof ExecutionBudget, number, number]
   > = [
