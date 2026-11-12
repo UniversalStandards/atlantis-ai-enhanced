@@ -457,8 +457,7 @@ export interface ScriptedPanelistOptions {
   readonly model?: string;
   /** Answer per prompt, or a function of the prompt. A missing prompt rejects. */
   readonly answers:
-    | Readonly<Record<string, string>>
-    | ((prompt: string) => string);
+    Readonly<Record<string, string>> | ((prompt: string) => string);
 }
 
 /**
