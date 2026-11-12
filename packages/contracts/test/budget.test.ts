@@ -8,7 +8,9 @@ import {
   type WorkflowContext,
 } from "../src/index.js";
 
-function context(overrides: Partial<WorkflowContext["usage"]> = {}): WorkflowContext {
+function context(
+  overrides: Partial<WorkflowContext["usage"]> = {},
+): WorkflowContext {
   return {
     executionId: "exec-1",
     workflowId: "test-workflow",

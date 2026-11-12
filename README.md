@@ -11,10 +11,10 @@ first three packages and nothing else yet: no model providers, no API, no UI,
 no persistence. The longer-term product description is in
 [docs/VISION.md](docs/VISION.md); treat it as direction, not as a feature list.
 
-| Package | What it provides |
-| --- | --- |
-| [`@atlantis/contracts`](packages/contracts) | Provider-neutral types for workflows, executions, events, evaluation, and escalation; fail-closed budget enforcement. |
-| [`@atlantis/events`](packages/events) | Append-only event store contract implementation (in-memory) with a SHA-256 hash chain per execution, plus an event recorder. |
+| Package                                             | What it provides                                                                                                                                                     |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@atlantis/contracts`](packages/contracts)         | Provider-neutral types for workflows, executions, events, evaluation, and escalation; fail-closed budget enforcement.                                                |
+| [`@atlantis/events`](packages/events)               | Append-only event store contract implementation (in-memory) with a SHA-256 hash chain per execution, plus an event recorder.                                         |
 | [`@atlantis/orchestration`](packages/orchestration) | Deterministic sequential workflow runner: budgets, retries, duration limits, cancellation, bounded evaluate→revise loops, supervisor escalation, full event history. |
 
 What is not here yet is tracked in

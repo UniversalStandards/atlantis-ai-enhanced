@@ -3,6 +3,10 @@ import {
   assertValidBudget,
   assertWithinBudget,
   BudgetExceededError,
+  type ActionDescriptor,
+  type ApprovalGate,
+  type PolicyDecision,
+  type PolicyEvaluator,
   createUsage,
   type EvaluationResult,
   type Evaluator,
@@ -31,7 +35,8 @@ export interface RefinementPolicy<I, O> {
   /**
    * What to do when no output passes within `maxRevisions`.
    * `"fail"` (default) fails the step; `"accept_best"` continues with the
-   * highest-scoring output and records that it did not pass.
+   * highest-scoring output and records `acceptedWithoutPassing` on the step's
+   * completion event.
    */
   readonly onExhausted?: "fail" | "accept_best";
 }
@@ -40,6 +45,13 @@ export interface SequentialStep<I, O> extends WorkflowStep<I, O> {
   /** Total attempts including the first. Defaults to 1 (no retry). */
   readonly maxAttempts?: number;
   readonly refinement?: RefinementPolicy<I, O>;
+  /**
+   * Declares that this step has a consequential effect. A step with an action
+   * runs only after the configured policy allows it and, where the policy
+   * requires, after an explicit approval. With no policy configured the step
+   * is denied.
+   */
+  readonly action?: ActionDescriptor;
   /**
    * Builds a supervisor escalation once every attempt has failed. Only used
    * when the workflow mode is `"hybrid"` or `"supervisor"`; in `"workflow"`
@@ -128,6 +140,29 @@ export class StepFailedError extends Error {
   }
 }
 
+/** A policy denied the step, or no policy was configured to decide. */
+export class PolicyDeniedError extends Error {
+  constructor(
+    public readonly stepId: string,
+    public readonly policyId: string,
+    reason: string,
+  ) {
+    super(`Step "${stepId}" denied by policy ${policyId}: ${reason}`);
+    this.name = "PolicyDeniedError";
+  }
+}
+
+/** An approver declined the step, or no approval gate was configured. */
+export class ApprovalRejectedError extends Error {
+  constructor(
+    public readonly stepId: string,
+    public readonly approver: string,
+  ) {
+    super(`Step "${stepId}" was not approved by ${approver}`);
+    this.name = "ApprovalRejectedError";
+  }
+}
+
 export class RefinementExhaustedError extends Error {
   constructor(
     public readonly stepId: string,
@@ -167,6 +202,10 @@ export interface RunOptions {
   readonly budget: ExecutionBudget;
   readonly executionId?: string;
   readonly metadata?: Readonly<Record<string, string>>;
+  /** Required for any workflow containing a step with an `action`. */
+  readonly policy?: PolicyEvaluator;
+  /** Required for any step the policy gates behind approval. */
+  readonly approvals?: ApprovalGate;
   /** Caller-controlled cancellation. */
   readonly signal?: AbortSignal;
   /** Actor recorded on events. Defaults to `"workflow-runner"`. */
@@ -214,7 +253,11 @@ function isControlFlow(error: unknown): boolean {
   );
 }
 
-function assertPositiveInteger(label: string, value: number, min: number): void {
+function assertPositiveInteger(
+  label: string,
+  value: number,
+  min: number,
+): void {
   if (!Number.isInteger(value) || value < min) {
     throw new WorkflowDefinitionError(
       `${label} must be an integer ≥ ${min} (received ${value})`,
@@ -233,8 +276,12 @@ function assertPositiveInteger(label: string, value: number, min: number): void 
  * - The promise rejects only for an invalid budget or workflow definition
  *   (before anything runs) or when the event store refuses an event — an
  *   execution that cannot be audited does not continue.
- * - Event payloads carry identifiers, counters, and error names/messages only;
- *   step inputs and outputs are never written to the event history.
+ * - Steps that declare an `action` are denied unless policy allows them, and
+ *   run only after approval when policy requires it. Retries and supervisor
+ *   escalation never bypass a denial.
+ * - Event payloads carry identifiers, counters, scores, and error
+ *   names/messages only; step inputs, outputs, and evaluator reasons are never
+ *   written to the event history.
  */
 export async function runSequentialWorkflow<I, O>(
   workflow: SequentialWorkflow<I, O>,
@@ -243,7 +290,11 @@ export async function runSequentialWorkflow<I, O>(
 ): Promise<ExecutionResult<O>> {
   assertValidBudget(options.budget);
   for (const step of workflow.steps) {
-    assertPositiveInteger(`Step "${step.id}" maxAttempts`, step.maxAttempts ?? 1, 1);
+    assertPositiveInteger(
+      `Step "${step.id}" maxAttempts`,
+      step.maxAttempts ?? 1,
+      1,
+    );
     if (step.refinement) {
       assertPositiveInteger(
         `Step "${step.id}" refinement.maxRevisions`,
@@ -331,7 +382,9 @@ export async function runSequentialWorkflow<I, O>(
     const maxAttempts = step.maxAttempts ?? 1;
     let attempts = 0;
     let output: unknown;
+    let acceptedWithoutPassing = false;
     try {
+      if (step.action) await authorize(step.id, step.action, started.id);
       for (;;) {
         attempts += 1;
         try {
@@ -369,7 +422,15 @@ export async function runSequentialWorkflow<I, O>(
       }
 
       if (step.refinement) {
-        output = await refine(step, step.refinement, stepInput, output, started.id);
+        const refined = await refine(
+          step,
+          step.refinement,
+          stepInput,
+          output,
+          started.id,
+        );
+        output = refined.output;
+        acceptedWithoutPassing = !refined.passed;
       }
     } catch (error) {
       if (!isControlFlow(error)) {
@@ -383,10 +444,92 @@ export async function runSequentialWorkflow<I, O>(
     }
     await recorder.record(
       "workflow.step.completed",
-      { stepId: step.id, index, attempts },
+      {
+        stepId: step.id,
+        index,
+        attempts,
+        ...(acceptedWithoutPassing ? { acceptedWithoutPassing: true } : {}),
+      },
       started.id,
     );
     return output;
+  };
+
+  /** Policy evaluation and, where required, approval. Throws unless allowed. */
+  const authorize = async (
+    stepId: string,
+    action: ActionDescriptor,
+    parentEventId: string,
+  ): Promise<void> => {
+    const policy = options.policy;
+    if (!policy) {
+      throw new PolicyDeniedError(
+        stepId,
+        "none",
+        "no policy evaluator configured",
+      );
+    }
+    const decision: PolicyDecision = await bounded(() =>
+      policy.evaluate({ stepId, action }, context),
+    );
+    const effect: unknown = decision.effect;
+    const evaluated = await recorder.record(
+      "policy.evaluated",
+      {
+        stepId,
+        action: action.action,
+        reversible: action.reversible,
+        external: action.external,
+        policyId: decision.policyId,
+        effect: typeof effect === "string" ? effect : "invalid",
+      },
+      parentEventId,
+    );
+    if (decision.effect === "allow") return;
+    if (decision.effect !== "require_approval") {
+      // Anything other than an explicit allow or approval requirement is a denial.
+      throw new PolicyDeniedError(
+        stepId,
+        decision.policyId,
+        (decision as { reason?: string }).reason ??
+          "unrecognized policy decision",
+      );
+    }
+    const approvals = options.approvals;
+    if (!approvals) {
+      throw new ApprovalRejectedError(stepId, "no approval gate configured");
+    }
+    const approvalId = (options.generateId ?? randomUUID)();
+    const requested = await recorder.record(
+      "approval.requested",
+      {
+        stepId,
+        approvalId,
+        action: action.action,
+        policyId: decision.policyId,
+      },
+      evaluated.id,
+    );
+    const resolution = await bounded(() =>
+      approvals.request(
+        {
+          approvalId,
+          executionId,
+          userId: options.userId,
+          stepId,
+          action,
+          reason: decision.reason,
+        },
+        controller.signal,
+      ),
+    );
+    const approved = (resolution.approved as unknown) === true;
+    await recorder.record(
+      "approval.resolved",
+      { stepId, approvalId, approved, approver: resolution.approver },
+      requested.id,
+    );
+    if (!approved) throw new ApprovalRejectedError(stepId, resolution.approver);
   };
 
   const refine = async (
@@ -395,31 +538,46 @@ export async function runSequentialWorkflow<I, O>(
     stepInput: unknown,
     first: unknown,
     parentEventId: string,
-  ): Promise<unknown> => {
+  ): Promise<{ output: unknown; passed: boolean }> => {
     let candidate = first;
     let best: { output: unknown; score: number } | undefined;
     for (let revision = 0; ; revision += 1) {
       const evaluation = await bounded(() =>
         policy.evaluator.evaluate(candidate, context),
       );
+      const score = Number.isFinite(evaluation.score) ? evaluation.score : null;
+      // Only a literal `true` passes; a truthy non-boolean does not.
+      const passed = (evaluation.passed as unknown) === true;
       await recorder.record(
         "evaluation.completed",
         {
           stepId: step.id,
           revision,
-          score: evaluation.score,
-          passed: evaluation.passed,
-          reasons: evaluation.reasons,
-          metrics: evaluation.metrics,
+          // Reasons and metrics come from the evaluator (often a model) and
+          // may quote the candidate, so only non-content fields are recorded.
+          score,
+          passed,
+          reasonCount: Array.isArray(evaluation.reasons)
+            ? evaluation.reasons.length
+            : 0,
         },
         parentEventId,
       );
-      if (evaluation.passed) return candidate;
-      if (best === undefined || evaluation.score > best.score) {
-        best = { output: candidate, score: evaluation.score };
+      if (score === null) {
+        throw new StepFailedError(
+          step.id,
+          revision + 1,
+          new Error("evaluator returned a non-finite score"),
+        );
+      }
+      if (passed) return { output: candidate, passed: true };
+      if (best === undefined || score > best.score) {
+        best = { output: candidate, score };
       }
       if (revision >= policy.maxRevisions) {
-        if (policy.onExhausted === "accept_best") return best.output;
+        if (policy.onExhausted === "accept_best") {
+          return { output: best.output, passed: false };
+        }
         throw new RefinementExhaustedError(step.id, best.score, revision);
       }
       context.usage.iterations += 1;
@@ -434,56 +592,66 @@ export async function runSequentialWorkflow<I, O>(
     status: ExecutionResult<O>["status"],
     extra: { output?: O; error?: ExecutionFailure },
   ): ExecutionResult<O> => {
-    controller.abort();
     return { executionId, status, usage: { ...context.usage }, ...extra };
   };
 
-  await recorder.record("execution.started", {
-    workflowId: workflow.id,
-    workflowVersion: workflow.version,
-    mode: workflow.mode,
-    stepCount: workflow.steps.length,
-    userId: options.userId,
-    budget: context.budget,
-  });
-
+  // Abort on every exit, including rejection, so abandoned steps stop work.
   try {
-    let value: unknown = input;
-    for (const [index, step] of workflow.steps.entries()) {
-      value = await runStep(
-        step,
-        index,
-        value,
-      );
-    }
-    checkpoint();
-    await recorder.record("execution.completed", { usage: auditableUsage(context.usage) });
-    return finish("succeeded", { output: value as O });
-  } catch (error) {
-    const failure: ExecutionFailure = {
-      ...describe(error),
-      ...(error instanceof StepFailedError ||
-      error instanceof RefinementExhaustedError
-        ? { stepId: error.stepId }
-        : {}),
-    };
-    if (error instanceof BudgetExceededError) {
-      await recorder.record("budget.exceeded", {
-        dimension: error.dimension,
-        limit: error.limit,
-        observed: error.observed,
+    return await execute();
+  } finally {
+    controller.abort();
+  }
+
+  async function execute(): Promise<ExecutionResult<O>> {
+    await recorder.record("execution.started", {
+      workflowId: workflow.id,
+      workflowVersion: workflow.version,
+      mode: workflow.mode,
+      stepCount: workflow.steps.length,
+      userId: options.userId,
+      budget: context.budget,
+    });
+
+    try {
+      let value: unknown = input;
+      for (const [index, step] of workflow.steps.entries()) {
+        value = await runStep(step, index, value);
+      }
+      checkpoint();
+      await recorder.record("execution.completed", {
         usage: auditableUsage(context.usage),
       });
-      return finish("budget_exceeded", { error: failure });
+      return finish("succeeded", { output: value as O });
+    } catch (error) {
+      const failure: ExecutionFailure = {
+        ...describe(error),
+        ...(error instanceof StepFailedError ||
+        error instanceof RefinementExhaustedError ||
+        error instanceof PolicyDeniedError ||
+        error instanceof ApprovalRejectedError
+          ? { stepId: error.stepId }
+          : {}),
+      };
+      if (error instanceof BudgetExceededError) {
+        await recorder.record("budget.exceeded", {
+          dimension: error.dimension,
+          limit: error.limit,
+          observed: error.observed,
+          usage: auditableUsage(context.usage),
+        });
+        return finish("budget_exceeded", { error: failure });
+      }
+      if (error instanceof ExecutionCancelledError) {
+        await recorder.record("execution.cancelled", {
+          usage: auditableUsage(context.usage),
+        });
+        return finish("cancelled", { error: failure });
+      }
+      await recorder.record("execution.failed", {
+        error: failure,
+        usage: auditableUsage(context.usage),
+      });
+      return finish("failed", { error: failure });
     }
-    if (error instanceof ExecutionCancelledError) {
-      await recorder.record("execution.cancelled", { usage: auditableUsage(context.usage) });
-      return finish("cancelled", { error: failure });
-    }
-    await recorder.record("execution.failed", {
-      error: failure,
-      usage: auditableUsage(context.usage),
-    });
-    return finish("failed", { error: failure });
   }
 }

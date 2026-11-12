@@ -70,6 +70,7 @@ export type ExecutionEventType =
   | "tool.completed"
   | "tool.failed"
   | "evaluation.completed"
+  | "policy.evaluated"
   | "approval.requested"
   | "approval.resolved"
   | "supervisor.escalated"
@@ -116,6 +117,60 @@ export interface SupervisorEscalation<I, O> {
   readonly reason: string;
   readonly input: I;
   resolve(context: WorkflowContext): Promise<O>;
+}
+
+/** What a step is about to do, as presented to policy and to approvers. */
+export interface ActionDescriptor {
+  /** Stable, non-secret action name, e.g. `"email.send"`. */
+  readonly action: string;
+  /** Whether the effect can be undone after the fact. */
+  readonly reversible: boolean;
+  /** Whether the effect is visible outside the execution (messages, payments, writes). */
+  readonly external: boolean;
+}
+
+export interface PolicyRequest {
+  readonly stepId: string;
+  readonly action: ActionDescriptor;
+}
+
+export type PolicyDecision =
+  | { readonly effect: "allow"; readonly policyId: string }
+  | {
+      readonly effect: "deny" | "require_approval";
+      readonly policyId: string;
+      readonly reason: string;
+    };
+
+/** Decides whether a consequential action may proceed (AGENTS.md rule 2). */
+export interface PolicyEvaluator {
+  evaluate(
+    request: PolicyRequest,
+    context: WorkflowContext,
+  ): Promise<PolicyDecision>;
+}
+
+export interface ApprovalRequest {
+  readonly approvalId: string;
+  readonly executionId: string;
+  readonly userId: string;
+  readonly stepId: string;
+  readonly action: ActionDescriptor;
+  readonly reason: string;
+}
+
+export interface ApprovalResolution {
+  readonly approved: boolean;
+  /** Identity of the person or authority that decided. */
+  readonly approver: string;
+}
+
+/** Obtains an explicit human decision for a gated action (AGENTS.md rule 7). */
+export interface ApprovalGate {
+  request(
+    request: ApprovalRequest,
+    signal: AbortSignal,
+  ): Promise<ApprovalResolution>;
 }
 
 export class BudgetExceededError extends Error {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type {
+  ApprovalGate,
   EvaluationResult,
+  PolicyDecision,
+  PolicyEvaluator,
   EventStore,
   ExecutionBudget,
   WorkflowContext,
@@ -128,11 +131,15 @@ describe("runSequentialWorkflow", () => {
 
   it("generates an execution id and uses defaults when none are injected", async () => {
     const store = new InMemoryEventStore();
-    const result = await runSequentialWorkflow(sequence<number>(meta).build(), 7, {
-      store,
-      userId: "user-1",
-      budget,
-    });
+    const result = await runSequentialWorkflow(
+      sequence<number>(meta).build(),
+      7,
+      {
+        store,
+        userId: "user-1",
+        budget,
+      },
+    );
     expect(result.status).toBe("succeeded");
     expect(result.output).toBe(7);
     const events = await store.read(result.executionId);
@@ -473,7 +480,10 @@ describe("runSequentialWorkflow", () => {
   describe("bounded refinement", () => {
     const drafting = (
       scores: readonly number[],
-      extra: { maxRevisions?: number; onExhausted?: "fail" | "accept_best" } = {},
+      extra: {
+        maxRevisions?: number;
+        onExhausted?: "fail" | "accept_best";
+      } = {},
     ) => {
       let evaluations = 0;
       return step("draft", (n: number) => `draft-${n}`, {
@@ -494,7 +504,9 @@ describe("runSequentialWorkflow", () => {
 
     it("accepts a first output that passes without revising", async () => {
       const opts = options();
-      const workflow = sequence<number>(meta).step(drafting([0.9])).build();
+      const workflow = sequence<number>(meta)
+        .step(drafting([0.9]))
+        .build();
       const result = await runSequentialWorkflow(workflow, 1, opts);
       expect(result).toMatchObject({ status: "succeeded", output: "draft-1" });
       expect(result.usage.iterations).toBe(0);
@@ -508,7 +520,10 @@ describe("runSequentialWorkflow", () => {
 
       const result = await runSequentialWorkflow(workflow, 1, opts);
 
-      expect(result).toMatchObject({ status: "succeeded", output: "draft-1++" });
+      expect(result).toMatchObject({
+        status: "succeeded",
+        output: "draft-1++",
+      });
       expect(result.usage.iterations).toBe(2);
       const evaluations = (await opts.store.read("exec-1")).filter(
         (e) => e.type === "evaluation.completed",
@@ -549,6 +564,333 @@ describe("runSequentialWorkflow", () => {
       expect(result.status).toBe("budget_exceeded");
       expect(result.error?.message).toMatch(/maxIterations/);
       expect(result.usage.iterations).toBe(4);
+    });
+  });
+
+  describe("review regressions", () => {
+    it("keeps evaluator reasons and metrics out of the event history", async () => {
+      const opts = options();
+      const workflow = sequence<number>(meta)
+        .step(
+          step("draft", (n: number) => `draft-${n}`, {
+            refinement: {
+              maxRevisions: 0,
+              evaluator: {
+                evaluate: async () => ({
+                  score: 1,
+                  passed: true,
+                  reasons: ["candidate contained sk-live-secret"],
+                  metrics: { leaked: 1 },
+                }),
+              },
+              revise: async (_i, previous: string) => previous,
+            },
+          }),
+        )
+        .build();
+
+      await runSequentialWorkflow(workflow, 1, opts);
+
+      const history = JSON.stringify(await opts.store.read("exec-1"));
+      expect(history).not.toContain("sk-live-secret");
+      expect(history).not.toContain("leaked");
+      expect(history).toContain('"reasonCount":1');
+    });
+
+    it("fails the step, with an audit record, on a malformed evaluation", async () => {
+      const opts = options();
+      const workflow = sequence<number>(meta)
+        .step(
+          step("draft", (n: number) => n, {
+            refinement: {
+              maxRevisions: 1,
+              evaluator: {
+                evaluate: async () =>
+                  ({
+                    score: Number.NaN,
+                    passed: "yes",
+                    reasons: "not-an-array",
+                    metrics: {},
+                  }) as unknown as EvaluationResult,
+              },
+              revise: async (_i, previous: number) => previous,
+            },
+          }),
+        )
+        .build();
+
+      const result = await runSequentialWorkflow(workflow, 1, opts);
+
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toContain("non-finite score");
+      const evaluation = (await opts.store.read("exec-1")).find(
+        (e) => e.type === "evaluation.completed",
+      );
+      expect(evaluation?.payload).toMatchObject({
+        score: null,
+        passed: false,
+        reasonCount: 0,
+      });
+    });
+
+    it("records when accept_best continues with a non-passing output", async () => {
+      const opts = options();
+      const workflow = sequence<number>(meta)
+        .step(
+          step("draft", (n: number) => n, {
+            refinement: {
+              maxRevisions: 0,
+              onExhausted: "accept_best",
+              evaluator: { evaluate: async () => verdict(0.4, false) },
+              revise: async (_i, previous: number) => previous,
+            },
+          }),
+        )
+        .step(step("plain", (n: number) => n))
+        .build();
+
+      await runSequentialWorkflow(workflow, 1, opts);
+
+      const completed = (await opts.store.read("exec-1")).filter(
+        (e) => e.type === "workflow.step.completed",
+      );
+      expect(completed[0]?.payload).toMatchObject({
+        acceptedWithoutPassing: true,
+      });
+      expect(completed[1]?.payload).not.toHaveProperty(
+        "acceptedWithoutPassing",
+      );
+    });
+
+    it("aborts the step signal even when the run rejects", async () => {
+      const inner = new InMemoryEventStore();
+      let appended = 0;
+      const store: EventStore = {
+        append: async (event) => {
+          appended += 1;
+          if (appended > 2) throw new Error("store unavailable");
+          await inner.append(event);
+        },
+        read: (id) => inner.read(id),
+      };
+      let signal: AbortSignal | undefined;
+      const workflow = sequence<number>(meta)
+        .step(
+          step("captures", (n: number, context) => {
+            signal = context.signal;
+            return n;
+          }),
+        )
+        .build();
+
+      await expect(
+        runSequentialWorkflow(workflow, 1, options({ store })),
+      ).rejects.toThrow("store unavailable");
+      expect(signal?.aborted).toBe(true);
+    });
+  });
+
+  describe("policy and approval gating", () => {
+    const action = { action: "email.send", reversible: false, external: true };
+    const policyOf = (decision: PolicyDecision): PolicyEvaluator => ({
+      evaluate: async () => decision,
+    });
+    const gated = (onRun: () => void, extra = {}) =>
+      sequence<number>({ ...meta, mode: "hybrid" })
+        .step(
+          step(
+            "send",
+            (n: number) => {
+              onRun();
+              return n;
+            },
+            { action, ...extra },
+          ),
+        )
+        .build();
+    const allow: PolicyDecision = { effect: "allow", policyId: "p-allow" };
+    const needsApproval: PolicyDecision = {
+      effect: "require_approval",
+      policyId: "p-gate",
+      reason: "external and irreversible",
+    };
+
+    it("denies a consequential step when no policy is configured", async () => {
+      const opts = options();
+      let ran = false;
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true)),
+        1,
+        opts,
+      );
+      expect(result.status).toBe("failed");
+      expect(result.error).toMatchObject({
+        name: "PolicyDeniedError",
+        stepId: "send",
+      });
+      expect(ran).toBe(false);
+    });
+
+    it("runs the step and records the decision when policy allows", async () => {
+      const opts = options({ policy: policyOf(allow) });
+      let ran = false;
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true)),
+        1,
+        opts,
+      );
+      expect(result.status).toBe("succeeded");
+      expect(ran).toBe(true);
+      const evaluated = (await opts.store.read("exec-1")).find(
+        (e) => e.type === "policy.evaluated",
+      );
+      expect(evaluated?.payload).toEqual({
+        stepId: "send",
+        action: "email.send",
+        reversible: false,
+        external: true,
+        policyId: "p-allow",
+        effect: "allow",
+      });
+    });
+
+    it("does not retry or escalate around a denial", async () => {
+      let ran = false;
+      let escalated = false;
+      const opts = options({
+        policy: policyOf({
+          effect: "deny",
+          policyId: "p-deny",
+          reason: "blocked",
+        }),
+      });
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true), {
+          maxAttempts: 3,
+          escalate: (_e: unknown, input: number) => {
+            escalated = true;
+            return { reason: "x", input, resolve: async () => input };
+          },
+        }),
+        1,
+        opts,
+      );
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toContain("blocked");
+      expect(ran).toBe(false);
+      expect(escalated).toBe(false);
+      expect(result.usage.retries).toBe(0);
+    });
+
+    it("treats an unrecognized policy decision as a denial", async () => {
+      const opts = options({
+        policy: policyOf({ effect: "maybe", policyId: "p-odd" } as never),
+      });
+      let ran = false;
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true)),
+        1,
+        opts,
+      );
+      expect(result.error?.name).toBe("PolicyDeniedError");
+      expect(result.error?.message).toContain("unrecognized policy decision");
+      expect(ran).toBe(false);
+      const malformed = options({
+        policy: policyOf({ effect: 7, policyId: "p-odd" } as never),
+      });
+      await runSequentialWorkflow(
+        gated(() => undefined),
+        1,
+        malformed,
+      );
+      expect(
+        (await malformed.store.read("exec-1")).find(
+          (e) => e.type === "policy.evaluated",
+        )?.payload,
+      ).toMatchObject({ effect: "invalid" });
+    });
+
+    it("waits for approval and runs only when approved", async () => {
+      const seen: string[] = [];
+      const approvals: ApprovalGate = {
+        request: async (request) => {
+          seen.push(`${request.stepId}:${request.reason}:${request.userId}`);
+          return { approved: true, approver: "director" };
+        },
+      };
+      const opts = options({ policy: policyOf(needsApproval), approvals });
+      let ran = false;
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true)),
+        1,
+        opts,
+      );
+      expect(result.status).toBe("succeeded");
+      expect(ran).toBe(true);
+      expect(seen).toEqual(["send:external and irreversible:user-1"]);
+      expect((await types(opts.store)).slice(1, 6)).toEqual([
+        "workflow.step.started",
+        "policy.evaluated",
+        "approval.requested",
+        "approval.resolved",
+        "workflow.step.completed",
+      ]);
+    });
+
+    it.each([
+      ["rejected", { approved: false, approver: "director" }],
+      ["not literally true", { approved: "yes", approver: "director" }],
+    ])("does not run when approval is %s", async (_label, resolution) => {
+      const approvals: ApprovalGate = {
+        request: async () => resolution as never,
+      };
+      const opts = options({ policy: policyOf(needsApproval), approvals });
+      let ran = false;
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true)),
+        1,
+        opts,
+      );
+      expect(result.error).toMatchObject({
+        name: "ApprovalRejectedError",
+        stepId: "send",
+      });
+      expect(ran).toBe(false);
+    });
+
+    it("does not run when approval is required but no gate is configured", async () => {
+      const opts = options({ policy: policyOf(needsApproval) });
+      let ran = false;
+      const result = await runSequentialWorkflow(
+        gated(() => (ran = true)),
+        1,
+        opts,
+      );
+      expect(result.error?.message).toContain("no approval gate configured");
+      expect(ran).toBe(false);
+    });
+
+    it("stops waiting for approval when the execution is cancelled", async () => {
+      const controller = new AbortController();
+      const approvals: ApprovalGate = {
+        request: () => {
+          queueMicrotask(() => {
+            controller.abort();
+          });
+          return new Promise(() => undefined);
+        },
+      };
+      const opts = options({
+        policy: policyOf(needsApproval),
+        approvals,
+        signal: controller.signal,
+      });
+      const result = await runSequentialWorkflow(
+        gated(() => undefined),
+        1,
+        opts,
+      );
+      expect(result.status).toBe("cancelled");
     });
   });
 

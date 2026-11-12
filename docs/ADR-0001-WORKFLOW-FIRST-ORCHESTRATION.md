@@ -1,12 +1,15 @@
 # ADR-0001: Workflow-First Orchestration
 
 ## Status
+
 Accepted — 2026-07-30
 
 ## Context
+
 ATLANTIS must execute complex work reliably across multiple models, agents, tools, and environments. Fully autonomous supervisor agents provide flexibility, but they introduce model-driven coordination overhead, less predictable execution, greater cost, and a larger failure surface. Recent LangChain4j experimentation reported that a deterministic workflow implementation completed the same debugging task roughly three times faster than a supervisor implementation, while an older model became trapped in a tool-calling loop.
 
 ## Decision
+
 ATLANTIS will use workflow-first orchestration.
 
 1. Repeatable or decomposable tasks use explicit, versioned task graphs by default.
@@ -37,6 +40,7 @@ Independent review and evaluation stages may run in parallel where dependencies 
 ## Consequences
 
 ### Positive
+
 - Lower latency and model spend for repeatable work
 - Better reproducibility, testing, and auditing
 - Clearer failure localization
@@ -44,6 +48,7 @@ Independent review and evaluation stages may run in parallel where dependencies 
 - Easier comparison of models and workflow revisions
 
 ### Trade-offs
+
 - Workflows require explicit design and maintenance
 - Novel work may still need supervisor coordination
 - Replay fidelity depends on recorded tool outputs and provider determinism
