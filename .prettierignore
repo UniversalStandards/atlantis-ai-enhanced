@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+dist
+coverage
+docs/VISION.md
+docs/google-ai-studio-build-prompt.md
+docs/ATLANTIS_MODERNIZATION_PLAN.md
+CHANGELOG.md

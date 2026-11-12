@@ -1,313 +1,147 @@
-# ATLANTIS AI — Advanced Reasoning & Orchestration Platform
+# ATLANTIS AI
 
-**Version**: 2.0.0-enhanced  
-**Status**: Production-Ready Foundation with Advanced Governance
+A civilian-first, provider-independent AI operating platform, built
+workflow-first: repeatable work runs as explicit, budgeted, auditable workflows,
+and supervisor agents are an escalation path rather than the default.
 
----
+## Status
 
-## Mission
+**Pre-alpha kernel.** Five packages, no API, no UI, no deployment. The
+longer-term product description is in [docs/VISION.md](docs/VISION.md); treat
+it as direction, not as a feature list.
 
-**ATLANTIS AI exists to protect, enhance, and extend the safety and longevity of all human and sentient life while steadfastly upholding dignity, autonomy, individual uniqueness, fundamental freedoms, and rights. We are committed to expanding the capabilities of all sentient beings through ethical, non-coercive means that preserve quality of life and prevent unauthorized harm.**
+| Package                                                 | What it provides                                                                                                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@atlantis/contracts`](packages/contracts)             | Provider-neutral types for workflows, executions, events, evaluation, policy, and approval; fail-closed budget enforcement.                                          |
+| [`@atlantis/events`](packages/events)                   | Append-only in-memory event store with a SHA-256 hash chain per execution, plus an event recorder.                                                                   |
+| [`@atlantis/events-postgres`](packages/events-postgres) | The same event store contract on PostgreSQL, with database triggers that reject rewrites.                                                                            |
+| [`@atlantis/orchestration`](packages/orchestration)     | Sequential workflow runner: budgets, retries, duration limits, cancellation, policy and approval gating, bounded refinement, supervisor escalation.                  |
+| [`@atlantis/deliberation`](packages/deliberation)       | Consensus Federation kernel: provenance records and Mode C verification across model families, with a bring-your-own-key adapter for any OpenAI-compatible endpoint. |
 
----
+What is not here yet is tracked in
+[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) and the GitHub
+issues.
 
-## Overview
+## Quick start
 
-ATLANTIS AI is an **intent-first, multi-agent orchestration platform** designed with uncompromising ethical governance and advanced reasoning capabilities. The system interprets human intent as the highest authority while maintaining strict adherence to safety, consent, and transparency principles.
+Requires Node.js ≥ 22.12 and pnpm 10.
 
-### Core Capabilities
-
-#### 🎯 Intent-First Architecture
-- **Natural Language Understanding**: Parse complex, nuanced objectives into executable mission specifications
-- **Context-Aware Planning**: Adapt strategy based on operational context, risk level, and governance requirements
-- **Hierarchical Decomposition**: Break complex objectives into coordinated sub-tasks with clear dependencies
-
-#### 🤖 Multi-Agent Orchestration
-- **Dynamic Agent Spawning**: Create specialized sub-agents for parallel work execution
-- **Role-Based Specialization**: Domain Agents, Task Agents, and Micro Agents with defined responsibilities
-- **Budget Management**: Control computational resources with spawn depth, breadth, and total agent limits
-- **Lifecycle Management**: Track agent creation, execution, and termination with full audit trails
-
-#### 🔄 Iterative Refinement (Iterif Engine)
-- **Attempt → Analyze → Adapt → Retry** loop for continuous improvement
-- **Failure Taxonomy**: Classify and learn from errors (DATA_MISSING, LOGIC_ERROR, RESOURCE_CONSTRAINT, etc.)
-- **Convergence Detection**: Prevent infinite loops with smart termination criteria
-- **Knowledge Preservation**: All attempts logged as learning artifacts for future reference
-
-#### 🛡️ Unbypassable Safety Kernel
-- **Three-Stage Gating**: Pre-Action evaluation, Mid-Action monitoring, Post-Action review
-- **Context-Sensitive Policies**: Different governance rules for civilian, emergency, and defense contexts
-- **Fail-Closed Behavior**: When uncertain or policy-conflicting, stop and escalate rather than improvise
-- **Approval Workflows**: Multi-level authorization for high-risk operations
-
-#### 📊 Evidence & Provenance System
-- **Source Tracking**: All information tagged with origin, timestamp, and reliability scores
-- **Confidence Weighting**: Claims marked as verified, probable, speculative, or uncertain
-- **Circular Reference Detection**: Prevent information laundering and echo-chamber validation
-- **Adversarial Verification**: Critical decisions undergo multi-perspective challenge
-
-#### 🔌 MCP Registry Integration
-- **Tool Discovery**: Automatically ingest and catalog MCP (Model Context Protocol) servers
-- **Security Sandboxing**: Enforce least-privilege and capability-based access control
-- **Allowlist/Denylist**: Flexible tool governance with configurable permission boundaries
-- **Auto-Adapter Generation**: Dynamic integration of new tools with safety wrappers
-
-#### 🧠 Consent-Based Memory
-- **User Control**: Store personal information only with explicit permission
-- **Right to Erasure**: Full data deletion on request
-- **Purpose Limitation**: Data used only for consented purposes
-- **Minimal Retention**: Information kept only as long as necessary
-
----
-
-## Quick Start
-
-### Installation
-
-#### 1. Clone and Setup Environment
 ```bash
-git clone https://github.com/YOUR_USERNAME/atlantis-ai-enhanced.git
+git clone https://github.com/UniversalStandards/atlantis-ai-enhanced.git
 cd atlantis-ai-enhanced
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+corepack enable
+pnpm install
+pnpm check
 ```
 
-#### 2. Run the Command Line Interface
-```bash
-# Simple mission
-atlantis "Analyze the ethical implications of autonomous vehicles"
+## Example
 
-# Specify context mode
-atlantis "Research emergency response protocols" --context emergency_response
+```ts
+import { InMemoryEventStore } from "@atlantis/events";
+import { runSequentialWorkflow, sequence } from "@atlantis/orchestration";
 
-# High-risk mission (requires approvals)
-atlantis "Evaluate infrastructure vulnerabilities" --context infrastructure_protection
+const workflow = sequence<string>({
+  id: "summarize",
+  version: "1.0.0",
+  description: "Normalize a request, then draft a reply",
+})
+  .step({
+    id: "normalize",
+    description: "Trim and collapse whitespace",
+    execute: async (text: string) => text.trim().replace(/\s+/g, " "),
+  })
+  .step({
+    id: "draft",
+    description: "Draft a reply",
+    maxAttempts: 2,
+    execute: async (text: string, context) => {
+      context.usage.toolCalls += 1; // steps report what they consume
+      return `Received: ${text}`;
+    },
+  })
+  .build();
+
+const store = new InMemoryEventStore();
+const result = await runSequentialWorkflow(workflow, "  hello   world ", {
+  store,
+  userId: "user-1",
+  budget: {
+    maxToolCalls: 5,
+    maxRetries: 2,
+    maxIterations: 3,
+    maxTokens: 10_000,
+    maxDurationMs: 30_000,
+    maxCostUsd: 0.5,
+  },
+});
+
+result.status; // "succeeded" | "failed" | "cancelled" | "budget_exceeded"
+await store.read(result.executionId); // ordered, immutable event history
+store.verify(result.executionId); // { valid: true, length, headHash }
 ```
 
-#### 3. Start the API Server
-```bash
-uvicorn atlantis_ai.api.main:app --reload
+## Verifying an answer across model families
+
+```ts
+import { createOpenAICompatiblePanelist, verify } from "@atlantis/deliberation";
+
+const panel = [
+  createOpenAICompatiblePanelist({
+    id: "a",
+    family: "family-one",
+    model: process.env.MODEL_A!,
+    baseUrl: process.env.BASE_URL_A!,
+    apiKey: process.env.API_KEY_A!,
+  }),
+  // ...one panelist per model family; depth 2 needs three families
+];
+
+const result = await verify({ prompt: "What is 17 * 23?", panel, depth: 2 });
+
+result.status; // "concordant" | "divergent" | "insufficient_panel"
+result.answer; // set only when every responding family agrees
+result.positions; // every distinct answer and who gave it
+result.provenance; // hashes only; safe to log and retain
 ```
 
-Then open: `http://127.0.0.1:8000/docs` for interactive API documentation
+There is no vote. If the families disagree, the disagreement is the result:
+every position is returned under an unresolved-discrepancy header, or nothing
+is released when the output is a legally binding instrument.
 
----
+## Guarantees the runner makes
 
-## Architecture
+- **Budgets fail closed.** Tool calls, retries, iterations, tokens, duration,
+  and cost are checked before and after every step, attempt, and revision. A
+  counter that is `NaN`, infinite, or negative is a violation, not a pass.
+- **Hung steps are abandoned** at the duration limit and their
+  `context.signal` is aborted.
+- **No unaudited execution.** If the event store refuses an event, the run
+  rejects instead of continuing.
+- **Inputs and outputs stay out of the audit log.** Events carry identifiers,
+  counters, scores, and error names/messages only.
+- **Consequential steps are gated.** A step that declares an `action` is
+  denied unless a policy allows it, and waits for explicit approval when the
+  policy requires it. Retries and escalation cannot bypass a denial.
+- **Supervisor escalation is opt-in per workflow mode.** In `"workflow"` mode a
+  failed step fails the execution even if the step defines an escalation.
 
-### System Components
+## Repository layout
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      ATLANTIS AI CORE                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────┐    ┌──────────────┐   ┌──────────────┐  │
-│  │ Orchestrator │───▶│ Policy Engine│──▶│ Agent Manager│  │
-│  └──────────────┘    └──────────────┘   └──────────────┘  │
-│         │                    │                   │          │
-│         ▼                    ▼                   ▼          │
-│  ┌──────────────┐    ┌──────────────┐   ┌──────────────┐  │
-│  │ Iterif Engine│    │Safety Kernel │   │ MCP Registry │  │
-│  └──────────────┘    └──────────────┘   └──────────────┘  │
-│         │                    │                   │          │
-│         ▼                    ▼                   ▼          │
-│  ┌──────────────┐    ┌──────────────┐   ┌──────────────┐  │
-│  │Evidence Ledger    │Memory System │   │  Tool Adapters│  │
-│  └──────────────┘    └──────────────┘   └──────────────┘  │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Control Plane vs Data Plane
-- **Control Plane**: Policies, approvals, audit logs, tool routing, governance
-- **Data Plane**: User content, documents, outputs, computational results
-
-### Runtime Modes
-- **Local-Only**: Completely offline operation for maximum privacy
-- **Hybrid**: Local processing with cloud tool integration
-- **Hosted**: Full cloud deployment for enterprise scale
-- **Air-Gapped**: Secure enclave mode for classified operations
-
----
-
-## Design Principles
-
-### Bounded Capability
-> *Capability expands only with oversight*  
-> *Uncertainty must be surfaced, not hidden*  
-> *Power requires proportional responsibility*
-
-### Human-AI Collaboration
-> *Humans remain ultimate decision-makers on consequential matters*  
-> *AI augments, does not replace, human judgment*  
-> *Transparency enables informed human oversight*
-
-### Long-Term Alignment
-> *Consider second and third-order consequences*  
-> *Optimize for sustainable, equitable outcomes*  
-> *Prioritize civilization-level flourishing over short-term gains*
-
----
-
-## Repository Structure
-
-```
-atlantis-ai-enhanced/
-├── docs/                          # Comprehensive documentation
-│   ├── PRIME_INTENT.md           # Foundational ethical framework
-│   ├── ARCHITECTURE.md           # System design and components
-│   ├── SAFETY_KERNEL.md          # Safety mechanisms and governance
-│   ├── AGENTS.md                 # Agent types and behaviors
-│   ├── ITERIF.md                 # Iterative refinement engine
-│   ├── MCP_REGISTRY.md           # Tool integration guide
-│   └── ROADMAP.md                # Development timeline
-│
-├── policies/                      # Machine-readable governance
-│   ├── prime_intent.yaml         # Core mission and invariants
-│   ├── safety_kernel.yaml        # Safety rules and boundaries
-│   └── contexts/                 # Context-specific policies
-│       ├── common.yaml
-│       ├── civilian_assistant.yaml
-│       ├── emergency_response.yaml
-│       └── defense_support.yaml
-│
-├── schemas/                       # JSON Schema definitions
-│   ├── mission_spec.schema.json  # Mission structure
-│   ├── agent_spec.schema.json    # Agent configuration
-│   ├── evidence_item.schema.json # Provenance tracking
-│   └── iterif_log.schema.json    # Refinement logs
-│
-├── src/atlantis_ai/              # Core implementation
-│   ├── core/                     # Kernel components
-│   │   ├── orchestrator.py
-│   │   ├── policy_engine.py
-│   │   ├── agent_manager.py
-│   │   ├── iterif.py
-│   │   ├── evidence.py
-│   │   └── types.py
-│   ├── mcp/                      # MCP integration
-│   │   ├── registry_client.py
-│   │   ├── security.py
-│   │   └── models.py
-│   ├── api/                      # REST API
-│   │   └── main.py
-│   ├── cli.py                    # Command-line interface
-│   └── config.py                 # Configuration management
-│
-├── tests/                         # Unit and integration tests
-├── scripts/                       # Utilities and setup
-├── docker/                        # Container configuration
-├── .github/                       # CI/CD workflows
-│
-├── README.md                      # This file
-├── LICENSE                        # MIT License
-├── pyproject.toml                # Python package configuration
-└── CHANGELOG.md                  # Version history
+```text
+packages/contracts       shared types and budget enforcement
+packages/events          event store and recorder
+packages/events-postgres durable event store
+packages/orchestration   workflow runner
+packages/deliberation    consensus federation kernel
+docs/decisions           architecture decision records
+docs/                    modernization plan, implementation status, vision
 ```
 
----
+## Contributing and security
 
-## Development
-
-### Setup Development Environment
-```bash
-# Install with dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
-
-# Type checking
-mypy src/
-
-# Linting
-ruff check src/
-```
-
-### Docker Deployment
-```bash
-# Start full stack (Qdrant, Postgres, Redis)
-docker-compose -f docker/docker-compose.yml up -d
-
-# Run ATLANTIS in container
-docker build -t atlantis-ai .
-docker run -p 8000:8000 atlantis-ai
-```
-
----
-
-## Roadmap
-
-### Phase 1: Foundation (Current)
-- ✅ Core orchestration framework
-- ✅ Policy engine with context awareness
-- ✅ Basic agent spawning and management
-- ✅ Iterif refinement engine
-- ✅ Evidence tracking system
-- ✅ MCP registry integration
-
-### Phase 2: Advanced Intelligence (Q2 2026)
-- 🔄 Multi-model ensemble reasoning
-- 🔄 Advanced prompt chaining and caching
-- 🔄 Self-improving policy suggestions
-- 🔄 Distributed agent coordination
-- 🔄 Real-time learning from outcomes
-
-### Phase 3: Scale & Integration (Q3-Q4 2026)
-- 📅 Enterprise-grade memory systems
-- 📅 Advanced bias detection and mitigation
-- 📅 Cross-platform tool ecosystem
-- 📅 Federated learning capabilities
-- 📅 Autonomous capability expansion (with oversight)
-
----
-
-## Security & Compliance
-
-- **Data Protection**: All sensitive data encrypted at rest and in transit
-- **Audit Logging**: Comprehensive tracking of all decisions and actions
-- **Access Control**: Role-based permissions with least-privilege principle
-- **Incident Response**: Automated detection and escalation of policy violations
-- **Compliance**: GDPR, CCPA, and framework-agnostic governance support
-
----
-
-## Contributing
-
-We welcome contributions that advance ATLANTIS AI's mission while maintaining strict adherence to our ethical framework. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Areas for Contribution
-- **Policy Development**: Refine context-specific governance rules
-- **Tool Integration**: Add new MCP servers with safety wrappers
-- **Testing**: Expand test coverage and edge case scenarios
-- **Documentation**: Improve guides, examples, and API references
-- **Research**: Advance reasoning, safety, and alignment techniques
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md), and
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details
-
----
-
-## Acknowledgments
-
-ATLANTIS AI builds upon the collective wisdom of the AI safety, ethics, and alignment communities. We are committed to transparent development and collaborative advancement of beneficial AI systems.
-
----
-
-## Contact & Support
-
-- **Documentation**: See `docs/` directory
-- **Issues**: GitHub Issues tracker
-- **Discussions**: GitHub Discussions
-- **Security**: See [SECURITY.md](SECURITY.md) for vulnerability reporting
-
----
-
-**Generated**: 2026-01-30  
-**Last Updated**: 2026-01-30  
-**Version**: 2.0.0-enhanced
+[MIT](LICENSE).

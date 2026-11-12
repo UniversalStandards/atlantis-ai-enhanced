@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertValidBudget,
   assertWithinBudget,
   BudgetExceededError,
+  createUsage,
+  InvalidBudgetStateError,
   type WorkflowContext,
 } from "../src/index.js";
 
-function context(overrides: Partial<WorkflowContext["usage"]> = {}): WorkflowContext {
+function context(
+  overrides: Partial<WorkflowContext["usage"]> = {},
+): WorkflowContext {
   return {
     executionId: "exec-1",
     workflowId: "test-workflow",
@@ -61,5 +66,50 @@ describe("assertWithinBudget", () => {
     expect(() =>
       assertWithinBudget(context({ inputTokens: 8_000, outputTokens: 2_001 })),
     ).toThrow(/maxTokens/);
+  });
+
+  it("reports the dimension, limit, and observed value", () => {
+    try {
+      assertWithinBudget(context({ costUsd: 1.5 }));
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(BudgetExceededError);
+      expect(error).toMatchObject({
+        dimension: "maxCostUsd",
+        limit: 1,
+        observed: 1.5,
+      });
+    }
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1])(
+    "fails closed when a usage counter is %s",
+    (value) => {
+      expect(() => assertWithinBudget(context({ toolCalls: value }))).toThrow(
+        InvalidBudgetStateError,
+      );
+    },
+  );
+
+  it("fails closed when a limit is not a finite number", () => {
+    const base = context();
+    expect(() =>
+      assertWithinBudget({
+        ...base,
+        budget: { ...base.budget, maxTokens: Number.NaN },
+      }),
+    ).toThrow(/budget\.maxTokens/);
+    expect(() =>
+      assertValidBudget({ ...base.budget, maxCostUsd: -0.01 }),
+    ).toThrow(InvalidBudgetStateError);
+  });
+});
+
+describe("createUsage", () => {
+  it("returns an independent zeroed record on every call", () => {
+    const first = createUsage();
+    first.toolCalls = 3;
+    expect(createUsage().toolCalls).toBe(0);
+    expect(Object.values(createUsage()).every((n) => n === 0)).toBe(true);
   });
 });

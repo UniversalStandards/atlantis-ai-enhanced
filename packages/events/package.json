@@ -1,0 +1,18 @@
+{
+  "name": "@atlantis/events",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Append-only, hash-chained execution event store and recorder.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/contracts": "workspace:*"
+  }
+}

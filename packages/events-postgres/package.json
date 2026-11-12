@@ -1,0 +1,22 @@
+{
+  "name": "@atlantis/events-postgres",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PostgreSQL implementation of the EventStore contract with a per-execution hash chain.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/contracts": "workspace:*",
+    "@atlantis/events": "workspace:*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0"
+  }
+}

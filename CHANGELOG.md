@@ -2,6 +2,29 @@
 
 All notable changes to the ATLANTIS AI project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `@atlantis/events`: hash-chained, append-only in-memory event store and event recorder.
+- `@atlantis/orchestration`: sequential workflow runner with budgets, retries, duration limits, cancellation, bounded refinement, and supervisor escalation.
+- `@atlantis/contracts`: `EventStore`, `createUsage`, `assertValidBudget`, `assertValidUsage`, `InvalidBudgetStateError`, `execution.cancelled`, `WorkflowContext.signal`.
+- Lockfile, ESLint, coverage thresholds, build step, Dependabot, `SECURITY.md`, `CONTRIBUTING.md`, CODEOWNERS, PR template.
+
+- `@atlantis/events-postgres`: PostgreSQL event store with append-only triggers.
+- `@atlantis/deliberation`: provenance schema 1.0.0, Mode C verification, known-answer scoring, scripted and OpenAI-compatible panelists.
+- Policy and approval gating for steps that declare an `action`; `policy.evaluated` event type.
+- ADR 0004: Consensus Federation as the core pattern.
+
+### Fixed
+- Evaluator reasons and metrics are no longer written to the event history.
+- The step abort signal now fires when a run rejects.
+- `assertWithinBudget` no longer passes when a counter or limit is `NaN`.
+- Removed the advanced CodeQL workflow, which conflicted with the repository's default CodeQL setup.
+
+### Changed
+- CI installs with `--frozen-lockfile`, runs on Node 22 and 24, and pins actions to commit SHAs.
+- README rewritten to describe the current state; the prior README moved to `docs/VISION.md`.
+
 ## [2.0.0-enhanced] - 2026-01-30
 
 ### Major Enhancements
