@@ -457,7 +457,8 @@ export interface ScriptedPanelistOptions {
   readonly model?: string;
   /** Answer per prompt, or a function of the prompt. A missing prompt rejects. */
   readonly answers:
-    Readonly<Record<string, string>> | ((prompt: string) => string);
+    | Readonly<Record<string, string>>
+    | ((prompt: string) => string);
 }
 
 /**
@@ -522,7 +523,10 @@ export class PanelistRequestError extends Error {
 export function createOpenAICompatiblePanelist(
   options: OpenAICompatiblePanelistOptions,
 ): Panelist {
-  const endpoint = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  // Trim trailing slashes without a regular expression (linear time).
+  let end = options.baseUrl.length;
+  while (end > 0 && options.baseUrl.charCodeAt(end - 1) === 47) end -= 1;
+  const endpoint = `${options.baseUrl.slice(0, end)}/chat/completions`;
   const send = options.fetch ?? fetch;
   return {
     id: options.id,
