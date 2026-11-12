@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  validate:
+  checks:
     name: Lint, typecheck, test, build (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -37,3 +37,16 @@ jobs:
       - run: pnpm test:coverage
       - run: pnpm build
       - run: pnpm audit --prod --audit-level high
+
+  # Single stable check name for branch protection ("validate" is required on main).
+  validate:
+    name: validate
+    if: always()
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every matrix job to pass
+        env:
+          RESULT: ${{ needs.checks.result }}
+        run: test "$RESULT" = "success"
