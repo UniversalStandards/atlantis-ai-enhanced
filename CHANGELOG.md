@@ -10,9 +10,16 @@ All notable changes to the ATLANTIS AI project will be documented in this file.
 - `@atlantis/contracts`: `EventStore`, `createUsage`, `assertValidBudget`, `assertValidUsage`, `InvalidBudgetStateError`, `execution.cancelled`, `WorkflowContext.signal`.
 - Lockfile, ESLint, coverage thresholds, build step, Dependabot, `SECURITY.md`, `CONTRIBUTING.md`, CODEOWNERS, PR template.
 
+- `@atlantis/events-postgres`: PostgreSQL event store with append-only triggers.
+- `@atlantis/deliberation`: provenance schema 1.0.0, Mode C verification, known-answer scoring, scripted and OpenAI-compatible panelists.
+- Policy and approval gating for steps that declare an `action`; `policy.evaluated` event type.
+- ADR 0004: Consensus Federation as the core pattern.
+
 ### Fixed
+- Evaluator reasons and metrics are no longer written to the event history.
+- The step abort signal now fires when a run rejects.
 - `assertWithinBudget` no longer passes when a counter or limit is `NaN`.
-- CodeQL workflow now declares the languages it analyzes.
+- Removed the advanced CodeQL workflow, which conflicted with the repository's default CodeQL setup.
 
 ### Changed
 - CI installs with `--frozen-lockfile`, runs on Node 22 and 24, and pins actions to commit SHAs.

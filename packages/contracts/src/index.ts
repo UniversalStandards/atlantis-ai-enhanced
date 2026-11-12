@@ -93,7 +93,7 @@ export interface EventSink {
 }
 
 /**
- * Append-only, replayable event history for executions (ADR-0001 §7).
+ * Append-only, replayable event history for executions (ADR 0003 §7).
  * Implementations must reject out-of-order or duplicate events rather than
  * silently reordering them.
  */

@@ -27,18 +27,35 @@ The previous README described a Python package structure and `pyproject.toml`, b
 - Fixed: the CodeQL workflow had an empty language matrix and could not run.
 - Documentation: README now describes what exists; the previous README is preserved as `docs/VISION.md`. Added `SECURITY.md` and `CONTRIBUTING.md`.
 
+## 2026-11-12
+
+### Decisions
+
+- [ADR 0004](decisions/0004-consensus-federation-core.md): Consensus Federation is the core; workflows are the decomposition layer. Reveal rounds are gated on corpus evidence.
+- ADR numbering fixed: workflow-first orchestration is now ADR 0003; 0002 is reserved for the Agent Harness Runtime (issue #44).
+
+### Completed
+
+- Review findings on PR #63 fixed: evaluator reasons and metrics no longer reach the event history; the step signal is aborted on every exit; `accept_best` is recorded on the step completion event.
+- Policy and approval gating in the runner. A step that declares an `action` is denied unless a policy allows it, and waits for explicit approval when the policy requires it. Retries and supervisor escalation cannot bypass a denial.
+- `@atlantis/events-postgres`: durable `EventStore` with the same ordering and hash-chain guarantees, plus triggers that reject UPDATE, DELETE, and TRUNCATE. Tested against PGlite (PostgreSQL compiled to WebAssembly, in-process).
+- `@atlantis/deliberation`: provenance schema 1.0.0, Mode C verification with blind round 0, family-diversity minimums, divergence-as-finding, partial emission under a discrepancy header, blocking for binding instruments, known-answer corpus scoring, a scripted panelist for fixtures, and an OpenAI-compatible panelist adapter for bring-your-own-key use.
+- The advanced CodeQL workflow was removed: the repository uses GitHub's default CodeQL setup, and the two cannot run together.
+- Prettier added; formatting is checked in CI.
+
 ### Known gaps
 
-- No durable event store. `InMemoryEventStore` loses history on process exit; a PostgreSQL implementation of the same contract is required before any deployment.
-- No model provider adapters, policy engine, identity, API, or UI. None of the acceptance criteria in ADR 0001 (modernization foundation) are met yet.
-- Workflows are sequential only; no parallel stages, no execution-graph visualization, no replay driver.
-- Approval gating (`waiting_for_approval`, `approval.*` events) is defined in the contracts but not implemented by the runner.
-- Two documents are both numbered ADR-0001 (`docs/ADR-0001-WORKFLOW-FIRST-ORCHESTRATION.md` and `docs/decisions/0001-modernization-foundation.md`), and issue #44 refers to an ADR-0002 that is not in the repository.
+- `@atlantis/events-postgres` has not been run against a server PostgreSQL through the `pg` driver, or against Supabase. PGlite is single-connection, so the concurrent-writer test exercises the INSERT guard and primary key but not true multi-connection contention.
+- The OpenAI-compatible adapter is tested against an injected `fetch`, not a live provider. It has no retry, rate-limit handling, or streaming.
+- Deliberation is not yet wired into the runner as a step type, and panelist token usage is not charged to the execution budget.
+- Modes A, B, D, and E, reveal rounds, the arbiter, and the depth-assignment rules are not implemented. No validation corpus exists yet; `scoreKnownAnswers` is the harness for one.
+- No identity, API, UI, or deployment. None of ADR 0001's success criteria are met.
+- Workflows are sequential only; there is no replay driver.
 
 ### Next Implementation Slice
 
-1. PostgreSQL-backed `EventStore` with the same ordering and hash-chain guarantees.
-2. Policy evaluation and approval gating in the runner.
-3. Provider-neutral conversation contracts with a mock adapter.
+1. Deliberation as a workflow step, with panelist usage charged to the budget.
+2. Validation corpus: known-answer set, correlated-error probe, sycophancy probe.
+3. Run `@atlantis/events-postgres` against PostgreSQL 17 with `pg` in CI.
 4. Replay driver that re-executes a recorded history against deterministic fixtures.
-5. Connect the governed conversation vertical slice to these contracts.
+5. Identity and tenant context, then the governed conversation vertical slice.

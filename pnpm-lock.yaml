@@ -35,11 +35,30 @@ importers:
 
   packages/contracts: {}
 
+  packages/deliberation:
+    dependencies:
+      '@atlantis/events':
+        specifier: workspace:*
+        version: link:../events
+
   packages/events:
     dependencies:
       '@atlantis/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/events-postgres:
+    dependencies:
+      '@atlantis/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@atlantis/events':
+        specifier: workspace:*
+        version: link:../events
+    devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.3.0
+        version: 0.3.16
 
   packages/orchestration:
     dependencies:
@@ -76,6 +95,9 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@electric-sql/pglite@0.3.16':
+    resolution: {integrity: sha512-mZkZfOd9OqTMHsK+1cje8OSzfAQcpD7JmILXTl5ahdempjUDdmg4euf1biDex5/LfQIDJ3gvCu6qDgdnDxfJmA==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1228,6 +1250,8 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@electric-sql/pglite@0.3.16': {}
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true

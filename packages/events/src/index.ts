@@ -82,7 +82,16 @@ function serialize(value: unknown, path: string, seen: Set<object>): string {
   return out;
 }
 
-function chainHash(previousHash: string, canonicalEvent: string): string {
+/** SHA-256 of a UTF-8 string, as lowercase hex. */
+export function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** Hash that links one canonical event to the hash of its predecessor. */
+export function chainHash(
+  previousHash: string,
+  canonicalEvent: string,
+): string {
   return createHash("sha256")
     .update(previousHash)
     .update("\n")

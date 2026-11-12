@@ -21,7 +21,7 @@ import {
 } from "@atlantis/contracts";
 import { EventRecorder } from "@atlantis/events";
 
-/** Bounded evaluate → revise loop applied to a step's output (ADR-0001 §4–5). */
+/** Bounded evaluate → revise loop applied to a step's output (ADR 0003 §4–5). */
 export interface RefinementPolicy<I, O> {
   readonly evaluator: Evaluator<O>;
   /** Maximum number of revisions after the first output. Must be ≥ 0. */

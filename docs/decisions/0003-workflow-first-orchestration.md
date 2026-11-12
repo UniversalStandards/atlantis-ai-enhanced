@@ -1,4 +1,6 @@
-# ADR-0001: Workflow-First Orchestration
+# ADR 0003: Workflow-First Orchestration
+
+> Previously filed as `docs/ADR 0003-WORKFLOW-FIRST-ORCHESTRATION.md`. Renumbered because ADR 0001 is the modernization foundation and 0002 is reserved for the Agent Harness Runtime (issue #44). Scope narrowed by [ADR 0004](0004-consensus-federation-core.md).
 
 ## Status
 

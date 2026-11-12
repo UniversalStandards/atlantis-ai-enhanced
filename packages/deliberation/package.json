@@ -1,0 +1,18 @@
+{
+  "name": "@atlantis/deliberation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consensus Federation kernel: provenance schema, blind panels, and Mode C verification.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@atlantis/events": "workspace:*"
+  }
+}
